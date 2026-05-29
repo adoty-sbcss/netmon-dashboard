@@ -19,6 +19,8 @@ dist/
 # Azure / IaC
 *.azure.json
 .azure/
+infra/main.json
+_whatif.json
 
 # Logs
 *.log
