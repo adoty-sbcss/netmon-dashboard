@@ -126,6 +126,12 @@ export const trafficStats = pgTable(
   (t) => [index("idx_traffic_scan").on(t.scanRunId)],
 );
 
+/**
+ * SNMP polls. Populated with a CURATED SUBSET only — raw SNMP is ~4,471
+ * rows/scan and mostly redundant. Switch identity (model/name/firmware) goes to
+ * entities_switch.attributes; only useful rows land here. Full raw stays in the
+ * Blob ZIP, so more fields can be back-extracted later without re-pulling SFTP.
+ */
 export const snmpPolls = pgTable(
   "snmp_polls",
   {

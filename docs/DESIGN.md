@@ -101,6 +101,37 @@ management plane (Section 8), which is additive collector work.
 > dominant cost is the always-on "SFTP enabled" hourly fee; per-pull list/get
 > ops are cheap, so cadence barely affects cost.
 
+### 4a. Bundle format (validated against a real sample)
+
+Verified against `northidf_2026_05_28_15.zip` (hourly rollup, 2 scans):
+```
+HOURLY_SUMMARY.md
+README.md
+scans/scan_<id>/
+  summary.md  findings.json  metrics.json  timeline.json  topology.json  devices.csv
+  raw/  scan.json  lldp-neighbors.json  arp-table.json  dhcp-observed.json
+        stp-events.json  traffic-stats.json  snmp-polls.json
+```
+- **Bundles are self-identifying.** `raw/scan.json` carries `district_slug`,
+  `school_slug`, `device_slug` (+ gateway/cidr/is_primary). Ingestion derives
+  tenancy from the bundle, NOT the SFTP path — so a manually dropped ZIP ingests
+  correctly with no path context. On ingest, upsert the district → school →
+  sensor rows from these slugs.
+- Field shapes match `schema/netmon.ts` exactly.
+- **SNMP is large (~4,471 rows / ~1 MB per scan) and mostly noise.** See §5.
+- `findings.json` may be empty; DHCP is often sparse (INFORM-only).
+
+### 4b. Data-source configuration (in-app)
+
+The SFTP connection is **configured in the deployed app by a superadmin**, not
+hard-coded:
+- A `data_sources` table holds host / port / username / base path; the password
+  / key is stored in **Key Vault** (the table holds only a secret reference).
+- Superadmin Settings UI to edit + **"Test connection"** (one-shot list).
+- A **manual upload path** ("drop a ZIP") for testing and backfill, which runs
+  the exact same parse pipeline as the SFTP pull. This is how we validate
+  ingestion locally before any SFTP/Azure wiring exists.
+
 ---
 
 ## 5. Data model
@@ -113,6 +144,15 @@ ingest timestamp:
 - `scan_runs`, `devices`, `neighbors`, `traffic_stats`, `snmp_polls`,
   `dhcp_observations`, `stp_events`, `findings`.
 
+**SNMP ingestion is curated, not bulk** (decision 2026-05-29). Raw SNMP is
+~4,471 rows/scan and mostly redundant, so the parser extracts only the useful
+subset — switch identity (model/name/firmware) into `entities_switch.attributes`,
+and a small set of curated `snmp_polls` rows — rather than the full firehose.
+The complete raw SNMP always remains in the Blob ZIP, so **additional fields can
+be back-extracted later without re-pulling SFTP** (there is probably more in
+there worth surfacing in the UI; the curated set will grow). A future
+`switch_ports` table is the natural home if port/FDB data is brought in.
+
 ### 5b. Canonical entities (current-state, kept long-term)
 Built at ingestion time by deduplicating across bundles and scans:
 - `entities_switch` — deduped on `chassis_id`. Current state of each switch.
@@ -122,15 +162,21 @@ Built at ingestion time by deduplicating across bundles and scans:
 - `health_rollup_daily` — small per-district/school daily metrics summary
   (broadcast %, error/drop rates, device counts, finding counts).
 
-### 5c. App-owned tables
-- `districts(id, slug, name, …)` — first-class tenant rows.
-- `schools(id, district_id, slug, name)`, `devices_registry(id, school_id, slug, name)`.
-- `users(id, email, role, is_break_glass, password_hash?, …)`.
-- `grants(user_id, scope_type, scope_id)` — scope_type ∈ {global, district, school, device}.
-- `ingested_bundles(filename UNIQUE, size_bytes, ingested_at, parse_status, …)`.
-- `audit_log(actor, action, target, detail, at)`.
-- **Management-plane tables** (Section 8): `sensors`, `desired_config`,
-  `command_queue`, `command_results`.
+### 5c. App-owned tables (as built — `schema/app.ts` + `schema/management.ts`)
+- `districts(id, slug, name)` — first-class tenant rows.
+- `schools(id, district_id, slug, name)`.
+- `sensors(id, school_id, slug, name, last_checkin_at, reported_config_version,
+  agent_version)` — the NetMon box at an IDF; navigation leaf AND management target.
+- `users(id, email, role, is_break_glass, password_hash?, disabled, …)`.
+- `grants(user_id, scope_type, scope_id)` — scope_type ∈ {global, district,
+  school, sensor}; scope_id null for global.
+- `break_glass_mfa_emails(email)` — recipients of the break-glass login code.
+- `ingested_bundles(filename UNIQUE, slugs, blob_path, parse_status, …)`.
+- `audit_log(actor_type, actor, action, target, detail, at)`.
+- `data_sources(...)` — **TODO (M2):** SFTP host/port/user/base path + Key Vault
+  secret reference; superadmin-editable (§4b).
+- **Management-plane** (§8): `desired_config`, `command_queue`,
+  `command_results`, `sensor_enrollments`.
 
 ---
 
@@ -177,6 +223,18 @@ compute):
 entity seen by multiple sensors and across nightly scans. Join keys:
 `chassis_id` (switches), `mac` (hosts). This is what the canonical entities
 layer (5b) is for — the per-scan `topology.json` alone won't stitch.
+
+**Validated topology reality (from the real sample):** each bundle's
+`topology.json` is **sensor-centric / star-shaped** — every node links back to
+`self` (the NetMon box). One scan = 1 scanner → 1 gateway, → 1 uplink switch
+(LLDP neighbor, carrying `chassis_id` + remote port e.g. `4/1/33`), → N hosts
+(121 here) connected via `l3_seen`. Consequences:
+- A single bundle does NOT reveal which switch port each host is on — only
+  "this sensor saw these IPs and uplinks to switch X port Y."
+- The district/school physical map is therefore built by **stitching each IDF's
+  sensor star together** at the switch level via `chassis_id`/LLDP.
+- True per-host → switch-port mapping would require the SNMP bridge/FDB
+  (`dot1dTpFdb`) table. **Deferred** — not in MVP scope.
 
 **Interaction:** rendered with React Flow (or Cytoscape.js). Click a switch node
 → side drawer with its neighbors, ports, SNMP, recent traffic.
@@ -252,8 +310,11 @@ the model on every page load).
 
 1. **Foundation** — repo, Next.js + TypeScript scaffold, Drizzle config,
    Postgres schema (time-series + entities + app-owned + management tables).
-2. **Ingestion** — nightly Job: single SFTP pull (all-unseen, idempotent) →
-   Blob → parse → upsert → build canonical entities + topology snapshots.
+2. **Ingestion** — bundle parser (upsert tenancy from `scan.json` slugs, load
+   time-series, curated SNMP extract, build canonical entities + topology
+   snapshots), driven by either a **manual ZIP upload** (build/test first) or the
+   nightly **SFTP pull** (all-unseen, idempotent) → Blob. Includes the
+   superadmin `data_sources` SFTP config + "Test connection" (§4b).
 3. **Auth & permissions** — Microsoft + Google OIDC, break-glass local admin
    with email-code MFA, users/grants, per-query scope filtering, admin invites.
 4. **Dashboard** — district → school → IDF/switch drill-down; physical +
