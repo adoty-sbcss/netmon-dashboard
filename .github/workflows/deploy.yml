@@ -1,0 +1,53 @@
+name: Build and deploy to Azure Container Apps
+
+# Pushes to main rebuild the image in ACR and roll the Container App to it.
+# Auth is passwordless via GitHub -> Azure OIDC federation (no secrets stored).
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # required to request the OIDC token
+  contents: read
+
+env:
+  RESOURCE_GROUP: W2-SBCSS-District-NetMon-Dashboard
+  ACR_NAME: w2sbcssnetmondashacr
+  IMAGE: netmon-dashboard
+  CONTAINER_APP: w2-sbcss-netmon-web
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC, no password)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure containerapp CLI extension
+        run: az extension add --name containerapp --upgrade --only-show-errors
+
+      - name: Build image in ACR (server-side build)
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE:${{ github.sha }}" \
+            --image "$IMAGE:latest" \
+            .
+
+      - name: Roll Container App to the new image
+        run: |
+          az containerapp update \
+            --name "$CONTAINER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE:${{ github.sha }}"
