@@ -6,7 +6,7 @@ using './main.bicep'
 param postgresAdminPassword = readEnvironmentVariable('PG_ADMIN_PASSWORD')
 
 // Optional: your workstation's public IP, to open the Postgres firewall for it.
-//   export CLIENT_IP='47.148.157.201'
+//   export CLIENT_IP='<your-workstation-public-ip>'
 param clientIpAddress = readEnvironmentVariable('CLIENT_IP', '')
 
 // All other parameters default to the current SBCSS stack names in main.bicep.
