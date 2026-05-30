@@ -28,6 +28,7 @@ import {
   stpEvents,
   trafficStats,
   snmpPolls,
+  hostSwitchPorts,
   findings as findingsTbl,
   entitiesSwitch,
   entitiesHost,
@@ -47,8 +48,107 @@ import {
   type RawTopology,
 } from "./bundle";
 
-/** Raw SNMP can be thousands of rows/scan; cap what we mirror into the hot DB. */
-const SNMP_ROW_CAP = 500;
+/**
+ * SNMP curation. Raw SNMP is thousands of rows/scan (mostly ipNetToMediaTable +
+ * ifTable bulk). We mirror a priority subset into the hot DB: switch identity
+ * (sys*) and everything the per-host switch-port chain needs (FDB, base-port
+ * ifindex, ifName, STP port table) is ALWAYS kept; only the bulk tables are
+ * capped. The full raw set still lives in the bundle ZIP for later back-extract.
+ */
+const SNMP_KEEP_OID_NAMES = new Set([
+  "sysDescr",
+  "sysObjectID",
+  "sysName",
+  "sysContact",
+  "sysLocation",
+  "sysUpTime",
+  "ifName",
+  "dot1dBasePortIfIndex",
+  "dot1dTpFdbTable",
+  "dot1dStpPortTable",
+]);
+/** Cap applied only to non-priority bulk rows (ifTable, ipNetToMediaTable, …). */
+const SNMP_BULK_ROW_CAP = 500;
+
+/** BRIDGE-MIB / IF-MIB OID prefixes used to derive a host's switch port. */
+const FDB_PORT_PREFIX = "1.3.6.1.2.1.17.4.3.1.2."; // dot1dTpFdbPort: suffix=MAC octets, val=bridgePort
+const BASEPORT_IFINDEX_PREFIX = "1.3.6.1.2.1.17.1.4.1.2."; // dot1dBasePortIfIndex: suffix=bridgePort, val=ifIndex
+const IFNAME_PREFIX = "1.3.6.1.2.1.31.1.1.1.1."; // ifName: suffix=ifIndex, val=name
+
+const normOid = (oid?: string | null) => (oid ?? "").replace(/^\./, "");
+
+/** Decimal OID octet suffix [32,207,174,78,233,71] -> "20:cf:ae:4e:e9:47". */
+function macFromOctets(octets: number[]): string | null {
+  if (octets.length !== 6) return null;
+  if (octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) return null;
+  return octets.map((o) => o.toString(16).padStart(2, "0")).join(":");
+}
+
+interface DerivedPort {
+  sourceDeviceIp: string | null;
+  mac: string;
+  bridgePort: number | null;
+  ifIndex: number | null;
+  ifName: string | null;
+}
+
+/** Furthest-resolved candidate wins when a MAC appears more than once. */
+function portRank(d: DerivedPort): number {
+  if (d.ifName) return 3;
+  if (d.ifIndex != null) return 2;
+  return 1;
+}
+
+/**
+ * Walk the BRIDGE-MIB chain over the FULL SNMP set to map each learned host MAC
+ * to a physical switch port: MAC -> dot1dTpFdbPort (bridge port) ->
+ * dot1dBasePortIfIndex (ifIndex) -> ifName. Bridge port 0 means "not learned on a
+ * specific port" and is skipped. Lookups are keyed per source device so polling
+ * multiple switches doesn't cross-contaminate. Returns one row per resolved MAC.
+ */
+function deriveHostSwitchPorts(snmp: ScanData["snmp"]): DerivedPort[] {
+  const basePortIfIndex = new Map<string, number>(); // `${dev}|${bridgePort}` -> ifIndex
+  const ifNameByIndex = new Map<string, string>(); // `${dev}|${ifIndex}` -> ifName
+
+  for (const p of snmp) {
+    const oid = normOid(p.oid);
+    const dev = str(p.device_ip) ?? "";
+    if (oid.startsWith(BASEPORT_IFINDEX_PREFIX)) {
+      const bp = oid.slice(BASEPORT_IFINDEX_PREFIX.length);
+      const ifIndex = toNum(p.value);
+      if (bp && ifIndex != null) basePortIfIndex.set(`${dev}|${bp}`, ifIndex);
+    } else if (oid.startsWith(IFNAME_PREFIX)) {
+      const idx = oid.slice(IFNAME_PREFIX.length);
+      const name = (str(p.value) ?? "").replace(/^"|"$/g, "").trim();
+      if (idx && name) ifNameByIndex.set(`${dev}|${idx}`, name);
+    }
+  }
+
+  const byMac = new Map<string, DerivedPort>();
+  for (const p of snmp) {
+    const oid = normOid(p.oid);
+    if (!oid.startsWith(FDB_PORT_PREFIX)) continue;
+    const dev = str(p.device_ip) ?? "";
+    const octets = oid.slice(FDB_PORT_PREFIX.length).split(".").map(Number);
+    const mac = macFromOctets(octets);
+    if (!mac) continue;
+    const bridgePort = toNum(p.value);
+    if (bridgePort == null || bridgePort === 0) continue; // 0 = not learned on a port
+    const ifIndex = basePortIfIndex.get(`${dev}|${bridgePort}`) ?? null;
+    const ifName =
+      ifIndex != null ? (ifNameByIndex.get(`${dev}|${ifIndex}`) ?? null) : null;
+    const cand: DerivedPort = {
+      sourceDeviceIp: dev || null,
+      mac,
+      bridgePort,
+      ifIndex,
+      ifName,
+    };
+    const existing = byMac.get(mac);
+    if (!existing || portRank(cand) > portRank(existing)) byMac.set(mac, cand);
+  }
+  return [...byMac.values()];
+}
 
 export interface IdentityOverride {
   district?: string;
@@ -185,6 +285,7 @@ export async function ingestBundle(
     stp_events: 0,
     traffic_stats: 0,
     snmp_polls: 0,
+    host_switch_ports: 0,
     findings: 0,
     entities_switch: 0,
     entities_host: 0,
@@ -372,8 +473,14 @@ export async function ingestBundle(
         counts.traffic_stats += trafficRows.length;
       }
 
-      // snmp (curated: cap rows to avoid bloating the hot DB)
-      const snmpSlice = scan.snmp.slice(0, SNMP_ROW_CAP);
+      // snmp (curated: keep priority OIDs in full, cap only the bulk tables)
+      const keptSnmp: typeof scan.snmp = [];
+      const bulkSnmp: typeof scan.snmp = [];
+      for (const p of scan.snmp) {
+        if (SNMP_KEEP_OID_NAMES.has(str(p.oid_name) ?? "")) keptSnmp.push(p);
+        else bulkSnmp.push(p);
+      }
+      const snmpSlice = [...keptSnmp, ...bulkSnmp.slice(0, SNMP_BULK_ROW_CAP)];
       const snmpRows = snmpSlice.map((p) => ({
         scanRunId,
         deviceIp: str(p.device_ip),
@@ -385,6 +492,20 @@ export async function ingestBundle(
       if (snmpRows.length) {
         await tx.insert(snmpPolls).values(snmpRows);
         counts.snmp_polls += snmpRows.length;
+      }
+
+      // per-host switch port (derived from the FULL snmp set, not the curated slice)
+      const portRows = deriveHostSwitchPorts(scan.snmp).map((d) => ({
+        scanRunId,
+        sourceDeviceIp: d.sourceDeviceIp,
+        mac: d.mac,
+        bridgePort: d.bridgePort,
+        ifIndex: d.ifIndex,
+        ifName: d.ifName,
+      }));
+      if (portRows.length) {
+        await tx.insert(hostSwitchPorts).values(portRows);
+        counts.host_switch_ports += portRows.length;
       }
 
       // findings

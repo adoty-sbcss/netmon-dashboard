@@ -148,6 +148,33 @@ export const snmpPolls = pgTable(
   (t) => [index("idx_snmp_scan").on(t.scanRunId)],
 );
 
+/**
+ * Per-host switch port, derived at ingest by walking the BRIDGE-MIB chain in the
+ * full SNMP poll set: MAC -> dot1dTpFdbPort (bridge port) -> dot1dBasePortIfIndex
+ * (ifIndex) -> ifName (e.g. "Gi1/0/12"). One row per (scan, mac) that resolves to
+ * a real learned port. Bridge port 0 (= not learned on a specific port) is treated
+ * as unresolved and not stored. sourceDeviceIp is the polled switch/gateway whose
+ * forwarding table produced the mapping.
+ */
+export const hostSwitchPorts = pgTable(
+  "host_switch_ports",
+  {
+    id: serial("id").primaryKey(),
+    scanRunId: integer("scan_run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    sourceDeviceIp: text("source_device_ip"),
+    mac: text("mac").notNull(),
+    bridgePort: integer("bridge_port"),
+    ifIndex: integer("if_index"),
+    ifName: text("if_name"),
+  },
+  (t) => [
+    index("idx_host_switch_ports_scan").on(t.scanRunId),
+    index("idx_host_switch_ports_mac").on(t.mac),
+  ],
+);
+
 export const dhcpObservations = pgTable(
   "dhcp_observations",
   {
