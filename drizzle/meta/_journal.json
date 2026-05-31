@@ -50,6 +50,13 @@
       "when": 1780227072092,
       "tag": "0006_fine_power_pack",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780230876603,
+      "tag": "0007_happy_cammi",
+      "breakpoints": true
     }
   ]
 }

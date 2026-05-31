@@ -5,8 +5,8 @@ import Link from "next/link";
 import { ArrowUpDown, ChevronRight, Search } from "lucide-react";
 
 import type { HostRow } from "@/db/queries";
-import type { DeviceType } from "@/lib/oui";
-import { DEVICE_TYPE_LABELS } from "@/lib/oui";
+import type { DeviceType } from "@/lib/oui/types";
+import { DEVICE_TYPE_LABELS } from "@/lib/oui/types";
 import { relativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { DeviceTypeBadge } from "@/components/device-type-badge";

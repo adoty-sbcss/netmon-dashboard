@@ -14,6 +14,7 @@ import {
   date,
   timestamp,
   jsonb,
+  doublePrecision,
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
@@ -103,6 +104,30 @@ export const topologySnapshots = pgTable(
   (t) => [
     uniqueIndex("uq_topology_kind_scope").on(t.kind, t.scopeType, t.scopeId),
   ],
+);
+
+/**
+ * Saved manual node positions for the network map. When an admin drags nodes and
+ * clicks Save, one row per node persists its (x,y) in the map's 1000×700 layout
+ * space; the renderer prefers these over the computed layout.
+ */
+export const topologyPositions = pgTable(
+  "topology_positions",
+  {
+    id: serial("id").primaryKey(),
+    schoolId: integer("school_id")
+      .notNull()
+      .references(() => schools.id, { onDelete: "cascade" }),
+    /** 'physical' | 'logical' */
+    kind: text("kind").notNull(),
+    nodeId: text("node_id").notNull(),
+    x: doublePrecision("x").notNull(),
+    y: doublePrecision("y").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("uq_topo_pos_school_kind_node").on(t.schoolId, t.kind, t.nodeId)],
 );
 
 /** Small durable daily metrics rollup per district (and optionally school). */

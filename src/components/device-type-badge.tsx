@@ -11,13 +11,14 @@ import {
   Router,
   Server,
   Shield,
+  Shuffle,
   Smartphone,
   Wifi,
   type LucideIcon,
 } from "lucide-react";
 
-import type { DeviceType } from "@/lib/oui";
-import { DEVICE_TYPE_LABELS } from "@/lib/oui";
+import type { DeviceType } from "@/lib/oui/types";
+import { DEVICE_TYPE_LABELS } from "@/lib/oui/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -35,6 +36,7 @@ const ICONS: Record<DeviceType, LucideIcon> = {
   storage: HardDrive,
   iot: Cpu,
   vm: Box,
+  randomized: Shuffle,
   unknown: HelpCircle,
 };
 

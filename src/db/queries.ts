@@ -33,6 +33,7 @@ import {
   entitiesSwitch,
   healthRollupDaily,
   topologySnapshots,
+  topologyPositions,
 } from "./schema/entities";
 import { enrichHost, type DeviceType } from "../lib/oui";
 
@@ -1433,9 +1434,9 @@ export async function listStpForSchool(
 
 // ---- network topology (maps) ----------------------------------------------
 
-export interface TopoNode {
+interface RawNode {
   id: string;
-  type: string;
+  type?: string;
   label?: string | null;
   ip?: string | null;
   hostCount?: number | null;
@@ -1445,48 +1446,145 @@ export interface TopoEdge {
   target: string;
   kind?: string | null;
 }
-export interface TopoGraph {
-  nodes: TopoNode[];
+/** A render-ready map node: refined type + entity link + hover detail. */
+export interface MapNode {
+  id: string;
+  type: string;
+  label: string;
+  ip?: string | null;
+  model?: string | null;
+  entityId?: number | null;
+  entityKind?: "switch" | "host" | null;
+  hostCount?: number | null;
+}
+export interface MapGraph {
+  nodes: MapNode[];
   edges: TopoEdge[];
+  positions: Record<string, { x: number; y: number }>;
   generatedAt: Date | null;
 }
-export interface SchoolTopology {
-  physical: TopoGraph;
-  logical: TopoGraph;
+export interface SchoolMap {
+  physical: MapGraph;
+  logical: MapGraph;
 }
 
-function emptyGraph(): TopoGraph {
-  return { nodes: [], edges: [], generatedAt: null };
+function refineInfraType(
+  base: string,
+  caps: string[] | null,
+  sysDescr: string | null,
+): string {
+  const c = (caps ?? []).map((s) => s.toLowerCase());
+  if (c.some((x) => x.includes("access-point") || x.includes("wlan"))) return "ap";
+  if (sysDescr && /access point|aironet|wireless lan|\bWAP\b/i.test(sysDescr)) return "ap";
+  if (sysDescr && /firewall|fortigate|palo alto|\bASA\b|sonicwall/i.test(sysDescr)) return "firewall";
+  if (c.includes("telephone")) return "phone";
+  if (c.includes("router") && !c.includes("bridge")) return "router";
+  if (sysDescr && /\brouter\b|\bISR\b|\bASR\b|RouterOS/i.test(sysDescr)) return "router";
+  if (base === "gateway") return "router";
+  if (base === "scanner") return "scanner";
+  return "switch";
 }
 
-/** Physical (LLDP/CDP) + logical (subnet/gateway) topology snapshots for a school. */
-export async function getSchoolTopology(schoolId: number): Promise<SchoolTopology> {
-  const rows = await db
-    .select({
-      kind: topologySnapshots.kind,
-      graph: topologySnapshots.graph,
-      generatedAt: topologySnapshots.generatedAt,
-    })
-    .from(topologySnapshots)
-    .where(
-      and(
-        eq(topologySnapshots.scopeType, "school"),
-        eq(topologySnapshots.scopeId, schoolId),
+/**
+ * Render-ready network map for a school: the physical (LLDP/CDP) and logical
+ * (subnet/gateway) snapshots, with each node enriched from canonical entities
+ * (refined device type, model, and a detail link), plus any saved manual
+ * positions.
+ */
+export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
+  const [snapRows, switchRows, hostRows, posRows] = await Promise.all([
+    db
+      .select({
+        kind: topologySnapshots.kind,
+        graph: topologySnapshots.graph,
+        generatedAt: topologySnapshots.generatedAt,
+      })
+      .from(topologySnapshots)
+      .where(
+        and(eq(topologySnapshots.scopeType, "school"), eq(topologySnapshots.scopeId, schoolId)),
       ),
-    );
+    db
+      .select({
+        id: entitiesSwitch.id,
+        systemName: entitiesSwitch.systemName,
+        systemDescription: entitiesSwitch.systemDescription,
+        mgmtIp: entitiesSwitch.mgmtIp,
+        capabilities: entitiesSwitch.capabilities,
+      })
+      .from(entitiesSwitch)
+      .where(eq(entitiesSwitch.schoolId, schoolId)),
+    db
+      .select({ id: entitiesHost.id, ip: entitiesHost.ip, hostname: entitiesHost.hostname })
+      .from(entitiesHost)
+      .where(eq(entitiesHost.schoolId, schoolId)),
+    db
+      .select({
+        kind: topologyPositions.kind,
+        nodeId: topologyPositions.nodeId,
+        x: topologyPositions.x,
+        y: topologyPositions.y,
+      })
+      .from(topologyPositions)
+      .where(eq(topologyPositions.schoolId, schoolId)),
+  ]);
 
-  const out: SchoolTopology = { physical: emptyGraph(), logical: emptyGraph() };
-  for (const r of rows) {
-    const g = (r.graph ?? {}) as { nodes?: TopoNode[]; edges?: TopoEdge[] };
-    const graph: TopoGraph = {
-      nodes: Array.isArray(g.nodes) ? g.nodes : [],
-      edges: Array.isArray(g.edges) ? g.edges : [],
-      generatedAt: r.generatedAt,
-    };
-    if (r.kind === "physical") out.physical = graph;
-    else if (r.kind === "logical") out.logical = graph;
+  const switchByIp = new Map(switchRows.filter((s) => s.mgmtIp).map((s) => [s.mgmtIp!, s]));
+  const hostByIp = new Map(hostRows.filter((h) => h.ip).map((h) => [h.ip!, h]));
+  const posByKind = new Map<string, Record<string, { x: number; y: number }>>();
+  for (const p of posRows) {
+    const rec = posByKind.get(p.kind) ?? {};
+    rec[p.nodeId] = { x: p.x, y: p.y };
+    posByKind.set(p.kind, rec);
   }
-  return out;
+
+  function enrich(kind: string, raw: RawNode[]): MapNode[] {
+    return raw.map((n) => {
+      const baseType = n.type ?? "host";
+      const sw = n.ip ? switchByIp.get(n.ip) : undefined;
+      if (sw) {
+        return {
+          id: n.id,
+          type: refineInfraType(baseType, sw.capabilities ?? null, sw.systemDescription),
+          label: sw.systemName || n.label || n.ip || n.id,
+          ip: n.ip ?? sw.mgmtIp ?? null,
+          model: sw.systemDescription ?? null,
+          entityId: sw.id,
+          entityKind: "switch",
+        };
+      }
+      const host = n.ip && baseType !== "subnet" ? hostByIp.get(n.ip) : undefined;
+      if (host) {
+        return {
+          id: n.id,
+          type: baseType === "gateway" ? "router" : baseType,
+          label: host.hostname || n.label || n.ip || n.id,
+          ip: n.ip ?? null,
+          entityId: host.id,
+          entityKind: "host",
+        };
+      }
+      return {
+        id: n.id,
+        type: refineInfraType(baseType, null, null),
+        label: n.label || n.ip || n.id,
+        ip: n.ip ?? null,
+        hostCount: n.hostCount ?? null,
+      };
+    });
+  }
+
+  function build(kind: "physical" | "logical"): MapGraph {
+    const row = snapRows.find((r) => r.kind === kind);
+    const g = (row?.graph ?? {}) as { nodes?: RawNode[]; edges?: TopoEdge[] };
+    return {
+      nodes: enrich(kind, Array.isArray(g.nodes) ? g.nodes : []),
+      edges: Array.isArray(g.edges) ? g.edges : [],
+      positions: posByKind.get(kind) ?? {},
+      generatedAt: row?.generatedAt ?? null,
+    };
+  }
+
+  return { physical: build("physical"), logical: build("logical") };
 }
 
 // ---- admin: managed entity tree (rename / delete / purge) -----------------

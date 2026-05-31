@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 
 import {
   getDistrictBySlug,
   getSchoolBySlug,
-  getSchoolTopology,
+  getSchoolMap,
 } from "@/db/queries";
+import { getSessionUser } from "@/lib/auth/current-user";
 import { titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { NetworkMap } from "@/components/network-map";
@@ -20,12 +21,15 @@ export default async function MapPage({
 }) {
   const { district: districtSlug, school: schoolSlug } = await params;
 
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+
   const district = await getDistrictBySlug(districtSlug);
   if (!district) notFound();
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const topology = await getSchoolTopology(school.id);
+  const map = await getSchoolMap(school.id);
   const basePath = `/${district.slug}/${school.slug}`;
 
   return (
@@ -44,7 +48,13 @@ export default async function MapPage({
         />
       </div>
 
-      <NetworkMap physical={topology.physical} logical={topology.logical} />
+      <NetworkMap
+        physical={map.physical}
+        logical={map.logical}
+        basePath={basePath}
+        schoolId={school.id}
+        canSave={user.role === "superadmin"}
+      />
     </div>
   );
 }
