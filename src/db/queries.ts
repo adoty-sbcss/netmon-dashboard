@@ -37,7 +37,12 @@ import {
   topologySnapshots,
   topologyPositions,
 } from "./schema/entities";
-import { configBackups } from "./schema/management";
+import {
+  configBackups,
+  desiredConfig,
+  commandQueue,
+  sensorEnrollments,
+} from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
 
 // ---- shared shapes --------------------------------------------------------
@@ -1806,6 +1811,57 @@ export async function listConfigBackups(sensorId: number): Promise<ConfigBackupR
     importedAt: r.importedAt,
     manifest: (r.manifest ?? {}) as Record<string, unknown>,
   }));
+}
+
+export interface SensorManagement {
+  enrolled: boolean;
+  enrollLastUsedAt: Date | null;
+  configVersion: number | null;
+  config: Record<string, unknown> | null;
+  commands: {
+    id: number;
+    command: string;
+    status: string;
+    createdAt: Date;
+    sentAt: Date | null;
+  }[];
+}
+
+/** Control-plane state for a sensor: enrollment, desired config, recent commands. */
+export async function getSensorManagement(sensorId: number): Promise<SensorManagement> {
+  const [enroll, cfg, cmds] = await Promise.all([
+    db
+      .select({ lastUsedAt: sensorEnrollments.lastUsedAt })
+      .from(sensorEnrollments)
+      .where(and(eq(sensorEnrollments.sensorId, sensorId), eq(sensorEnrollments.revoked, false)))
+      .orderBy(desc(sensorEnrollments.createdAt))
+      .limit(1),
+    db
+      .select({ v: desiredConfig.configVersion, config: desiredConfig.config })
+      .from(desiredConfig)
+      .where(eq(desiredConfig.sensorId, sensorId))
+      .limit(1),
+    db
+      .select({
+        id: commandQueue.id,
+        command: commandQueue.command,
+        status: commandQueue.status,
+        createdAt: commandQueue.createdAt,
+        sentAt: commandQueue.sentAt,
+      })
+      .from(commandQueue)
+      .where(eq(commandQueue.sensorId, sensorId))
+      .orderBy(desc(commandQueue.createdAt))
+      .limit(10),
+  ]);
+
+  return {
+    enrolled: enroll.length > 0,
+    enrollLastUsedAt: enroll[0]?.lastUsedAt ?? null,
+    configVersion: cfg[0]?.v ?? null,
+    config: (cfg[0]?.config as Record<string, unknown> | undefined) ?? null,
+    commands: cmds,
+  };
 }
 
 /** Fetch a backup's bytes + the district/school it belongs to (for auth scope). */

@@ -7,8 +7,10 @@ import {
   getSchoolBySlug,
   getSensorDetail,
   listConfigBackups,
+  getSensorManagement,
 } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
+import { SensorManagementPanel } from "./sensor-management";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -51,7 +53,9 @@ export default async function SensorDetailPage({
 
   const user = await getSessionUser();
   const isAdmin = user?.role === "superadmin";
-  const backups = isAdmin ? await listConfigBackups(sensor.id) : [];
+  const [backups, mgmt] = isAdmin
+    ? await Promise.all([listConfigBackups(sensor.id), getSensorManagement(sensor.id)])
+    : [[], null];
   const basePath = `/${district.slug}/${school.slug}`;
 
   return (
@@ -98,6 +102,11 @@ export default async function SensorDetailPage({
           </dl>
         </CardContent>
       </Card>
+
+      {/* Management (admin): enrollment, config push, commands */}
+      {isAdmin && mgmt && (
+        <SensorManagementPanel sensorId={sensor.id} basePath={basePath} mgmt={mgmt} />
+      )}
 
       {/* Config backups (admin) */}
       {isAdmin && (
@@ -156,8 +165,8 @@ export default async function SensorDetailPage({
             )}
             <p className="mt-3 flex items-center gap-1.5 px-6 text-xs text-muted-foreground sm:px-0">
               <Wrench className="size-3.5" />
-              Forcing a scan/upload, pushing SNMP strings, and restoring config arrive
-              with the Phase 1 check-in loop.
+              Restore a backup by downloading it and running{" "}
+              <code>netmon-config-restore</code> on the box.
             </p>
           </CardContent>
         </Card>

@@ -86,7 +86,16 @@ export default async function SchoolPage({
           icon={Cpu}
           href={`/${district.slug}/${school.slug}/hosts`}
         />
-        <StatCard label="Sensors" value={num(sensors.length)} icon={Radio} />
+        <StatCard
+          label="Sensors"
+          value={num(sensors.length)}
+          icon={Radio}
+          href={
+            sensors.length === 1
+              ? `/${district.slug}/${school.slug}/sensor/${sensors[0].id}`
+              : undefined
+          }
+        />
         <StatCard
           label="Findings"
           value={num(stats.findingCount)}

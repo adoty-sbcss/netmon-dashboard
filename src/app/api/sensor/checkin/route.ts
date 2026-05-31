@@ -1,0 +1,71 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
+
+import { db } from "@/db";
+import { sensors } from "@/db/schema/app";
+import { desiredConfig, commandQueue } from "@/db/schema/management";
+import { resolveSensorFromBearer } from "@/lib/sensor/auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/**
+ * Sensor check-in (outbound poll). Authenticated by the enrollment token.
+ * The sensor reports its agent + applied-config version; we return the desired
+ * config and hand out any dispatchable commands (marking them 'sent').
+ *
+ *   POST /api/sensor/checkin   Authorization: Bearer <token>
+ *   body: { agentVersion?: string, configVersion?: number }
+ */
+export async function POST(req: NextRequest) {
+  const sensorId = await resolveSensorFromBearer(req.headers.get("authorization"));
+  if (!sensorId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const body = (await req.json().catch(() => ({}))) as {
+    agentVersion?: string;
+    configVersion?: number;
+  };
+
+  await db
+    .update(sensors)
+    .set({
+      lastCheckinAt: sql`now()`,
+      ...(typeof body.agentVersion === "string" ? { agentVersion: body.agentVersion } : {}),
+      ...(Number.isInteger(body.configVersion)
+        ? { reportedConfigVersion: body.configVersion }
+        : {}),
+    })
+    .where(eq(sensors.id, sensorId));
+
+  const [cfg] = await db
+    .select({ v: desiredConfig.configVersion, config: desiredConfig.config })
+    .from(desiredConfig)
+    .where(eq(desiredConfig.sensorId, sensorId))
+    .limit(1);
+
+  // Dispatchable = approved, or pending & not requiring approval.
+  const dispatchable = await db
+    .select({ id: commandQueue.id, command: commandQueue.command, args: commandQueue.args })
+    .from(commandQueue)
+    .where(
+      and(
+        eq(commandQueue.sensorId, sensorId),
+        or(
+          eq(commandQueue.status, "approved"),
+          and(eq(commandQueue.status, "pending"), eq(commandQueue.requiresApproval, false)),
+        ),
+      ),
+    );
+
+  if (dispatchable.length > 0) {
+    await db
+      .update(commandQueue)
+      .set({ status: "sent", sentAt: sql`now()` })
+      .where(inArray(commandQueue.id, dispatchable.map((c) => c.id)));
+  }
+
+  return NextResponse.json({
+    config: cfg ? { version: cfg.v, data: cfg.config } : null,
+    commands: dispatchable,
+  });
+}

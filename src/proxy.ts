@@ -18,6 +18,13 @@ export async function proxy(req: NextRequest) {
   // happens before a session exists). They guard themselves.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 
+  // Sensor check-in endpoints authenticate with an enrollment token (Bearer),
+  // not a user session — let them through; they guard themselves. (Other
+  // /api/sensor/* routes, like config-backup download, still require a session.)
+  if (pathname === "/api/sensor/checkin" || pathname === "/api/sensor/result") {
+    return NextResponse.next();
+  }
+
   const claims = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
 
   const isLogin = pathname === LOGIN_PATH;
