@@ -69,6 +69,11 @@ export interface RawDhcp {
   router?: string | null;
   dns_servers?: string | null;
   seen_at?: string | null;
+  // DHCP device-fingerprint options (present on client DISCOVER/REQUEST/INFORM):
+  // 60 = vendor class id, 55 = parameter request list, 12 = advertised hostname.
+  vendor_class_id?: string | null;
+  param_req_list?: string | null;
+  client_hostname?: string | null;
 }
 
 export interface RawStp {

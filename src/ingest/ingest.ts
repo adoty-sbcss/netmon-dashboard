@@ -14,7 +14,7 @@
  *   maps           topology_snapshots (physical + logical, per school)
  *   rollup         health_rollup_daily (per district+school+day)
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   districts,
@@ -350,6 +350,12 @@ export async function ingestBundle(
     let healthDns = 0;
     const macSeen = new Set<string>();
     const chassisSeen = new Set<string>();
+    // MAC → DHCP fingerprint (hostname + option 60/55), accumulated across all
+    // scans in the bundle, used to name + classify SNMP-silent endpoints.
+    const dhcpFp = new Map<
+      string,
+      { hostname?: string | null; vendorClass?: string | null; paramList?: string | null }
+    >();
     let day: string | null = null;
 
     for (const scan of bundle.scans) {
@@ -434,11 +440,26 @@ export async function ingestBundle(
         router: str(d.router),
         dnsServers: str(d.dns_servers),
         seenAt: toDate(d.seen_at),
+        vendorClassId: str(d.vendor_class_id),
+        paramReqList: str(d.param_req_list),
+        clientHostname: str(d.client_hostname),
       }));
       if (dhcpRows.length) {
         await tx.insert(dhcpObservations).values(dhcpRows);
         counts.dhcp_observations += dhcpRows.length;
         healthDhcp += dhcpRows.length;
+      }
+      // Build a MAC → DHCP fingerprint map (hostname + option 60/55) for this
+      // scan, so the canonical host upsert below can name + classify endpoints
+      // that never speak SNMP. Lowercased MAC keys.
+      for (const d of scan.dhcp) {
+        const mac = str(d.client_mac)?.toLowerCase();
+        if (!mac) continue;
+        const fp = dhcpFp.get(mac) ?? {};
+        if (!fp.hostname && d.client_hostname) fp.hostname = str(d.client_hostname);
+        if (!fp.vendorClass && d.vendor_class_id) fp.vendorClass = str(d.vendor_class_id);
+        if (!fp.paramList && d.param_req_list) fp.paramList = str(d.param_req_list);
+        dhcpFp.set(mac, fp);
       }
 
       // dns health (per-resolver aggregate + per-probe detail)
@@ -610,13 +631,19 @@ export async function ingestBundle(
         const mac = str(d.mac);
         if (!mac) continue; // need a MAC to dedup
         const seen = toDate(d.last_seen_at) ?? completedAt;
-        const hostname = str(d.hostname);
-        // Enrich: fill manufacturer from the OUI table when the bundle says
-        // "unknown"/blank, and classify a coarse device type. Pure/offline.
+        const fp = dhcpFp.get(mac.toLowerCase());
+        // Prefer the discovered hostname; fall back to the name the client
+        // advertised over DHCP (option 12) when PTR/nmap gave us nothing.
+        const hostname = str(d.hostname) ?? fp?.hostname ?? null;
+        // Enrich: fill manufacturer from the OUI registry when the bundle says
+        // "unknown"/blank, and classify device type from SNMP + DHCP fingerprint
+        // + hostname + vendor. Pure/offline.
         const { vendor, deviceType } = enrichHost({
           mac,
           vendor: str(d.vendor),
           hostname,
+          dhcpVendorClass: fp?.vendorClass ?? null,
+          dhcpParamList: fp?.paramList ?? null,
         });
         await tx
           .insert(entitiesHost)
@@ -636,9 +663,11 @@ export async function ingestBundle(
             set: {
               schoolId: school.id,
               ip: str(d.ip),
-              hostname,
-              vendor,
-              deviceType,
+              // Never downgrade a known hostname/type to null/unknown on a later
+              // scan that happened to lack the data.
+              hostname: sql`coalesce(excluded.hostname, ${entitiesHost.hostname})`,
+              vendor: sql`coalesce(excluded.vendor, ${entitiesHost.vendor})`,
+              deviceType: sql`case when excluded.device_type is null or excluded.device_type = 'unknown' then coalesce(${entitiesHost.deviceType}, excluded.device_type) else excluded.device_type end`,
               lastSeenAt: seen,
               updatedAt: new Date(),
             },

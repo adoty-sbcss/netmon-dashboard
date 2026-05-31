@@ -192,6 +192,12 @@ export const dhcpObservations = pgTable(
     router: text("router"),
     dnsServers: text("dns_servers"),
     seenAt: timestamp("seen_at", { withTimezone: true }),
+    // Device-fingerprint options (client-originated messages): 60 vendor class,
+    // 55 parameter request list, 12 advertised hostname. Used to classify
+    // endpoints that never speak SNMP and to fill missing hostnames.
+    vendorClassId: text("vendor_class_id"),
+    paramReqList: text("param_req_list"),
+    clientHostname: text("client_hostname"),
   },
   (t) => [index("idx_dhcp_scan").on(t.scanRunId)],
 );

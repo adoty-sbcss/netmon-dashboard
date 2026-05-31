@@ -90,20 +90,49 @@ const VENDOR_RULES: { type: DeviceType; re: RegExp }[] = [
   { type: "vm", re: /vmware|\bqemu\b|virtualbox|\bxen\b|parallels|nutanix/i },
 ];
 
+// DHCP option-60 (vendor class id) → device type. This is a strong passive
+// signal for endpoints that never speak SNMP — the classic device fingerprint.
+const DHCP_VENDOR_RULES: { type: DeviceType; re: RegExp }[] = [
+  { type: "printer", re: /jetdirect|hp.*(jet|print)|hewlett.*print|lexmark|\bcanon\b|epson|brother|kyocera|\bricoh\b|\bxerox\b|\bzebra\b|sharp.*mfp|toshiba.*tec/i },
+  { type: "ap", re: /\baruba\b|arubaap|cisco ap|\bAIR-|meraki|\bmist\b|ruckus|ubiquiti|\bUAP\b|aerohive|cambium|engenius/i },
+  { type: "phone", re: /polycom|yealink|grandstream|cisco ip phone|\bSEP[0-9A-F]|\bsnom\b|\bmitel\b|avaya.*phone|sip|fanvil|audiocodes/i },
+  { type: "camera", re: /\baxis\b|hikvision|\bdahua\b|\bACTi\b|avigilon|hanwha|vivotek/i },
+  { type: "firewall", re: /sonicwall|fortigate|palo ?alto|watchguard|\bsophos\b/i },
+  { type: "storage", re: /synology|\bqnap\b|netapp|\bdrobo\b/i },
+  { type: "vm", re: /\bvmware\b|\bqemu\b|virtualbox/i },
+  { type: "mobile", re: /android-dhcp|\biphone\b|\bipad\b|\bipod\b|dhcpcd-.*android|samsung-android|\bMobile\b/i },
+  { type: "computer", re: /MSFT|microsoft|windows|\bMacBook\b|chromeos|cros\b/i },
+];
+
+/** Classify from the DHCP fingerprint (option 60 vendor class / option 55). */
+export function classifyByDhcp(
+  vendorClass: string | null | undefined,
+  _paramList?: string | null,
+): DeviceType | null {
+  if (vendorClass)
+    for (const r of DHCP_VENDOR_RULES) if (r.re.test(vendorClass)) return r.type;
+  return null;
+}
+
 /**
- * Best-effort device classification. Priority: SNMP sysDescr (most reliable) >
- * hostname keywords > OUI vendor-name keywords > randomized-MAC heuristic > unknown.
+ * Best-effort device classification. Priority: SNMP sysDescr > DHCP vendor-class
+ * fingerprint > hostname keywords > OUI vendor-name keywords > randomized-MAC
+ * heuristic > unknown.
  */
 export function classifyDeviceType(input: {
   mac?: string | null;
   vendor?: string | null;
   hostname?: string | null;
   snmpSysDescr?: string | null;
+  dhcpVendorClass?: string | null;
+  dhcpParamList?: string | null;
 }): DeviceType {
   const { mac, hostname, snmpSysDescr } = input;
   const vendor = input.vendor ?? lookupVendor(mac);
 
   if (snmpSysDescr) for (const r of SNMP_RULES) if (r.re.test(snmpSysDescr)) return r.type;
+  const byDhcp = classifyByDhcp(input.dhcpVendorClass, input.dhcpParamList);
+  if (byDhcp) return byDhcp;
   if (hostname) for (const r of HOSTNAME_RULES) if (r.re.test(hostname)) return r.type;
   if (vendor && !isBlankVendor(vendor))
     for (const r of VENDOR_RULES) if (r.re.test(vendor)) return r.type;
@@ -123,6 +152,8 @@ export function enrichHost(input: {
   vendor?: string | null;
   hostname?: string | null;
   snmpSysDescr?: string | null;
+  dhcpVendorClass?: string | null;
+  dhcpParamList?: string | null;
 }): { vendor: string | null; deviceType: DeviceType } {
   let vendor = isBlankVendor(input.vendor) ? lookupVendor(input.mac) : (input.vendor ?? null);
   const deviceType = classifyDeviceType({ ...input, vendor });
