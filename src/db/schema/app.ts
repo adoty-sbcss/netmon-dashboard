@@ -197,6 +197,14 @@ export const ingestSettings = pgTable("ingest_settings", {
   baseDir: text("base_dir").notNull().default("/"),
   /** Master switch: when false, scheduled + on-demand sync no-op early. */
   enabled: boolean("enabled").notNull().default(false),
+  // --- automatic scheduling -------------------------------------------------
+  /** When true, the cron Job auto-pulls on the cadence below. When false the
+   *  remote Job no-ops and only the manual "Sync now" button pulls. */
+  scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
+  /** How often the scheduled pull should run: 'hourly' | 'every6h' |
+   *  'every12h' | 'daily'. The Job wakes hourly and skips until this much time
+   *  has elapsed since last_sync_at, so charges stay near one pass per cadence. */
+  scheduleFrequency: text("schedule_frequency").notNull().default("every6h"),
   // --- last-run telemetry (surfaced on the settings page) ------------------
   lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
   /** 'ok' | 'error' | 'running' */

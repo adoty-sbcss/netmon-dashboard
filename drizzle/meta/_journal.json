@@ -36,6 +36,13 @@
       "when": 1780194339763,
       "tag": "0004_fast_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780225039581,
+      "tag": "0005_gray_rage",
+      "breakpoints": true
     }
   ]
 }

@@ -20,7 +20,9 @@ import {
   resolveSftpConfig,
   markSyncStart,
   markSyncResult,
+  SCHEDULE_FREQUENCIES,
   type AuthMode,
+  type ScheduleFrequency,
 } from "./settings";
 import { runSync } from "@/ingest/sync-core";
 
@@ -65,6 +67,10 @@ export async function saveSettingsAction(
   const portRaw = String(formData.get("port") ?? "22").trim();
   const port = Number(portRaw) || 22;
   const enabled = formData.get("enabled") === "on";
+  const scheduleEnabled = formData.get("scheduleEnabled") === "on";
+  const freqRaw = String(formData.get("scheduleFrequency") ?? "every6h");
+  const scheduleFrequency: ScheduleFrequency =
+    freqRaw in SCHEDULE_FREQUENCIES ? (freqRaw as ScheduleFrequency) : "every6h";
   const newPassword = String(formData.get("newPassword") ?? "");
   const newPrivateKey = String(formData.get("newPrivateKey") ?? "");
   const newPassphrase = String(formData.get("newPassphrase") ?? "");
@@ -84,6 +90,8 @@ export async function saveSettingsAction(
     authMode,
     baseDir,
     enabled,
+    scheduleEnabled,
+    scheduleFrequency,
     newPassword: newPassword || undefined,
     newPrivateKey: newPrivateKey || undefined,
     newPassphrase: newPassphrase || undefined,
@@ -96,6 +104,8 @@ export async function saveSettingsAction(
     username,
     authMode,
     enabled,
+    scheduleEnabled,
+    scheduleFrequency,
   });
 
   revalidatePath(SETTINGS_PATH);

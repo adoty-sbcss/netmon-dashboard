@@ -19,6 +19,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
+// Client-safe mirror of the cadences in src/lib/ingest/settings.ts (kept inline
+// so this client component doesn't pull the server-only settings module).
+const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: "hourly", label: "Every hour" },
+  { value: "every6h", label: "Every 6 hours" },
+  { value: "every12h", label: "Every 12 hours" },
+  { value: "daily", label: "Once a day" },
+];
+
 function Notice({ state }: { state: SettingsActionState }) {
   if (state.error) {
     return (
@@ -48,6 +57,7 @@ export function IngestionSettingsForm({
   settings: IngestSettingsView;
 }) {
   const [authMode, setAuthMode] = useState<"password" | "key">(settings.authMode);
+  const [scheduleEnabled, setScheduleEnabled] = useState(settings.scheduleEnabled);
 
   const [saveState, saveAction, saving] = useActionState<SettingsActionState, FormData>(
     saveSettingsAction,
@@ -81,8 +91,49 @@ export function IngestionSettingsForm({
                 defaultChecked={settings.enabled}
                 className="size-4 rounded border-input accent-primary"
               />
-              <span className={labelCls}>Enable scheduled & on-demand ingestion</span>
+              <span className={labelCls}>Enable ingestion (allows manual + scheduled pulls)</span>
             </label>
+
+            {/* ---- Automatic schedule ---- */}
+            <div className="rounded-lg border border-input p-3">
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  name="scheduleEnabled"
+                  checked={scheduleEnabled}
+                  onChange={(e) => setScheduleEnabled(e.target.checked)}
+                  className="size-4 rounded border-input accent-primary"
+                />
+                <span className={labelCls}>Automatic scheduled sync</span>
+              </label>
+              <div
+                className={
+                  "mt-3 flex flex-col gap-1.5 transition-opacity " +
+                  (scheduleEnabled ? "opacity-100" : "pointer-events-none opacity-50")
+                }
+              >
+                <label htmlFor="scheduleFrequency" className={labelCls}>
+                  How often
+                </label>
+                <select
+                  id="scheduleFrequency"
+                  name="scheduleFrequency"
+                  defaultValue={settings.scheduleFrequency}
+                  disabled={!scheduleEnabled}
+                  className="h-8 w-full max-w-xs rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed dark:bg-input/30"
+                >
+                  {FREQUENCY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  The remote job wakes hourly and pulls only when this much time has
+                  elapsed since the last sync — about one pass per cadence.
+                </p>
+              </div>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-[1fr_8rem]">
               <div className={fieldCls}>

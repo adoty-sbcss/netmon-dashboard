@@ -105,8 +105,8 @@ param enableIngestJob bool = true
 @description('Image the ingest Job runs. Built from the Dockerfile "ingest" target.')
 param ingestImage string = '${acrName}.azurecr.io/netmon-dashboard-ingest:latest'
 
-@description('Cron schedule (UTC) for the ingest Job. Default: every 6 hours.')
-param ingestCron string = '0 */6 * * *'
+@description('Cron (UTC) for the ingest Job wake-up. Default: hourly. The job then pulls only when the per-cadence interval (set in /settings/ingestion) has elapsed, so it stays near one real pass per chosen frequency.')
+param ingestCron string = '0 * * * *'
 
 @description('Create the RBAC role assignments. Set false if Lighthouse blocks them and assign in the Portal instead.')
 param assignRoles bool = true

@@ -99,8 +99,19 @@ export default async function SchoolPage({
           icon={Globe}
           href={`/${district.slug}/${school.slug}/dns`}
         />
-        <StatCard label="STP events" value={num(stats.stpCount)} icon={RouteOff} />
-        <StatCard label="Devices seen" value={num(stats.deviceCount)} icon={Cpu} />
+        <StatCard
+          label="STP events"
+          value={num(stats.stpCount)}
+          icon={RouteOff}
+          href={`/${district.slug}/${school.slug}/stp`}
+        />
+        <StatCard
+          label="Devices seen"
+          value={num(stats.deviceCount)}
+          icon={Cpu}
+          href={`/${district.slug}/${school.slug}/hosts`}
+          hint="raw sightings across scans — open Hosts for unique devices"
+        />
       </div>
 
       {/* Sensors */}

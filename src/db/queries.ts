@@ -1035,3 +1035,68 @@ export async function listDnsForSchool(
 
   return { scanId, resolvers, probes };
 }
+
+// ---- STP / spanning-tree --------------------------------------------------
+
+export interface StpRow {
+  id: number;
+  bpduType: string | null;
+  rootBridgeId: string | null;
+  bridgeId: string | null;
+  portId: string | null;
+  rootPathCost: number | null;
+  topologyChange: boolean | null;
+  seenAt: Date | null;
+  sensorSlug: string;
+}
+
+export interface StpSummary {
+  total: number;
+  topologyChanges: number;
+  /** Distinct root bridge IDs observed — >1 can mean instability/misconfig. */
+  rootBridges: string[];
+  rows: StpRow[];
+}
+
+/**
+ * Spanning-tree (BPDU) events for a school. Returns the recent events plus a
+ * small summary (topology-change count, distinct root bridges) so the UI can
+ * surface instability at a glance. Newest first, capped like the DHCP view.
+ */
+export async function listStpForSchool(
+  schoolId: number,
+  opts: { scanId?: number } = {},
+): Promise<StpSummary> {
+  const where = opts.scanId
+    ? and(eq(sensors.schoolId, schoolId), eq(stpEvents.scanRunId, opts.scanId))
+    : eq(sensors.schoolId, schoolId);
+
+  const rows = await db
+    .select({
+      id: stpEvents.id,
+      bpduType: stpEvents.bpduType,
+      rootBridgeId: stpEvents.rootBridgeId,
+      bridgeId: stpEvents.bridgeId,
+      portId: stpEvents.portId,
+      rootPathCost: stpEvents.rootPathCost,
+      topologyChange: stpEvents.topologyChange,
+      seenAt: stpEvents.seenAt,
+      sensorSlug: sensors.slug,
+    })
+    .from(stpEvents)
+    .innerJoin(scanRuns, eq(stpEvents.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(where)
+    .orderBy(desc(stpEvents.seenAt))
+    .limit(500);
+
+  const rootBridges = [
+    ...new Set(rows.map((r) => r.rootBridgeId).filter((v): v is string => !!v)),
+  ];
+  return {
+    total: rows.length,
+    topologyChanges: rows.filter((r) => r.topologyChange).length,
+    rootBridges,
+    rows,
+  };
+}

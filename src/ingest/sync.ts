@@ -19,6 +19,7 @@ import {
   resolveSftpConfig,
   markSyncStart,
   markSyncResult,
+  frequencyToMs,
 } from "../lib/ingest/settings";
 
 function parseArgs(argv: string[]): SyncOptions {
@@ -39,7 +40,8 @@ async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
   const args = parseArgs(process.argv.slice(2));
 
-  const { enabled, config, source } = await resolveSftpConfig();
+  const { enabled, scheduleEnabled, scheduleFrequency, lastSyncAt, config, source } =
+    await resolveSftpConfig();
   if (!config) {
     console.log(
       "SFTP ingestion is not configured (no DB settings and no SFTP_* env). " +
@@ -50,6 +52,31 @@ async function main() {
   if (!enabled && !args.dryRun) {
     console.log("SFTP ingestion is disabled in settings; skipping. (use the UI to enable)");
     process.exit(0);
+  }
+  // Scheduled-run gating (cron Job context). --force or --dry-run bypass it; the
+  // web app's "Sync now" button calls runSync directly and never reaches here.
+  if (!args.dryRun && !args.force) {
+    if (!scheduleEnabled) {
+      console.log(
+        "Automatic scheduled sync is off; skipping. (enable it at /settings/ingestion, " +
+          "or use the Sync now button for a manual pull)",
+      );
+      process.exit(0);
+    }
+    const intervalMs = frequencyToMs(scheduleFrequency);
+    if (lastSyncAt) {
+      const elapsed = Date.now() - new Date(lastSyncAt).getTime();
+      if (elapsed < intervalMs) {
+        const mins = Math.round((intervalMs - elapsed) / 60000);
+        console.log(
+          `Not due yet (cadence: ${scheduleFrequency}). Last pull ${Math.round(
+            elapsed / 60000,
+          )} min ago; next in ~${mins} min. Skipping.`,
+        );
+        process.exit(0);
+      }
+    }
+    console.log(`Scheduled pull due (cadence: ${scheduleFrequency}).`);
   }
   console.log(`Using SFTP config from ${source}.`);
 

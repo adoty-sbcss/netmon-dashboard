@@ -19,6 +19,30 @@ import { encryptSecret, decryptSecret } from "../crypto/secret-box";
 
 export type AuthMode = "password" | "key";
 
+/** Allowed scheduled-pull cadences and their interval in milliseconds. */
+export const SCHEDULE_FREQUENCIES = {
+  hourly: 60 * 60 * 1000,
+  every6h: 6 * 60 * 60 * 1000,
+  every12h: 12 * 60 * 60 * 1000,
+  daily: 24 * 60 * 60 * 1000,
+} as const;
+
+export type ScheduleFrequency = keyof typeof SCHEDULE_FREQUENCIES;
+
+/** Human labels for the frequency selector. */
+export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = {
+  hourly: "Every hour",
+  every6h: "Every 6 hours",
+  every12h: "Every 12 hours",
+  daily: "Once a day",
+};
+
+export function frequencyToMs(freq: string): number {
+  return (
+    SCHEDULE_FREQUENCIES[freq as ScheduleFrequency] ?? SCHEDULE_FREQUENCIES.every6h
+  );
+}
+
 /** Connect-ready config (secrets decrypted). */
 export interface SftpConfig {
   host: string;
@@ -39,6 +63,8 @@ export interface IngestSettingsView {
   authMode: AuthMode;
   baseDir: string;
   enabled: boolean;
+  scheduleEnabled: boolean;
+  scheduleFrequency: ScheduleFrequency;
   hasPassword: boolean;
   hasPrivateKey: boolean;
   hasPassphrase: boolean;
@@ -71,6 +97,8 @@ export async function getIngestSettingsView(): Promise<IngestSettingsView> {
     authMode: (row?.authMode as AuthMode) ?? "password",
     baseDir: row?.baseDir ?? "/",
     enabled: row?.enabled ?? false,
+    scheduleEnabled: row?.scheduleEnabled ?? false,
+    scheduleFrequency: (row?.scheduleFrequency as ScheduleFrequency) ?? "every6h",
     hasPassword: !!row?.passwordEnc,
     hasPrivateKey: !!row?.privateKeyEnc,
     hasPassphrase: !!row?.passphraseEnc,
@@ -88,6 +116,8 @@ export interface SaveIngestSettingsInput {
   authMode: AuthMode;
   baseDir: string;
   enabled: boolean;
+  scheduleEnabled: boolean;
+  scheduleFrequency: ScheduleFrequency;
   /** Only set when the admin typed a new value; blank = leave existing. */
   newPassword?: string;
   newPrivateKey?: string;
@@ -106,6 +136,8 @@ export async function saveIngestSettings(input: SaveIngestSettingsInput): Promis
     authMode: input.authMode,
     baseDir: input.baseDir || "/",
     enabled: input.enabled,
+    scheduleEnabled: input.scheduleEnabled,
+    scheduleFrequency: input.scheduleFrequency,
     updatedBy: input.updatedBy,
     updatedAt: new Date(),
   };
@@ -140,6 +172,12 @@ function resolveFromEnv(): SftpConfig | null {
 export interface ResolvedConfig {
   /** The master enabled flag (DB) — env path is implicitly enabled. */
   enabled: boolean;
+  /** Whether automatic scheduled pulls are on (env path: always on). */
+  scheduleEnabled: boolean;
+  /** Configured cadence for scheduled pulls. */
+  scheduleFrequency: ScheduleFrequency;
+  /** When the last pull ran, for the interval gate (null if never). */
+  lastSyncAt: Date | null;
   /** Connect-ready config, or null if nothing usable is configured. */
   config: SftpConfig | null;
   source: "db" | "env" | "none";
@@ -165,11 +203,34 @@ export async function resolveSftpConfig(): Promise<ResolvedConfig> {
       config.password = decryptSecret(row.passwordEnc);
     }
     const hasSecret = !!(config.password || config.privateKey);
-    return { enabled: row.enabled, config: hasSecret ? config : null, source: "db" };
+    return {
+      enabled: row.enabled,
+      scheduleEnabled: row.scheduleEnabled,
+      scheduleFrequency: (row.scheduleFrequency as ScheduleFrequency) ?? "every6h",
+      lastSyncAt: row.lastSyncAt ?? null,
+      config: hasSecret ? config : null,
+      source: "db",
+    };
   }
   const env = resolveFromEnv();
-  if (env) return { enabled: true, config: env, source: "env" };
-  return { enabled: false, config: null, source: "none" };
+  if (env) {
+    return {
+      enabled: true,
+      scheduleEnabled: true,
+      scheduleFrequency: "every6h",
+      lastSyncAt: null,
+      config: env,
+      source: "env",
+    };
+  }
+  return {
+    enabled: false,
+    scheduleEnabled: false,
+    scheduleFrequency: "every6h",
+    lastSyncAt: null,
+    config: null,
+    source: "none",
+  };
 }
 
 /** Record that a sync run has begun (best-effort; no-op if no row). */

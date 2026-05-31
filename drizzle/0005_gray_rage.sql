@@ -1,0 +1,2 @@
+ALTER TABLE "ingest_settings" ADD COLUMN "schedule_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "ingest_settings" ADD COLUMN "schedule_frequency" text DEFAULT 'every6h' NOT NULL;
