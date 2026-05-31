@@ -71,6 +71,13 @@
       "when": 1780237192873,
       "tag": "0009_nifty_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780244947901,
+      "tag": "0010_abandoned_midnight",
+      "breakpoints": true
     }
   ]
 }

@@ -205,6 +205,13 @@ export const ingestSettings = pgTable("ingest_settings", {
    *  'every12h' | 'daily'. The Job wakes hourly and skips until this much time
    *  has elapsed since last_sync_at, so charges stay near one pass per cadence. */
   scheduleFrequency: text("schedule_frequency").notNull().default("every6h"),
+  // --- sensor auto-enrollment (bootstrap key) -------------------------------
+  /** When true, a box presenting the shared bootstrap key may self-register and
+   *  be issued its own per-sensor token. Turn off outside provisioning windows. */
+  autoEnrollEnabled: boolean("auto_enroll_enabled").notNull().default(false),
+  /** AES-256-GCM ciphertext of the shared bootstrap passphrase techs put on new
+   *  boxes. Compared (constant-time) against the box's NETMON_BOOTSTRAP_KEY. */
+  bootstrapKeyEnc: text("bootstrap_key_enc"),
   // --- last-run telemetry (surfaced on the settings page) ------------------
   lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
   /** 'ok' | 'error' | 'running' */

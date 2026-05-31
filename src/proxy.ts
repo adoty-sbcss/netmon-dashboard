@@ -21,7 +21,11 @@ export async function proxy(req: NextRequest) {
   // Sensor check-in endpoints authenticate with an enrollment token (Bearer),
   // not a user session — let them through; they guard themselves. (Other
   // /api/sensor/* routes, like config-backup download, still require a session.)
-  if (pathname === "/api/sensor/checkin" || pathname === "/api/sensor/result") {
+  if (
+    pathname === "/api/sensor/checkin" ||
+    pathname === "/api/sensor/result" ||
+    pathname === "/api/sensor/enroll"
+  ) {
     return NextResponse.next();
   }
 

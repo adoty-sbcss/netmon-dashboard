@@ -36,7 +36,7 @@ export function configSlugsFromPath(
   return { district, school, device };
 }
 
-async function getOrCreateSensorId(
+export async function getOrCreateSensorId(
   districtSlug: string,
   schoolSlug: string,
   deviceSlug: string,
