@@ -105,6 +105,34 @@ export const commandResults = pgTable(
 );
 
 /**
+ * Per-sensor config backups, pulled from the SFTP `_config/<d>/<s>/<dev>/` drop
+ * the collector already uploads daily (netmon.env + snmp.yaml + manifest). Stored
+ * on the dashboard so an admin can review/download/restore. The ZIP is small (a
+ * few KB) so it's kept base64 inline rather than in Blob storage.
+ *
+ * SECURITY: netmon.env contains the sensor's SFTP credentials + SNMP strings, so
+ * download is superadmin-only.
+ */
+export const configBackups = pgTable(
+  "config_backups",
+  {
+    id: serial("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    /** When the backup was taken (manifest backed_up_at, else the filename date). */
+    capturedAt: timestamp("captured_at", { withTimezone: true }),
+    sizeBytes: integer("size_bytes"),
+    /** base64 of the backup ZIP. */
+    contentB64: text("content_b64").notNull(),
+    manifest: jsonb("manifest").notNull().default({}),
+    importedAt: timestamp("imported_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("uq_config_backup_sensor_file").on(t.sensorId, t.filename)],
+);
+
+/**
  * Per-sensor enrollment secret for authenticating outbound check-ins. Store a
  * HASH of the token, never the token itself (issued once at enrollment).
  */

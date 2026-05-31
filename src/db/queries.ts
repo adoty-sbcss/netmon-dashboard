@@ -37,6 +37,7 @@ import {
   topologySnapshots,
   topologyPositions,
 } from "./schema/entities";
+import { configBackups } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
 
 // ---- shared shapes --------------------------------------------------------
@@ -1729,6 +1730,101 @@ export async function listUsersWithGrants(): Promise<ManagedUser[]> {
 /** Simple id+name district list for grant pickers. */
 export async function listDistrictOptions(): Promise<{ id: number; name: string }[]> {
   return db.select({ id: districts.id, name: districts.name }).from(districts).orderBy(districts.name);
+}
+
+// ---- sensor detail + config backups ---------------------------------------
+
+export interface SensorDetail {
+  id: number;
+  slug: string;
+  name: string | null;
+  schoolId: number;
+  agentVersion: string | null;
+  reportedConfigVersion: number | null;
+  lastCheckinAt: Date | null;
+  createdAt: Date | null;
+  lastScanAt: Date | null;
+  scanCount: number;
+}
+
+export async function getSensorDetail(
+  schoolId: number,
+  sensorId: number,
+): Promise<SensorDetail | null> {
+  const [s] = await db
+    .select()
+    .from(sensors)
+    .where(and(eq(sensors.id, sensorId), eq(sensors.schoolId, schoolId)))
+    .limit(1);
+  if (!s) return null;
+  const [agg] = await db
+    .select({ c: count(scanRuns.id), last: max(scanRuns.startedAt) })
+    .from(scanRuns)
+    .where(eq(scanRuns.sensorId, sensorId));
+  return {
+    id: s.id,
+    slug: s.slug,
+    name: s.name,
+    schoolId: s.schoolId,
+    agentVersion: s.agentVersion,
+    reportedConfigVersion: s.reportedConfigVersion,
+    lastCheckinAt: s.lastCheckinAt,
+    createdAt: s.createdAt,
+    lastScanAt: agg?.last ?? null,
+    scanCount: Number(agg?.c ?? 0),
+  };
+}
+
+export interface ConfigBackupRow {
+  id: number;
+  filename: string;
+  capturedAt: Date | null;
+  sizeBytes: number | null;
+  importedAt: Date;
+  manifest: Record<string, unknown>;
+}
+
+/** Config backups for a sensor (no file bytes — just metadata). Newest first. */
+export async function listConfigBackups(sensorId: number): Promise<ConfigBackupRow[]> {
+  const rows = await db
+    .select({
+      id: configBackups.id,
+      filename: configBackups.filename,
+      capturedAt: configBackups.capturedAt,
+      sizeBytes: configBackups.sizeBytes,
+      importedAt: configBackups.importedAt,
+      manifest: configBackups.manifest,
+    })
+    .from(configBackups)
+    .where(eq(configBackups.sensorId, sensorId))
+    .orderBy(desc(configBackups.capturedAt), desc(configBackups.importedAt));
+  return rows.map((r) => ({
+    id: r.id,
+    filename: r.filename,
+    capturedAt: r.capturedAt,
+    sizeBytes: r.sizeBytes,
+    importedAt: r.importedAt,
+    manifest: (r.manifest ?? {}) as Record<string, unknown>,
+  }));
+}
+
+/** Fetch a backup's bytes + the district/school it belongs to (for auth scope). */
+export async function getConfigBackupForDownload(
+  backupId: number,
+): Promise<{ filename: string; contentB64: string; districtId: number; schoolId: number | null } | null> {
+  const [row] = await db
+    .select({
+      filename: configBackups.filename,
+      contentB64: configBackups.contentB64,
+      districtId: schools.districtId,
+      schoolId: sensors.schoolId,
+    })
+    .from(configBackups)
+    .innerJoin(sensors, eq(configBackups.sensorId, sensors.id))
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .where(eq(configBackups.id, backupId))
+    .limit(1);
+  return row ?? null;
 }
 
 /** Count scan_runs for a sensor within an optional [from,to] window. */

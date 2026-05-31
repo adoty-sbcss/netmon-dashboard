@@ -151,7 +151,12 @@ export default async function SchoolPage({
                   {sensors.map((s) => (
                     <TableRow key={s.id}>
                       <TableCell className="font-medium">
-                        {s.name || titleizeSlug(s.slug)}
+                        <Link
+                          href={`/${district.slug}/${school.slug}/sensor/${s.id}`}
+                          className="hover:underline"
+                        >
+                          {s.name || titleizeSlug(s.slug)}
+                        </Link>
                         <span className="ml-2 font-mono text-xs text-muted-foreground">
                           {s.slug}
                         </span>

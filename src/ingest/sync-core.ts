@@ -18,6 +18,11 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { ingestedBundles } from "../db/schema";
 import { ingestBundle } from "./ingest";
+import {
+  isConfigBackupPath,
+  configBackupStored,
+  importConfigBackup,
+} from "./config-backup";
 import type { SftpConfig } from "../lib/ingest/settings";
 
 export interface SyncOptions {
@@ -117,15 +122,45 @@ export async function runSync(
     });
     log(`Connected to ${cfg.host}:${cfg.port}; walking ${cfg.baseDir} …`);
 
-    const zips = await listZips(sftp, cfg.baseDir, 0);
+    const allZips = await listZips(sftp, cfg.baseDir, 0);
+    // Config backups (under _config/) are NOT scan bundles — route them aside.
+    const configZips = allZips.filter((z) => isConfigBackupPath(z.path));
+    const zips = allZips.filter((z) => !isConfigBackupPath(z.path));
     summary.found = zips.length;
     const fresh = zips.filter((z) => !parsed.has(z.name));
     summary.new = fresh.length;
     log(
       `Found ${zips.length} bundle(s); ${fresh.length} not yet parsed${
         force ? " (force: re-ingesting all)" : ""
-      }.`,
+      }. ${configZips.length} config backup(s) present.`,
     );
+
+    // ---- config backups (store on the dashboard for review/restore) ----
+    let configImported = 0;
+    for (const c of configZips) {
+      if (opts.dryRun) {
+        log(`[dry-run] would store config backup ${c.path}`);
+        continue;
+      }
+      try {
+        if (!force && (await configBackupStored(c.path))) continue;
+        const tmpc = await mkdtemp(join(tmpdir(), "netmon-cfg-"));
+        try {
+          const localZip = join(tmpc, c.name);
+          await sftp.get(c.path, localZip);
+          const res = await importConfigBackup(localZip, c.path);
+          if (res === "imported") {
+            configImported++;
+            log(`  ⚙ stored config backup ${c.name}`);
+          }
+        } finally {
+          await rm(tmpc, { recursive: true, force: true });
+        }
+      } catch (err) {
+        log(`  ! config backup ${c.name} failed: ${(err as Error).message}`);
+      }
+    }
+    if (configImported > 0) log(`Stored ${configImported} new config backup(s).`);
 
     const work = limit ? fresh.slice(0, limit) : fresh;
 
