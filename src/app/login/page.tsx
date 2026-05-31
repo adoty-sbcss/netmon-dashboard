@@ -1,5 +1,6 @@
 import { Network } from "lucide-react";
 
+import { enabledProviders } from "@/lib/auth/oidc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoginForm } from "./login-form";
 
@@ -8,7 +9,22 @@ export const metadata = { title: "Sign in · NetMon Dashboard" };
 // Auth state is per-request; never prerender.
 export const dynamic = "force-dynamic";
 
-export default function LoginPage() {
+const ERRORS: Record<string, string> = {
+  denied: "That account isn't authorized. Ask an administrator to add your email.",
+  oidc: "Sign-in with that provider failed. Please try again.",
+  state: "Your sign-in session expired. Please try again.",
+  provider: "That sign-in method isn't available.",
+};
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
+  const providers = enabledProviders();
+  const errorMessage = error ? (ERRORS[error] ?? "Sign-in failed. Please try again.") : null;
+
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted/30 p-4">
       <div className="flex items-center gap-2.5">
@@ -26,7 +42,7 @@ export default function LoginPage() {
           <CardTitle className="text-lg">Sign in</CardTitle>
         </CardHeader>
         <CardContent>
-          <LoginForm />
+          <LoginForm providers={providers} errorMessage={errorMessage} />
         </CardContent>
       </Card>
     </div>

@@ -291,9 +291,60 @@ prefer keys.
 
 ---
 
+## 12. OIDC sign-in (Google / Microsoft) + users
+
+Federated sign-in is implemented. A provider's button appears once its client id +
+secret are present on the web app. Sign-in is an **email allowlist**: an admin adds
+the person on **/settings/users** (email + role + districts); whoever then proves
+that email via Google *or* Microsoft is let in.
+
+**1. Register the OAuth apps** with these callback URIs (`<HOST>` = the app's FQDN):
+
+```
+https://<HOST>/api/auth/oidc/google/callback
+https://<HOST>/api/auth/oidc/microsoft/callback
+```
+
+- **Microsoft Entra:** App registrations → New → Web platform → add the callback →
+  Certificates & secrets → new client secret. Note the **Application (client) ID**,
+  the **secret value**, and the **Directory (tenant) ID**.
+- **Google:** Cloud Console → Credentials → OAuth client ID → Web application → add
+  the callback. Note the **Client ID** and **secret**.
+
+**2. Store the secrets in Key Vault** and set the env on the web app:
+
+```powershell
+$KV = 'https://W2-SBCSS-NetMon-KV.vault.azure.net'
+az keyvault secret set --vault-name W2-SBCSS-NetMon-KV -n GOOGLE-CLIENT-SECRET --value '<google secret>'
+az keyvault secret set --vault-name W2-SBCSS-NetMon-KV -n MS-CLIENT-SECRET     --value '<entra secret>'
+
+az containerapp secret set -g W2-SBCSS-District-NetMon-Dashboard -n w2-sbcss-netmon-web `
+  --secrets google-secret=keyvaultref:$KV/secrets/GOOGLE-CLIENT-SECRET,identityref:<appIdentityId> `
+            ms-secret=keyvaultref:$KV/secrets/MS-CLIENT-SECRET,identityref:<appIdentityId>
+
+az containerapp update -g W2-SBCSS-District-NetMon-Dashboard -n w2-sbcss-netmon-web --set-env-vars `
+  APP_ORIGIN=https://<HOST> `
+  AUTH_GOOGLE_ID='<google client id>' `
+  AUTH_GOOGLE_SECRET=secretref:google-secret `
+  AUTH_MICROSOFT_ENTRA_ID_ID='<entra client id>' `
+  AUTH_MICROSOFT_ENTRA_ID_SECRET=secretref:ms-secret `
+  AUTH_MICROSOFT_ENTRA_ID_TENANT='<tenant id>'
+```
+
+- `APP_ORIGIN` pins the callback base so it always matches what you registered —
+  important because the Container Apps default domain is environment-specific.
+- The non-secret client **IDs** can be plain env vars; the **secrets** are Key Vault
+  refs. `<appIdentityId>` is the user-assigned identity already on the app.
+
+**3. Add users.** Sign in as `adaministrator` → **Users** → add each person's email,
+role (user/superadmin), and districts. They sign in with the Google/Microsoft button.
+
+> Until OIDC env is set, the local **break-glass** login still works. Disabling a
+> user or removing their email immediately blocks their next sign-in.
+
+---
+
 ## Not yet wired (tracked, out of scope for this runbook)
 
-- **OIDC sign-in** — Microsoft Entra + Google buttons (the login UI has disabled
-  placeholders today).
-- **Azure Communication Services (Email)** — for MFA codes.
-- **Custom domain + managed TLS** on the Container App.
+- **Azure Communication Services (Email)** — for break-glass MFA codes.
+- **Custom domain + managed TLS** on the Container App (stabilizes the URL).

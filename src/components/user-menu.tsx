@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { KeyRound, LogOut, UserRound, DownloadCloud, DatabaseZap } from "lucide-react";
+import { KeyRound, LogOut, UserRound, DownloadCloud, DatabaseZap, Users } from "lucide-react";
 
 import { logoutAction } from "@/lib/auth/actions";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,12 @@ export function UserMenu({
               <Link href="/settings/data">
                 <DatabaseZap />
                 Data management
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/settings/users">
+                <Users />
+                Users
               </Link>
             </DropdownMenuItem>
           </>

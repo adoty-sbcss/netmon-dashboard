@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DatabaseZap, DownloadCloud, Network, School } from "lucide-react";
+import { Building2, ChevronRight, DatabaseZap, DownloadCloud, Network, School, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -151,6 +151,18 @@ export function AppSidebar({
                   <Link href="/settings/data">
                     <DatabaseZap />
                     <span>Data management</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Users"
+                  isActive={pathname === "/settings/users"}
+                >
+                  <Link href="/settings/users">
+                    <Users />
+                    <span>Users</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

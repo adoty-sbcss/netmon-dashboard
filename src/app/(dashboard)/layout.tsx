@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getNavTree } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
+import { getUserScope } from "@/lib/auth/scope";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DynamicBreadcrumb } from "@/components/dynamic-breadcrumb";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -27,7 +28,8 @@ export default async function DashboardLayout({
   if (!user) redirect("/login");
   if (user.mustChangePassword) redirect("/account/change-password");
 
-  const tree = await getNavTree();
+  const scope = await getUserScope(user);
+  const tree = await getNavTree({ districtIds: scope.all ? null : scope.districtIds });
 
   return (
     <SidebarProvider>

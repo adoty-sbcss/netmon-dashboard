@@ -13,6 +13,11 @@ const CHANGE_PW_PATH = "/account/change-password";
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // OAuth/OIDC endpoints must be reachable while signed out (the sign-in dance
+  // happens before a session exists). They guard themselves.
+  if (pathname.startsWith("/api/auth/")) return NextResponse.next();
+
   const claims = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
 
   const isLogin = pathname === LOGIN_PATH;

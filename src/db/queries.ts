@@ -7,7 +7,7 @@
  * than correlated subqueries: simpler to read and the dataset is small.
  */
 import "server-only";
-import { and, count, desc, eq, gte, lte, max, min, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, max, min, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./index";
@@ -15,6 +15,8 @@ import {
   districts,
   schools,
   sensors,
+  users,
+  grants,
 } from "./schema/app";
 import {
   scanRuns,
@@ -78,8 +80,15 @@ function indexBy<T extends { key: number }>(rows: T[]): Map<number, T> {
 
 // ---- navigation -----------------------------------------------------------
 
-/** District → school tree for the sidebar. */
-export async function getNavTree(): Promise<NavTree[]> {
+/**
+ * District → school tree for the sidebar. Pass `districtIds` to restrict to a
+ * user's grants (undefined/null = unrestricted; [] = nothing).
+ */
+export async function getNavTree(
+  opts: { districtIds?: number[] | null } = {},
+): Promise<NavTree[]> {
+  const restrict = opts.districtIds;
+  if (Array.isArray(restrict) && restrict.length === 0) return [];
   const rows = await db
     .select({
       districtId: districts.id,
@@ -91,6 +100,7 @@ export async function getNavTree(): Promise<NavTree[]> {
     })
     .from(districts)
     .leftJoin(schools, eq(schools.districtId, districts.id))
+    .where(restrict ? inArray(districts.id, restrict) : undefined)
     .orderBy(districts.name, schools.name);
 
   const tree = new Map<number, NavTree>();
@@ -118,10 +128,15 @@ export async function getNavTree(): Promise<NavTree[]> {
 
 // ---- districts ------------------------------------------------------------
 
-export async function listDistricts(): Promise<DistrictSummary[]> {
+export async function listDistricts(
+  opts: { districtIds?: number[] | null } = {},
+): Promise<DistrictSummary[]> {
+  const restrict = opts.districtIds;
+  if (Array.isArray(restrict) && restrict.length === 0) return [];
+  const districtWhere = restrict ? inArray(districts.id, restrict) : undefined;
   const [base, schoolCounts, sensorCounts, hostCounts, switchCounts, findingCounts, lastScans] =
     await Promise.all([
-      db.select().from(districts).orderBy(districts.name),
+      db.select().from(districts).where(districtWhere).orderBy(districts.name),
       db
         .select({ key: schools.districtId, c: count() })
         .from(schools)
@@ -1664,6 +1679,56 @@ export async function getManagedTree(): Promise<ManagedDistrict[]> {
     name: d.name,
     schools: schoolsByDistrict.get(d.id) ?? [],
   }));
+}
+
+// ---- admin: users + grants -------------------------------------------------
+
+export interface ManagedUser {
+  id: number;
+  email: string;
+  displayName: string | null;
+  role: "superadmin" | "user";
+  isBreakGlass: boolean;
+  disabled: boolean;
+  lastLoginAt: Date | null;
+  /** District grants (id + name) — empty for superadmins (they see all). */
+  districts: { id: number; name: string }[];
+}
+
+/** All users with their district grants, for the admin users page. */
+export async function listUsersWithGrants(): Promise<ManagedUser[]> {
+  const [userRows, grantRows, districtRows] = await Promise.all([
+    db.select().from(users).orderBy(users.email),
+    db
+      .select({ userId: grants.userId, scopeType: grants.scopeType, scopeId: grants.scopeId })
+      .from(grants),
+    db.select({ id: districts.id, name: districts.name }).from(districts),
+  ]);
+
+  const districtName = new Map(districtRows.map((d) => [d.id, d.name]));
+  const byUser = new Map<number, { id: number; name: string }[]>();
+  for (const g of grantRows) {
+    if (g.scopeType !== "district" || g.scopeId == null) continue;
+    const list = byUser.get(g.userId) ?? [];
+    list.push({ id: g.scopeId, name: districtName.get(g.scopeId) ?? `#${g.scopeId}` });
+    byUser.set(g.userId, list);
+  }
+
+  return userRows.map((u) => ({
+    id: u.id,
+    email: u.email,
+    displayName: u.displayName,
+    role: u.role,
+    isBreakGlass: u.isBreakGlass,
+    disabled: u.disabled,
+    lastLoginAt: u.lastLoginAt,
+    districts: (byUser.get(u.id) ?? []).sort((a, b) => a.name.localeCompare(b.name)),
+  }));
+}
+
+/** Simple id+name district list for grant pickers. */
+export async function listDistrictOptions(): Promise<{ id: number; name: string }[]> {
+  return db.select({ id: districts.id, name: districts.name }).from(districts).orderBy(districts.name);
 }
 
 /** Count scan_runs for a sensor within an optional [from,to] window. */

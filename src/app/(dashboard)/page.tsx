@@ -8,7 +8,11 @@ import {
   Cpu,
 } from "lucide-react";
 
+import { redirect } from "next/navigation";
+
 import { listDistricts } from "@/db/queries";
+import { getSessionUser } from "@/lib/auth/current-user";
+import { getUserScope } from "@/lib/auth/scope";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/stat-card";
@@ -22,7 +26,12 @@ import {
 } from "@/components/ui/card";
 
 export default async function OverviewPage() {
-  const districts = await listDistricts();
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  const scope = await getUserScope(user);
+  const districts = await listDistricts({
+    districtIds: scope.all ? null : scope.districtIds,
+  });
 
   const totals = districts.reduce(
     (acc, d) => {
