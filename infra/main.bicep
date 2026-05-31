@@ -163,14 +163,20 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
     addressSpace: { addressPrefixes: [ vnetAddressPrefix ] }
     subnets: [
       {
-        // Container Apps environment infrastructure subnet (Consumption: /23+,
-        // and NOT delegated — that's the rule for a Consumption-only env). If a
-        // future deploy switches the env to workload profiles, this subnet must
-        // instead be delegated to 'Microsoft.App/environments'; if env creation
-        // fails complaining about subnet delegation, that's the knob.
+        // Container Apps environment infrastructure subnet (/23+). A VNet-injected
+        // environment REQUIRES this subnet delegated to 'Microsoft.App/environments'
+        // — true for Consumption and workload-profile envs alike on the current
+        // platform. (Azure rejects env creation with ManagedEnvironmentSubnetDelegationError
+        // if this delegation is missing.)
         name: 'snet-cae'
         properties: {
           addressPrefix: caeSubnetPrefix
+          delegations: [
+            {
+              name: 'cae-delegation'
+              properties: { serviceName: 'Microsoft.App/environments' }
+            }
+          ]
         }
       }
       {
@@ -369,10 +375,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
   // KV secret refs are validated at create time using the app identity, so the
   // role grant + the secrets must exist first.
-  dependsOn: concat(
-    [ kvAuthSecret, kvDatabaseUrl ],
-    assignRoles ? [ acrPullAssignment, kvSecretsUserAssignment ] : []
-  )
+  dependsOn: assignRoles
+    ? [ kvAuthSecret, kvDatabaseUrl, acrPullAssignment, kvSecretsUserAssignment ]
+    : [ kvAuthSecret, kvDatabaseUrl ]
 }
 
 // ---- Migrate/seed Job (manual trigger; runs drizzle migrate + admin seed) ----
@@ -435,10 +440,9 @@ resource migrateJob 'Microsoft.App/jobs@2024-03-01' = {
       ]
     }
   }
-  dependsOn: concat(
-    [ kvAuthSecret, kvDatabaseUrl ],
-    assignRoles ? [ acrPullAssignment, kvSecretsUserAssignment ] : []
-  )
+  dependsOn: assignRoles
+    ? [ kvAuthSecret, kvDatabaseUrl, acrPullAssignment, kvSecretsUserAssignment ]
+    : [ kvAuthSecret, kvDatabaseUrl ]
 }
 
 // ---- Ingestion Job (cron; SFTP pull → parse → upsert) — opt-in ----
@@ -505,10 +509,9 @@ resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
       ]
     }
   }
-  dependsOn: concat(
-    [ kvDatabaseUrl ],
-    assignRoles ? [ acrPullAssignment, kvSecretsUserAssignment ] : []
-  )
+  dependsOn: assignRoles
+    ? [ kvDatabaseUrl, acrPullAssignment, kvSecretsUserAssignment ]
+    : [ kvDatabaseUrl ]
 }
 
 // ---- PostgreSQL Flexible Server (PRIVATE access — no public endpoint) ----

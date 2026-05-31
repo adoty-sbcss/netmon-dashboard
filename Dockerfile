@@ -15,26 +15,6 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-# ---- runner: minimal runtime image ----
-FROM node:24-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-# Run as a non-root user.
-RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs
-
-# The standalone output already contains a minimal node_modules + server.js.
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-EXPOSE 3000
-ENV PORT=3000
-ENV HOSTNAME=0.0.0.0
-CMD ["node", "server.js"]
-
 # ---- migrator: one-shot image for the migrate/seed Container Apps Job ----
 # Reuses the builder layer (full node_modules incl. drizzle-kit + tsx, the
 # source tree, and the drizzle/ migration SQL). It does NOT serve traffic — it
@@ -58,3 +38,28 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 CMD ["npm", "run", "ingest:sync"]
+
+# ---- runner: minimal runtime image (web app) ----
+# IMPORTANT: this MUST be the LAST stage in the Dockerfile. `az acr build` /
+# `docker build` with no --target builds the final stage, and that default build
+# is the web image (netmon-dashboard:latest). The migrator/ingest images are
+# built explicitly with --target. If runner is not last, the web app gets the
+# wrong CMD and crash-loops.
+FROM node:24-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+# Run as a non-root user.
+RUN addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs
+
+# The standalone output already contains a minimal node_modules + server.js.
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+CMD ["node", "server.js"]
