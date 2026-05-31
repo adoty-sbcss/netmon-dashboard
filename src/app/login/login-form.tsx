@@ -58,7 +58,7 @@ export function LoginForm({
             name="identifier"
             autoComplete="username"
             required
-            placeholder="adaministrator"
+            placeholder="username"
           />
         </div>
 

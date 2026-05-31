@@ -44,6 +44,10 @@ export default async function OverviewPage() {
     { schools: 0, sensors: 0, hosts: 0, findings: 0 },
   );
 
+  // When there's a single district, the summary cards drill straight into it.
+  // With several, the district grid below is the navigation.
+  const only = districts.length === 1 ? `/${districts[0].slug}` : undefined;
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -52,14 +56,15 @@ export default async function OverviewPage() {
       />
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
-        <StatCard label="Districts" value={num(districts.length)} icon={Building2} />
-        <StatCard label="Schools" value={num(totals.schools)} icon={School} />
-        <StatCard label="Sensors" value={num(totals.sensors)} icon={Network} />
+        <StatCard label="Districts" value={num(districts.length)} icon={Building2} href={only} />
+        <StatCard label="Schools" value={num(totals.schools)} icon={School} href={only} />
+        <StatCard label="Sensors" value={num(totals.sensors)} icon={Network} href={only} />
         <StatCard
           label="Open findings"
           value={num(totals.findings)}
           icon={ShieldAlert}
           tone={totals.findings > 0 ? "warning" : "success"}
+          href={only}
         />
       </div>
 
