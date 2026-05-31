@@ -1,9 +1,12 @@
 // =============================================================================
 // netmon-dashboard — full Azure stack as Infrastructure as Code.
 //
-// Recreates the entire environment in one deploy: Log Analytics, two managed
-// identities (+ GitHub OIDC federated credential), Key Vault, Storage, ACR,
-// Container Apps environment + web app, and PostgreSQL Flexible Server.
+// Recreates the entire environment in one deploy: Log Analytics, VNet (with a
+// subnet for the Container Apps environment and a delegated subnet for
+// PostgreSQL), private DNS for Postgres, two managed identities (+ GitHub OIDC
+// federated credential), Key Vault (with the app's runtime secrets), Storage,
+// ACR, a VNet-injected Container Apps environment, the web app, a manual
+// migrate/seed Job, and a PRIVATE PostgreSQL Flexible Server.
 //
 // Scope: resource group. Deploy with (PowerShell or bash):
 //   az deployment group create \
@@ -11,15 +14,25 @@
 //     -f infra/main.bicep \
 //     -p infra/main.bicepparam
 //
-// The Postgres admin password is a secure parameter — see main.bicepparam
-// (read from the PG_ADMIN_PASSWORD environment variable, never committed).
+// Two secrets are supplied at deploy time and never committed (see
+// main.bicepparam): the Postgres admin password (PG_ADMIN_PASSWORD) and the
+// session-signing key (AUTH_SECRET). Both are written into Key Vault and the
+// app/job read them at runtime via managed identity — they are never baked
+// into the image.
+//
+// NETWORK POSTURE: Postgres has NO public endpoint. It lives in a delegated
+// subnet and is reachable only from inside the VNet. The Container Apps
+// environment is VNet-injected, so the web app and the migrate Job can reach
+// the database; nothing on the public internet can. The web app's ingress is
+// still public (district users log in from anywhere) — only the DB is private.
+// Because the DB is private, schema migrations + admin seeding run as an
+// in-VNet Container Apps Job (see migrateJob), NOT from a workstation.
 //
 // COLD-REBUILD ORDERING: on a from-scratch rebuild the ACR starts empty, so the
-// container image won't exist yet. Either (a) set param `containerImage` to a
-// public placeholder for the first deploy and let the GitHub Actions pipeline
-// roll the real image, or (b) run `az acr build -r <acr> -t netmon-dashboard:latest .`
-// once after ACR exists, then re-deploy. The default below points at the ACR
-// image and assumes it has been built at least once.
+// container images won't exist yet. Either (a) set params `containerImage` /
+// `migratorImage` to a public placeholder for the first deploy and let the
+// GitHub Actions pipeline + `az acr build` roll the real images, or (b) run
+// `az acr build` for both targets once after ACR exists, then re-deploy.
 //
 // LIGHTHOUSE NOTE: this subscription is Azure Lighthouse-managed, which can block
 // role-assignment writes through some paths. If the deploy fails ONLY on the
@@ -40,8 +53,10 @@ param deployIdentityName string = 'W2-SBCSS-NetMon-GHA-Deploy'
 param keyVaultName string = 'W2-SBCSS-NetMon-KV'
 param storageName string = 'w2sbcssnetmondash'
 param acrName string = 'w2sbcssnetmondashacr'
+param vnetName string = 'W2-SBCSS-NetMon-VNet'
 param environmentName string = 'W2-SBCSS-NetMon-CAE'
 param containerAppName string = 'w2-sbcss-netmon-web'
+param migrateJobName string = 'w2-sbcss-netmon-migrate'
 param postgresServerName string = 'w2-sbcss-netmon-psql'
 param postgresDbName string = 'netmon'
 param postgresAdminUser string = 'netmonadmin'
@@ -50,23 +65,62 @@ param postgresAdminUser string = 'netmonadmin'
 @description('PostgreSQL administrator password. Supplied at deploy time, never stored in the repo.')
 param postgresAdminPassword string
 
+@secure()
+@description('Session-signing key (HMAC-SHA256), 32+ random bytes hex. Supplied at deploy time, written to Key Vault, never stored in the repo. Generate a NEW one for prod — do not reuse the dev value.')
+param authSecret string
+
 @description('GitHub repo (owner/name) trusted for OIDC deploys.')
 param githubRepo string = 'adoty-sbcss/netmon-dashboard'
 
 @description('Git branch allowed to deploy via the federated credential.')
 param githubBranch string = 'main'
 
-@description('Optional client IP allowed through the Postgres firewall (e.g. your workstation). Leave empty to skip.')
-param clientIpAddress string = ''
+@description('VNet address space (CIDR). Carved into the CAE + Postgres subnets below.')
+param vnetAddressPrefix string = '10.40.0.0/16'
 
-@description('Allow other Azure services to reach Postgres (0.0.0.0 firewall rule). Needed once the app queries the DB.')
-param allowAzureServicesToPostgres bool = false
+@description('Subnet for the Container Apps environment. Consumption envs require /23 or larger.')
+param caeSubnetPrefix string = '10.40.0.0/23'
+
+@description('Delegated subnet for PostgreSQL Flexible Server (private access).')
+param postgresSubnetPrefix string = '10.40.4.0/28'
 
 @description('Container image the web app runs. Defaults to the ACR image; must exist before deploy (see header).')
 param containerImage string = '${acrName}.azurecr.io/netmon-dashboard:latest'
 
+@description('Image the migrate/seed Job runs (full repo + drizzle-kit + tsx). Built from the Dockerfile "migrator" target.')
+param migratorImage string = '${acrName}.azurecr.io/netmon-dashboard-migrator:latest'
+
 param containerCpu string = '0.5'
 param containerMemory string = '1.0Gi'
+
+// ---- Ingestion (SFTP sync) Job — off by default until the SFTP endpoint is
+// confirmed (see docs/DESIGN.md §4). Flip enableIngestJob=true and supply the
+// SFTP_* params to provision the nightly cron Job. Uses password auth; for key
+// auth, add an SFTP_PRIVATE_KEY secret to the job (the sync code supports it).
+@description('Provision the nightly SFTP ingestion cron Job. Requires the SFTP params below.')
+param enableIngestJob bool = false
+
+@description('Image the ingest Job runs. Built from the Dockerfile "ingest" target.')
+param ingestImage string = '${acrName}.azurecr.io/netmon-dashboard-ingest:latest'
+
+@description('Cron schedule (UTC) for the ingest Job. Default 08:00 UTC ≈ 00:00–01:00 Pacific.')
+param ingestCron string = '0 8 * * *'
+
+@description('SFTP host the collectors push bundles to.')
+param sftpHost string = ''
+
+@description('SFTP port.')
+param sftpPort string = '22'
+
+@description('SFTP username.')
+param sftpUser string = ''
+
+@secure()
+@description('SFTP password (password auth). Supplied at deploy time when enableIngestJob=true; never stored in the repo.')
+param sftpPassword string = ''
+
+@description('Remote base directory to walk for bundles.')
+param sftpBaseDir string = '/'
 
 @description('Create the RBAC role assignments. Set false if Lighthouse blocks them and assign in the Portal instead.')
 param assignRoles bool = true
@@ -79,6 +133,18 @@ var roleIds = {
   contributor: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 }
 
+// Private DNS zone for the Flexible Server. The name must end with
+// `.private.postgres.database.azure.com`; the server registers its A record here.
+var postgresPrivateDnsZoneName = '${postgresServerName}.private.postgres.database.azure.com'
+
+// KV secret names (hyphens, not underscores — KV secret names can't contain `_`).
+var authSecretName = 'AUTH-SECRET'
+var databaseUrlSecretName = 'DATABASE-URL'
+
+// Constructed at deploy time from the private FQDN + admin creds. Lives only in
+// Key Vault; the app/job pull it via managed identity.
+var databaseUrlValue = 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${postgresDbName}?sslmode=require'
+
 // ---- Log Analytics ----
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -86,6 +152,60 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   properties: {
     sku: { name: 'PerGB2018' }
     retentionInDays: 30
+  }
+}
+
+// ---- Networking: VNet with a CAE subnet + a delegated Postgres subnet ----
+resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
+  name: vnetName
+  location: location
+  properties: {
+    addressSpace: { addressPrefixes: [ vnetAddressPrefix ] }
+    subnets: [
+      {
+        // Container Apps environment infrastructure subnet (Consumption: /23+,
+        // and NOT delegated — that's the rule for a Consumption-only env). If a
+        // future deploy switches the env to workload profiles, this subnet must
+        // instead be delegated to 'Microsoft.App/environments'; if env creation
+        // fails complaining about subnet delegation, that's the knob.
+        name: 'snet-cae'
+        properties: {
+          addressPrefix: caeSubnetPrefix
+        }
+      }
+      {
+        // Delegated to Postgres Flexible Server for private (VNet) access.
+        name: 'snet-postgres'
+        properties: {
+          addressPrefix: postgresSubnetPrefix
+          delegations: [
+            {
+              name: 'pg-flexible'
+              properties: { serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers' }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+
+var caeSubnetId = '${vnet.id}/subnets/snet-cae'
+var postgresSubnetId = '${vnet.id}/subnets/snet-postgres'
+
+// ---- Private DNS for Postgres (so the private FQDN resolves inside the VNet) ----
+resource postgresPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: postgresPrivateDnsZoneName
+  location: 'global'
+}
+
+resource postgresDnsVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: postgresPrivateDnsZone
+  name: 'link-to-vnet'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: { id: vnet.id }
   }
 }
 
@@ -126,6 +246,20 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+// Runtime secrets. The app + migrate Job read these via the app identity's
+// "Key Vault Secrets User" grant (see kvSecretsUserAssignment).
+resource kvAuthSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: authSecretName
+  properties: { value: authSecret }
+}
+
+resource kvDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: databaseUrlSecretName
+  properties: { value: databaseUrlValue }
+}
+
 // ---- Storage (Blob landing zone for SFTP ZIPs) ----
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
@@ -149,7 +283,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   }
 }
 
-// ---- Container Apps environment (logs -> Log Analytics) ----
+// ---- Container Apps environment (VNet-injected; logs -> Log Analytics) ----
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -161,10 +295,16 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
+    vnetConfiguration: {
+      // Inject into the VNet so egress can reach the private Postgres.
+      // internal:false keeps the web app's ingress publicly reachable.
+      infrastructureSubnetId: caeSubnetId
+      internal: false
+    }
   }
 }
 
-// ---- Web Container App (scale-to-zero, pulls from ACR via app identity) ----
+// ---- Web Container App (scale-to-zero, pulls from ACR + reads KV secrets) ----
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
@@ -190,6 +330,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           identity: appIdentity.id
         }
       ]
+      // Pull runtime secrets from Key Vault via the app identity (versionless
+      // URIs auto-pick the latest version on each revision).
+      secrets: [
+        {
+          name: 'auth-secret'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
+          identity: appIdentity.id
+        }
+        {
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
+        }
+      ]
     }
     template: {
       containers: [
@@ -200,6 +354,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json(containerCpu)
             memory: containerMemory
           }
+          env: [
+            { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'NODE_ENV', value: 'production' }
+          ]
         }
       ]
       scale: {
@@ -208,10 +367,151 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       }
     }
   }
-  dependsOn: assignRoles ? [ acrPullAssignment ] : []
+  // KV secret refs are validated at create time using the app identity, so the
+  // role grant + the secrets must exist first.
+  dependsOn: concat(
+    [ kvAuthSecret, kvDatabaseUrl ],
+    assignRoles ? [ acrPullAssignment, kvSecretsUserAssignment ] : []
+  )
 }
 
-// ---- PostgreSQL Flexible Server ----
+// ---- Migrate/seed Job (manual trigger; runs drizzle migrate + admin seed) ----
+// Runs INSIDE the VNet so it can reach the private Postgres. Image is the
+// Dockerfile "migrator" target (full deps + source + drizzle/). Start it with:
+//   az containerapp job start -g <rg> -n w2-sbcss-netmon-migrate
+resource migrateJob 'Microsoft.App/jobs@2024-03-01' = {
+  name: migrateJobName
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerEnv.id
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 1800
+      replicaRetryLimit: 1
+      manualTriggerConfig: {
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: appIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'auth-secret'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
+          identity: appIdentity.id
+        }
+        {
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'migrate'
+          image: migratorImage
+          resources: {
+            cpu: json(containerCpu)
+            memory: containerMemory
+          }
+          env: [
+            { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'NODE_ENV', value: 'production' }
+          ]
+        }
+      ]
+    }
+  }
+  dependsOn: concat(
+    [ kvAuthSecret, kvDatabaseUrl ],
+    assignRoles ? [ acrPullAssignment, kvSecretsUserAssignment ] : []
+  )
+}
+
+// ---- Ingestion Job (cron; SFTP pull → parse → upsert) — opt-in ----
+// Runs inside the VNet to reach the private Postgres. DATABASE_URL comes from
+// Key Vault; the SFTP password is an inline (deploy-time) secret. Tenancy is
+// derived from each bundle's scan.json, not the SFTP path.
+resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
+  name: 'w2-sbcss-netmon-ingest'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerEnv.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 3600
+      replicaRetryLimit: 1
+      scheduleTriggerConfig: {
+        cronExpression: ingestCron
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: appIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
+        }
+        {
+          name: 'sftp-password'
+          value: sftpPassword
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'ingest'
+          image: ingestImage
+          resources: {
+            cpu: json(containerCpu)
+            memory: containerMemory
+          }
+          env: [
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'NODE_ENV', value: 'production' }
+            { name: 'SFTP_HOST', value: sftpHost }
+            { name: 'SFTP_PORT', value: sftpPort }
+            { name: 'SFTP_USER', value: sftpUser }
+            { name: 'SFTP_PASSWORD', secretRef: 'sftp-password' }
+            { name: 'SFTP_BASE_DIR', value: sftpBaseDir }
+          ]
+        }
+      ]
+    }
+  }
+  dependsOn: concat(
+    [ kvDatabaseUrl ],
+    assignRoles ? [ acrPullAssignment, kvSecretsUserAssignment ] : []
+  )
+}
+
+// ---- PostgreSQL Flexible Server (PRIVATE access — no public endpoint) ----
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: postgresServerName
   location: location
@@ -226,9 +526,17 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview'
     storage: { storageSizeGB: 32 }
     backup: { backupRetentionDays: 7, geoRedundantBackup: 'Disabled' }
     highAvailability: { mode: 'Disabled' }
-    network: { publicNetworkAccess: 'Enabled' }
+    network: {
+      // Private access: bound to the delegated subnet, resolved via the private
+      // DNS zone. publicNetworkAccess is implicitly Disabled in this mode (and
+      // firewall rules are not allowed alongside a delegated subnet).
+      delegatedSubnetResourceId: postgresSubnetId
+      privateDnsZoneArmResourceId: postgresPrivateDnsZone.id
+    }
     authConfig: { activeDirectoryAuth: 'Disabled', passwordAuth: 'Enabled' }
   }
+  // The DNS zone must be linked to the VNet before the server registers in it.
+  dependsOn: [ postgresDnsVnetLink ]
 }
 
 resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
@@ -237,24 +545,6 @@ resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12
   properties: {
     charset: 'UTF8'
     collation: 'en_US.utf8'
-  }
-}
-
-resource postgresClientFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (!empty(clientIpAddress)) {
-  parent: postgres
-  name: 'AllowClientIp'
-  properties: {
-    startIpAddress: clientIpAddress
-    endIpAddress: clientIpAddress
-  }
-}
-
-resource postgresAzureFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (allowAzureServicesToPostgres) {
-  parent: postgres
-  name: 'AllowAllAzureServices'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
   }
 }
 
@@ -300,10 +590,11 @@ resource deployContributorAssignment 'Microsoft.Authorization/roleAssignments@20
   }
 }
 
-// ---- Outputs (handy for wiring CI/CD and connection strings) ----
+// ---- Outputs (handy for wiring CI/CD and running the runbook) ----
 output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
 output acrLoginServer string = acr.properties.loginServer
 output appIdentityClientId string = appIdentity.properties.clientId
 output deployIdentityClientId string = deployIdentity.properties.clientId
 output postgresHost string = postgres.properties.fullyQualifiedDomainName
 output keyVaultUri string = keyVault.properties.vaultUri
+output migrateJobNameOut string = migrateJob.name

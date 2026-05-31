@@ -1,7 +1,11 @@
+import { redirect } from "next/navigation";
+
 import { getNavTree } from "@/db/queries";
+import { getSessionUser } from "@/lib/auth/current-user";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DynamicBreadcrumb } from "@/components/dynamic-breadcrumb";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { UserMenu } from "@/components/user-menu";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -17,6 +21,12 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Defense in depth: middleware already gates these routes, but never render
+  // the dashboard without a verified session loaded from the DB.
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  if (user.mustChangePassword) redirect("/account/change-password");
+
   const tree = await getNavTree();
 
   return (
@@ -29,6 +39,7 @@ export default async function DashboardLayout({
           <DynamicBreadcrumb tree={tree} />
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
+            <UserMenu email={user.email} role={user.role} />
           </div>
         </header>
         <main className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">

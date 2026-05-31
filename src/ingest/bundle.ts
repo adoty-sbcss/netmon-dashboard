@@ -6,9 +6,11 @@
  *
  * Bundle layout (per the netmon collector):
  *   <bundle>/HOURLY_SUMMARY.md, README.md
- *   <bundle>/scans/scan_<id>/{summary.md,findings.json,topology.json,devices.csv,metrics.json,timeline.json}
+ *   <bundle>/scans/scan_<id>/{summary.md,findings.json,topology.json,devices.csv,
+ *                             metrics.json,timeline.json,dns_health.json}
  *   <bundle>/scans/scan_<id>/raw/{scan.json,arp-table.json,lldp-neighbors.json,
- *                                 stp-events.json,dhcp-observed.json,snmp-polls.json,traffic-stats.json}
+ *                                 stp-events.json,dhcp-observed.json,snmp-polls.json,
+ *                                 traffic-stats.json,dns-probes.json}
  *
  * NOTE: bundle identity varies by collector version. Newer bundles carry
  * district_slug/school_slug/device_slug in scan.json; older ("App_Mon") bundles
@@ -102,6 +104,37 @@ export interface RawSnmp {
   polled_at?: string | null;
 }
 
+export interface RawDnsResolver {
+  resolver_ip?: string | null;
+  resolver_source?: string | null;
+  probes?: number | null;
+  ok?: number | null;
+  errors?: number | null;
+  nxdomain_rewrite?: boolean | null;
+  mean_ms?: number | null;
+}
+
+export interface RawDnsProbe {
+  resolver_ip?: string | null;
+  resolver_source?: string | null;
+  query_name?: string | null;
+  query_type?: string | null;
+  expected_status?: string | null;
+  status?: string | null;
+  query_time_ms?: number | null;
+  answer_count?: number | null;
+  answers_text?: string | null;
+  error?: string | null;
+  probed_at?: string | null;
+}
+
+/** dns_health.json (scan root, not raw/): per-resolver aggregate + raw probes. */
+export interface RawDnsHealth {
+  probe_count?: number | null;
+  by_resolver?: RawDnsResolver[];
+  probes?: RawDnsProbe[];
+}
+
 export interface RawFinding {
   rule?: string | null;
   severity?: string | null;
@@ -149,6 +182,7 @@ export interface ScanData {
   stp: RawStp[];
   traffic: RawTraffic[];
   snmp: RawSnmp[];
+  dns: RawDnsHealth;
   findings: RawFinding[];
   topology: RawTopology | null;
   scanDirName: string;
@@ -297,6 +331,7 @@ export function readBundleDir(dir: string): Bundle {
         stp: asList<RawStp>(readJson(join(raw, "stp-events.json"), [])),
         traffic: asList<RawTraffic>(readJson(join(raw, "traffic-stats.json"), [])),
         snmp: asList<RawSnmp>(readJson(join(raw, "snmp-polls.json"), [])),
+        dns: readJson<RawDnsHealth>(join(scanDir, "dns_health.json"), {}),
         findings: asList<RawFinding>(readJson(join(scanDir, "findings.json"), [])),
         topology: readJson<RawTopology | null>(join(scanDir, "topology.json"), null),
         scanDirName: entry,

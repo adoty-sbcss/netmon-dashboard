@@ -15,6 +15,20 @@
       "when": 1780141568969,
       "tag": "0001_flimsy_onslaught",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780144453608,
+      "tag": "0002_mixed_kitty_pryde",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780145980520,
+      "tag": "0003_special_ezekiel_stane",
+      "breakpoints": true
     }
   ]
 }

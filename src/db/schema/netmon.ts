@@ -13,6 +13,7 @@ import {
   integer,
   bigint,
   boolean,
+  doublePrecision,
   timestamp,
   jsonb,
   index,
@@ -193,6 +194,54 @@ export const dhcpObservations = pgTable(
     seenAt: timestamp("seen_at", { withTimezone: true }),
   },
   (t) => [index("idx_dhcp_scan").on(t.scanRunId)],
+);
+
+/**
+ * DNS resolver health — one row per (scan, resolver). The sensor probes each
+ * resolver it can find (DHCP-provided, public, system stub) with a fixed query
+ * set and records reachability, latency, and whether NXDOMAIN responses were
+ * rewritten (captive-portal / filtering tell). Authoritative aggregate from the
+ * collector; per-query detail lives in dns_probes.
+ */
+export const dnsResolverHealth = pgTable(
+  "dns_resolver_health",
+  {
+    id: serial("id").primaryKey(),
+    scanRunId: integer("scan_run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    resolverIp: text("resolver_ip"),
+    resolverSource: text("resolver_source"),
+    probes: integer("probes"),
+    ok: integer("ok"),
+    errors: integer("errors"),
+    nxdomainRewrite: boolean("nxdomain_rewrite"),
+    meanMs: doublePrecision("mean_ms"),
+  },
+  (t) => [index("idx_dns_resolver_health_scan").on(t.scanRunId)],
+);
+
+/** Individual DNS probe results (per scan): one row per resolver×query. */
+export const dnsProbes = pgTable(
+  "dns_probes",
+  {
+    id: serial("id").primaryKey(),
+    scanRunId: integer("scan_run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    resolverIp: text("resolver_ip"),
+    resolverSource: text("resolver_source"),
+    queryName: text("query_name"),
+    queryType: text("query_type"),
+    expectedStatus: text("expected_status"),
+    status: text("status"),
+    queryTimeMs: integer("query_time_ms"),
+    answerCount: integer("answer_count"),
+    answersText: text("answers_text"),
+    error: text("error"),
+    probedAt: timestamp("probed_at", { withTimezone: true }),
+  },
+  (t) => [index("idx_dns_probes_scan").on(t.scanRunId)],
 );
 
 export const stpEvents = pgTable(

@@ -21,6 +21,8 @@ import {
   devices,
   neighbors,
   dhcpObservations,
+  dnsResolverHealth,
+  dnsProbes,
   stpEvents,
   findings,
   snmpPolls,
@@ -331,6 +333,7 @@ export interface SchoolStats {
   deviceCount: number;
   neighborCount: number;
   dhcpCount: number;
+  dnsCount: number;
   stpCount: number;
   findingCount: number;
   lastScanAt: Date | null;
@@ -358,6 +361,7 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     [dev],
     [nb],
     [dhcp],
+    [dns],
     [stp],
     [find],
     [last],
@@ -379,6 +383,10 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
       .select({ c: count() })
       .from(dhcpObservations)
       .where(inScans(dhcpObservations.scanRunId)),
+    db
+      .select({ c: count() })
+      .from(dnsProbes)
+      .where(inScans(dnsProbes.scanRunId)),
     db.select({ c: count() }).from(stpEvents).where(inScans(stpEvents.scanRunId)),
     db.select({ c: count() }).from(findings).where(inScans(findings.scanRunId)),
     db
@@ -394,6 +402,7 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     deviceCount: dev?.c ?? 0,
     neighborCount: nb?.c ?? 0,
     dhcpCount: dhcp?.c ?? 0,
+    dnsCount: dns?.c ?? 0,
     stpCount: stp?.c ?? 0,
     findingCount: find?.c ?? 0,
     lastScanAt: last?.last ?? null,
@@ -919,4 +928,110 @@ export async function listDhcpForSchool(
     .where(where)
     .orderBy(desc(dhcpObservations.seenAt))
     .limit(500);
+}
+
+// ---- DNS health -----------------------------------------------------------
+
+export interface DnsResolverRow {
+  id: number;
+  resolverIp: string | null;
+  resolverSource: string | null;
+  probes: number | null;
+  ok: number | null;
+  errors: number | null;
+  nxdomainRewrite: boolean | null;
+  meanMs: number | null;
+}
+
+export interface DnsProbeRow {
+  id: number;
+  resolverIp: string | null;
+  resolverSource: string | null;
+  queryName: string | null;
+  queryType: string | null;
+  expectedStatus: string | null;
+  status: string | null;
+  queryTimeMs: number | null;
+  answerCount: number | null;
+  answersText: string | null;
+  error: string | null;
+  probedAt: Date | null;
+}
+
+export interface DnsHealth {
+  /** The scan these rows came from (resolved or explicit). */
+  scanId: number | null;
+  resolvers: DnsResolverRow[];
+  probes: DnsProbeRow[];
+}
+
+/**
+ * Resolver-health + per-query probes for a school. Resolves to the explicit
+ * scanId, else the most-recent scan at the school that actually has DNS data
+ * (DNS health is newer than some scans, so "latest scan" may have none).
+ */
+export async function listDnsForSchool(
+  schoolId: number,
+  opts: { scanId?: number } = {},
+): Promise<DnsHealth> {
+  let scanId = opts.scanId ?? null;
+  if (scanId === null) {
+    const [latest] = await db
+      .select({ scanId: dnsResolverHealth.scanRunId })
+      .from(dnsResolverHealth)
+      .innerJoin(scanRuns, eq(dnsResolverHealth.scanRunId, scanRuns.id))
+      .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+      .where(eq(sensors.schoolId, schoolId))
+      .orderBy(desc(scanRuns.startedAt))
+      .limit(1);
+    scanId = latest?.scanId ?? null;
+  }
+  if (scanId === null) return { scanId: null, resolvers: [], probes: [] };
+
+  // Guard the resolved/explicit scan belongs to this school.
+  const guarded = and(
+    eq(sensors.schoolId, schoolId),
+    eq(scanRuns.id, scanId),
+  );
+
+  const [resolvers, probes] = await Promise.all([
+    db
+      .select({
+        id: dnsResolverHealth.id,
+        resolverIp: dnsResolverHealth.resolverIp,
+        resolverSource: dnsResolverHealth.resolverSource,
+        probes: dnsResolverHealth.probes,
+        ok: dnsResolverHealth.ok,
+        errors: dnsResolverHealth.errors,
+        nxdomainRewrite: dnsResolverHealth.nxdomainRewrite,
+        meanMs: dnsResolverHealth.meanMs,
+      })
+      .from(dnsResolverHealth)
+      .innerJoin(scanRuns, eq(dnsResolverHealth.scanRunId, scanRuns.id))
+      .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+      .where(guarded)
+      .orderBy(dnsResolverHealth.resolverSource, dnsResolverHealth.resolverIp),
+    db
+      .select({
+        id: dnsProbes.id,
+        resolverIp: dnsProbes.resolverIp,
+        resolverSource: dnsProbes.resolverSource,
+        queryName: dnsProbes.queryName,
+        queryType: dnsProbes.queryType,
+        expectedStatus: dnsProbes.expectedStatus,
+        status: dnsProbes.status,
+        queryTimeMs: dnsProbes.queryTimeMs,
+        answerCount: dnsProbes.answerCount,
+        answersText: dnsProbes.answersText,
+        error: dnsProbes.error,
+        probedAt: dnsProbes.probedAt,
+      })
+      .from(dnsProbes)
+      .innerJoin(scanRuns, eq(dnsProbes.scanRunId, scanRuns.id))
+      .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+      .where(guarded)
+      .orderBy(dnsProbes.resolverIp, dnsProbes.queryName),
+  ]);
+
+  return { scanId, resolvers, probes };
 }

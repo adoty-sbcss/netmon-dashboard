@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   Cpu,
+  Globe,
   HardDrive,
   Network,
   Radio,
@@ -91,6 +92,12 @@ export default async function SchoolPage({
           value={num(stats.dhcpCount)}
           icon={HardDrive}
           href={`/${district.slug}/${school.slug}/dhcp`}
+        />
+        <StatCard
+          label="DNS probes"
+          value={num(stats.dnsCount)}
+          icon={Globe}
+          href={`/${district.slug}/${school.slug}/dns`}
         />
         <StatCard label="STP events" value={num(stats.stpCount)} icon={RouteOff} />
         <StatCard label="Devices seen" value={num(stats.deviceCount)} icon={Cpu} />

@@ -25,6 +25,8 @@ import {
   devices as devicesTbl,
   neighbors,
   dhcpObservations,
+  dnsResolverHealth,
+  dnsProbes,
   stpEvents,
   trafficStats,
   snmpPolls,
@@ -284,6 +286,8 @@ export async function ingestBundle(
     dhcp_observations: 0,
     stp_events: 0,
     traffic_stats: 0,
+    dns_resolver_health: 0,
+    dns_probes: 0,
     snmp_polls: 0,
     host_switch_ports: 0,
     findings: 0,
@@ -342,6 +346,7 @@ export async function ingestBundle(
     let healthFindings = 0;
     let healthDhcp = 0;
     let healthStp = 0;
+    let healthDns = 0;
     const macSeen = new Set<string>();
     const chassisSeen = new Set<string>();
     let day: string | null = null;
@@ -433,6 +438,42 @@ export async function ingestBundle(
         await tx.insert(dhcpObservations).values(dhcpRows);
         counts.dhcp_observations += dhcpRows.length;
         healthDhcp += dhcpRows.length;
+      }
+
+      // dns health (per-resolver aggregate + per-probe detail)
+      const dnsResolverRows = (scan.dns.by_resolver ?? []).map((r) => ({
+        scanRunId,
+        resolverIp: str(r.resolver_ip),
+        resolverSource: str(r.resolver_source),
+        probes: toNum(r.probes),
+        ok: toNum(r.ok),
+        errors: toNum(r.errors),
+        nxdomainRewrite: toBool(r.nxdomain_rewrite),
+        meanMs: toNum(r.mean_ms),
+      }));
+      if (dnsResolverRows.length) {
+        await tx.insert(dnsResolverHealth).values(dnsResolverRows);
+        counts.dns_resolver_health += dnsResolverRows.length;
+      }
+
+      const dnsProbeRows = (scan.dns.probes ?? []).map((p) => ({
+        scanRunId,
+        resolverIp: str(p.resolver_ip),
+        resolverSource: str(p.resolver_source),
+        queryName: str(p.query_name),
+        queryType: str(p.query_type),
+        expectedStatus: str(p.expected_status),
+        status: str(p.status),
+        queryTimeMs: toNum(p.query_time_ms),
+        answerCount: toNum(p.answer_count),
+        answersText: str(p.answers_text),
+        error: str(p.error),
+        probedAt: toDate(p.probed_at),
+      }));
+      if (dnsProbeRows.length) {
+        await tx.insert(dnsProbes).values(dnsProbeRows);
+        counts.dns_probes += dnsProbeRows.length;
+        healthDns += dnsProbeRows.length;
       }
 
       // stp
@@ -635,6 +676,7 @@ export async function ingestBundle(
         findingCount: healthFindings,
         dhcpCount: healthDhcp,
         stpEventCount: healthStp,
+        dnsProbeCount: healthDns,
         scanCount: counts.scan_runs,
       };
       await tx

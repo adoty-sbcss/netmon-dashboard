@@ -111,6 +111,8 @@ export const users = pgTable("users", {
    */
   isBreakGlass: boolean("is_break_glass").notNull().default(false),
   passwordHash: text("password_hash"),
+  /** Forces a password change on next login (set for seeded/default passwords). */
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   disabled: boolean("disabled").notNull().default(false),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })

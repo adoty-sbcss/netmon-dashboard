@@ -7,7 +7,9 @@ README.md
 AGENTS.md
 CLAUDE.md
 docs
-drizzle
+# NOTE: drizzle/ must stay in the build context — the migrator image runs
+# `drizzle-kit migrate`, which reads the SQL files in drizzle/. The runtime
+# (runner) stage doesn't copy it, so this costs the lean image nothing.
 .env
 .env.*
 !.env.example
