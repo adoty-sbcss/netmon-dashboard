@@ -3,10 +3,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DatabaseZap, DownloadCloud, Network, School, Users } from "lucide-react";
+import { Building2, ChevronRight, DatabaseZap, DownloadCloud, School, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
+import { BrandLogo } from "@/components/logo";
 import {
   Collapsible,
   CollapsibleContent,
@@ -43,13 +44,13 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <Network className="size-4" />
+                <div className="flex aspect-square size-8 items-center justify-center">
+                  <BrandLogo className="size-8" />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">NetMon</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    Network Dashboard
+                    SBCSS Network Dashboard
                   </span>
                 </div>
               </Link>

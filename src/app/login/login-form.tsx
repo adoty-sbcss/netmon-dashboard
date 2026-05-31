@@ -6,10 +6,11 @@ import { loginAction, type ActionState } from "@/lib/auth/actions";
 import type { Provider } from "@/lib/auth/oidc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { GoogleIcon, MicrosoftIcon } from "@/components/provider-icons";
 
 const PROVIDER_LABEL: Record<Provider, string> = {
-  google: "Continue with Google",
-  microsoft: "Continue with Microsoft",
+  google: "Sign in with Google",
+  microsoft: "Sign in with Microsoft",
 };
 
 export function LoginForm({
@@ -32,13 +33,22 @@ export function LoginForm({
         </p>
       )}
 
-      {/* Federated sign-in (Google / Microsoft) — the everyday path. */}
+      {/* Federated sign-in (Google / Microsoft) — official brand buttons. */}
       {providers.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2.5">
           {providers.map((p) => (
-            <Button key={p} asChild variant="outline">
-              <a href={`/api/auth/oidc/${p}`}>{PROVIDER_LABEL[p]}</a>
-            </Button>
+            <a
+              key={p}
+              href={`/api/auth/oidc/${p}`}
+              className="flex h-11 items-center justify-center gap-3 rounded-md border border-[#dadce0] bg-white px-4 text-sm font-medium text-[#3c4043] shadow-sm transition-colors hover:bg-[#f8f9fa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {p === "google" ? (
+                <GoogleIcon className="size-5" />
+              ) : (
+                <MicrosoftIcon className="size-5" />
+              )}
+              {PROVIDER_LABEL[p]}
+            </a>
           ))}
           <div className="flex items-center gap-3 py-1 text-xs text-muted-foreground">
             <span className="h-px flex-1 bg-border" />

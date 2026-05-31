@@ -15,9 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NetMon Dashboard",
+  title: {
+    default: "NetMon — SBCSS Network Dashboard",
+    template: "%s · NetMon",
+  },
   description:
-    "Network visibility dashboard and sensor management console for NetMon.",
+    "Network visibility and sensor management for San Bernardino County Superintendent of Schools.",
+  applicationName: "NetMon",
 };
 
 export default function RootLayout({

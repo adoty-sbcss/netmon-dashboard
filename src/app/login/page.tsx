@@ -1,6 +1,5 @@
-import { Network } from "lucide-react";
-
 import { enabledProviders } from "@/lib/auth/oidc";
+import { BrandLogo } from "@/components/logo";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoginForm } from "./login-form";
 
@@ -27,13 +26,13 @@ export default async function LoginPage({
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted/30 p-4">
-      <div className="flex items-center gap-2.5">
-        <div className="flex aspect-square size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Network className="size-5" />
-        </div>
-        <div className="leading-tight">
-          <p className="font-semibold">NetMon</p>
-          <p className="text-xs text-muted-foreground">Network Dashboard</p>
+      <div className="flex flex-col items-center gap-2">
+        <BrandLogo className="size-14" />
+        <div className="text-center leading-tight">
+          <p className="text-lg font-semibold">NetMon</p>
+          <p className="text-xs text-muted-foreground">
+            San Bernardino County Superintendent of Schools
+          </p>
         </div>
       </div>
 
