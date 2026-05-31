@@ -33,6 +33,7 @@ import {
   entitiesSwitch,
   healthRollupDaily,
 } from "./schema/entities";
+import { enrichHost, type DeviceType } from "../lib/oui";
 
 // ---- shared shapes --------------------------------------------------------
 
@@ -511,6 +512,8 @@ export interface HostRow {
   entityId: number | null;
   hostname: string | null;
   vendor: string | null;
+  /** Coarse classification (printer/phone/computer/…); see src/lib/oui. */
+  deviceType: DeviceType | null;
   mac: string | null;
   ip: string | null;
   /** Discovery method for snapshot rows (arp-scan/nmap/lldp); null for canonical. */
@@ -586,6 +589,7 @@ export async function listHostsForSchool(
       entityId: h.id,
       hostname: h.hostname,
       vendor: h.vendor,
+      deviceType: (h.deviceType as DeviceType | null) ?? null,
       mac: h.mac,
       ip: h.ip,
       source: null,
@@ -618,18 +622,28 @@ export async function listHostsForSchool(
   ]);
   const macToEntity = new Map(macMap.map((m) => [m.mac, m.id]));
 
-  return deviceRows.map((d) => ({
-    key: `d${d.id}`,
-    entityId: d.mac ? (macToEntity.get(d.mac) ?? null) : null,
-    hostname: d.hostname,
-    vendor: d.vendor,
-    mac: d.mac,
-    ip: d.ip,
-    source: d.source,
-    switchPort: portLabel(d.mac ? portsByMac.get(d.mac) : undefined),
-    firstSeenAt: d.firstSeenAt,
-    lastSeenAt: d.lastSeenAt,
-  }));
+  return deviceRows.map((d) => {
+    // Snapshot rows aren't enriched at rest — derive vendor/type on the fly so
+    // the per-scan view matches the canonical view.
+    const { vendor, deviceType } = enrichHost({
+      mac: d.mac,
+      vendor: d.vendor,
+      hostname: d.hostname,
+    });
+    return {
+      key: `d${d.id}`,
+      entityId: d.mac ? (macToEntity.get(d.mac) ?? null) : null,
+      hostname: d.hostname,
+      vendor,
+      deviceType,
+      mac: d.mac,
+      ip: d.ip,
+      source: d.source,
+      switchPort: portLabel(d.mac ? portsByMac.get(d.mac) : undefined),
+      firstSeenAt: d.firstSeenAt,
+      lastSeenAt: d.lastSeenAt,
+    };
+  });
 }
 
 // ---- host detail ----------------------------------------------------------
@@ -656,6 +670,7 @@ export interface HostDetail {
   ip: string | null;
   hostname: string | null;
   vendor: string | null;
+  deviceType: DeviceType | null;
   firstSeenAt: Date | null;
   lastSeenAt: Date | null;
   attributes: Record<string, unknown>;
@@ -733,12 +748,24 @@ export async function getHostDetail(
 
   const port = portRows[0];
 
+  // Refine the stored type with SNMP sysDescr when this host was SNMP-polled.
+  const sysDescr =
+    snmp.find((a) => a.oidName === "sysDescr" || a.oidName === "sysName")?.value ??
+    null;
+  const { vendor, deviceType } = enrichHost({
+    mac: host.mac,
+    vendor: host.vendor,
+    hostname: host.hostname,
+    snmpSysDescr: sysDescr,
+  });
+
   return {
     id: host.id,
     mac: host.mac,
     ip: host.ip,
     hostname: host.hostname,
-    vendor: host.vendor,
+    vendor: vendor ?? host.vendor,
+    deviceType: deviceType ?? (host.deviceType as DeviceType | null) ?? null,
     firstSeenAt: host.firstSeenAt,
     lastSeenAt: host.lastSeenAt,
     attributes: (host.attributes ?? {}) as Record<string, unknown>,
@@ -928,6 +955,308 @@ export async function listDhcpForSchool(
     .where(where)
     .orderBy(desc(dhcpObservations.seenAt))
     .limit(500);
+}
+
+// ---- DHCP analysis (consolidated scope + per-client view) -----------------
+
+/** Normalize NetMon's message-type strings: "DHCPDISCOVER" -> "DISCOVER". */
+function dhcpType(t: string | null): string {
+  if (!t) return "?";
+  return t.toUpperCase().replace(/^DHCP/, "").trim() || "?";
+}
+
+/** Dotted netmask -> prefix length (e.g. 255.255.252.0 -> 22), or null. */
+function maskToPrefix(mask: string | null): number | null {
+  if (!mask) return null;
+  const parts = mask.split(".").map((p) => Number.parseInt(p, 10));
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return null;
+  let bits = 0;
+  for (const o of parts) bits += ((o >>> 0).toString(2).match(/1/g) ?? []).length;
+  return bits;
+}
+
+/** ip + dotted-mask -> "network/prefix" (e.g. 10.20.4.7 /22 -> 10.20.4.0/22). */
+function networkCidr(ip: string | null, mask: string | null): string | null {
+  if (!ip || !mask) return null;
+  const ipP = ip.split(".").map((p) => Number.parseInt(p, 10));
+  const mP = mask.split(".").map((p) => Number.parseInt(p, 10));
+  if (ipP.length !== 4 || mP.length !== 4) return null;
+  if ([...ipP, ...mP].some((n) => Number.isNaN(n))) return null;
+  const net = ipP.map((o, i) => o & mP[i]).join(".");
+  const prefix = maskToPrefix(mask);
+  return prefix == null ? null : `${net}/${prefix}`;
+}
+
+export interface DhcpScope {
+  network: string;
+  router: string | null;
+  dnsServers: string | null;
+  servers: string[];
+  clients: number;
+  offeredIps: number;
+  offers: number;
+  acks: number;
+  naks: number;
+}
+
+export interface DhcpClientMessage {
+  type: string;
+  offeredIp: string | null;
+  serverIp: string | null;
+  seenAt: Date | null;
+}
+
+export type DhcpClientStatus = "ok" | "incomplete" | "nak" | "no-response";
+
+export interface DhcpClientView {
+  clientMac: string;
+  status: DhcpClientStatus;
+  lastOfferedIp: string | null;
+  server: string | null;
+  network: string | null;
+  types: string[];
+  count: number;
+  messages: DhcpClientMessage[];
+}
+
+export interface DhcpIssue {
+  severity: "warning" | "info";
+  title: string;
+  detail: string;
+}
+
+export interface DhcpAnalysis {
+  scanId: number | null;
+  totalObservations: number;
+  truncated: boolean;
+  summary: { clients: number; scopes: number; servers: number; ackRate: number | null };
+  scopes: DhcpScope[];
+  servers: { ip: string; mac: string | null; messages: number; scopes: number }[];
+  clients: DhcpClientView[];
+  issues: DhcpIssue[];
+}
+
+const DHCP_ANALYSIS_LIMIT = 3000;
+
+/**
+ * Consolidated DHCP view for a school: derive scopes (subnets) from captured
+ * OFFER/ACK options, roll observations up per client MAC into a lease story
+ * (DISCOVER -> OFFER -> REQUEST -> ACK) with a success/issue status, and flag
+ * problems (NAKs, clients getting no offer, multiple servers on one scope) so an
+ * admin sees health at a glance instead of scrolling raw packets.
+ */
+export async function getDhcpAnalysis(
+  schoolId: number,
+  opts: { scanId?: number } = {},
+): Promise<DhcpAnalysis> {
+  const where = opts.scanId
+    ? and(eq(sensors.schoolId, schoolId), eq(dhcpObservations.scanRunId, opts.scanId))
+    : eq(sensors.schoolId, schoolId);
+
+  const rows = await db
+    .select({
+      messageType: dhcpObservations.messageType,
+      serverIp: dhcpObservations.serverIp,
+      serverMac: dhcpObservations.serverMac,
+      clientMac: dhcpObservations.clientMac,
+      offeredIp: dhcpObservations.offeredIp,
+      subnetMask: dhcpObservations.subnetMask,
+      router: dhcpObservations.router,
+      dnsServers: dhcpObservations.dnsServers,
+      seenAt: dhcpObservations.seenAt,
+    })
+    .from(dhcpObservations)
+    .innerJoin(scanRuns, eq(dhcpObservations.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(where)
+    .orderBy(desc(dhcpObservations.seenAt))
+    .limit(DHCP_ANALYSIS_LIMIT + 1);
+
+  const truncated = rows.length > DHCP_ANALYSIS_LIMIT;
+  const obs = truncated ? rows.slice(0, DHCP_ANALYSIS_LIMIT) : rows;
+
+  // ---- scopes (keyed by derived network CIDR) ----
+  const scopeMap = new Map<
+    string,
+    DhcpScope & { _clients: Set<string>; _ips: Set<string> }
+  >();
+  // ---- servers ----
+  const serverMap = new Map<
+    string,
+    { ip: string; mac: string | null; messages: number; _scopes: Set<string> }
+  >();
+  // ---- clients ----
+  const clientMap = new Map<string, DhcpClientView>();
+
+  let ackCount = 0;
+  let discoverCount = 0;
+
+  for (const r of obs) {
+    const type = dhcpType(r.messageType);
+    if (type === "ACK") ackCount++;
+    if (type === "DISCOVER") discoverCount++;
+    const network = networkCidr(r.offeredIp, r.subnetMask);
+
+    // scope rollup (only rows that carry subnet info contribute a scope)
+    if (network) {
+      const s = scopeMap.get(network) ?? {
+        network,
+        router: r.router,
+        dnsServers: r.dnsServers,
+        servers: [],
+        clients: 0,
+        offeredIps: 0,
+        offers: 0,
+        acks: 0,
+        naks: 0,
+        _clients: new Set<string>(),
+        _ips: new Set<string>(),
+      };
+      if (!s.router && r.router) s.router = r.router;
+      if (!s.dnsServers && r.dnsServers) s.dnsServers = r.dnsServers;
+      if (r.serverIp && !s.servers.includes(r.serverIp)) s.servers.push(r.serverIp);
+      if (r.clientMac) s._clients.add(r.clientMac);
+      if (r.offeredIp) s._ips.add(r.offeredIp);
+      if (type === "OFFER") s.offers++;
+      if (type === "ACK") s.acks++;
+      if (type === "NAK") s.naks++;
+      scopeMap.set(network, s);
+    }
+
+    // server rollup
+    if (r.serverIp) {
+      const sv = serverMap.get(r.serverIp) ?? {
+        ip: r.serverIp,
+        mac: r.serverMac,
+        messages: 0,
+        _scopes: new Set<string>(),
+      };
+      sv.messages++;
+      if (!sv.mac && r.serverMac) sv.mac = r.serverMac;
+      if (network) sv._scopes.add(network);
+      serverMap.set(r.serverIp, sv);
+    }
+
+    // client rollup
+    if (r.clientMac) {
+      const c =
+        clientMap.get(r.clientMac) ??
+        ({
+          clientMac: r.clientMac,
+          status: "no-response" as DhcpClientStatus,
+          lastOfferedIp: null,
+          server: null,
+          network: null,
+          types: [],
+          count: 0,
+          messages: [],
+        } satisfies DhcpClientView);
+      c.count++;
+      if (!c.types.includes(type)) c.types.push(type);
+      if (r.offeredIp) c.lastOfferedIp = r.offeredIp;
+      if (r.serverIp && !c.server) c.server = r.serverIp;
+      if (network && !c.network) c.network = network;
+      // keep up to ~12 messages per client for the expandable conversation
+      if (c.messages.length < 12) {
+        c.messages.push({
+          type,
+          offeredIp: r.offeredIp,
+          serverIp: r.serverIp,
+          seenAt: r.seenAt,
+        });
+      }
+      clientMap.set(r.clientMac, c);
+    }
+  }
+
+  // finalize client status
+  for (const c of clientMap.values()) {
+    const t = new Set(c.types);
+    if (t.has("ACK")) c.status = "ok";
+    else if (t.has("NAK")) c.status = "nak";
+    else if (t.has("OFFER") || t.has("REQUEST")) c.status = "incomplete";
+    else c.status = "no-response"; // only DISCOVER/INFORM seen, no server reply
+  }
+
+  const scopes = [...scopeMap.values()]
+    .map((s) => {
+      s.clients = s._clients.size;
+      s.offeredIps = s._ips.size;
+      return s;
+    })
+    .sort((a, b) => b.clients - a.clients);
+
+  const servers = [...serverMap.values()]
+    .map((s) => ({ ip: s.ip, mac: s.mac, messages: s.messages, scopes: s._scopes.size }))
+    .sort((a, b) => b.messages - a.messages);
+
+  const clients = [...clientMap.values()].sort((a, b) => {
+    const rank: Record<DhcpClientStatus, number> = {
+      nak: 0,
+      "no-response": 1,
+      incomplete: 2,
+      ok: 3,
+    };
+    return rank[a.status] - rank[b.status] || b.count - a.count;
+  });
+
+  // ---- issues ----
+  const issues: DhcpIssue[] = [];
+  const nakClients = clients.filter((c) => c.status === "nak");
+  if (nakClients.length > 0) {
+    issues.push({
+      severity: "warning",
+      title: `${nakClients.length} client${nakClients.length === 1 ? "" : "s"} received a DHCP NAK`,
+      detail:
+        "A NAK means the server refused the client's requested address (often a stale lease or wrong subnet). " +
+        nakClients.slice(0, 5).map((c) => c.clientMac).join(", "),
+    });
+  }
+  const noResp = clients.filter((c) => c.status === "no-response");
+  if (noResp.length > 0) {
+    issues.push({
+      severity: "warning",
+      title: `${noResp.length} client${noResp.length === 1 ? "" : "s"} got no DHCP response`,
+      detail:
+        "These MACs were seen sending DISCOVER/REQUEST but no OFFER/ACK was captured — possible scope exhaustion, no relay, or a one-off capture gap.",
+    });
+  }
+  for (const s of scopes) {
+    if (s.servers.length > 1) {
+      issues.push({
+        severity: "warning",
+        title: `Scope ${s.network} served by ${s.servers.length} DHCP servers`,
+        detail: `Multiple servers answering the same scope can indicate a rogue/misconfigured server: ${s.servers.join(", ")}.`,
+      });
+    }
+  }
+  if (servers.length > 1) {
+    issues.push({
+      severity: "info",
+      title: `${servers.length} DHCP servers seen at this school`,
+      detail: servers.map((s) => s.ip).join(", "),
+    });
+  }
+
+  return {
+    scanId: opts.scanId ?? null,
+    totalObservations: obs.length,
+    truncated,
+    summary: {
+      clients: clients.length,
+      scopes: scopes.length,
+      servers: servers.length,
+      ackRate: discoverCount > 0 ? ackCount / discoverCount : null,
+    },
+    scopes: scopes.map(({ _clients, _ips, ...rest }) => {
+      void _clients;
+      void _ips;
+      return rest;
+    }),
+    servers,
+    clients,
+    issues,
+  };
 }
 
 // ---- DNS health -----------------------------------------------------------

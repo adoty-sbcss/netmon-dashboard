@@ -49,6 +49,7 @@ import {
   type ScanData,
   type RawTopology,
 } from "./bundle";
+import { enrichHost } from "../lib/oui";
 
 /**
  * SNMP curation. Raw SNMP is thousands of rows/scan (mostly ipNetToMediaTable +
@@ -609,6 +610,14 @@ export async function ingestBundle(
         const mac = str(d.mac);
         if (!mac) continue; // need a MAC to dedup
         const seen = toDate(d.last_seen_at) ?? completedAt;
+        const hostname = str(d.hostname);
+        // Enrich: fill manufacturer from the OUI table when the bundle says
+        // "unknown"/blank, and classify a coarse device type. Pure/offline.
+        const { vendor, deviceType } = enrichHost({
+          mac,
+          vendor: str(d.vendor),
+          hostname,
+        });
         await tx
           .insert(entitiesHost)
           .values({
@@ -616,8 +625,9 @@ export async function ingestBundle(
             schoolId: school.id,
             mac,
             ip: str(d.ip),
-            hostname: str(d.hostname),
-            vendor: str(d.vendor),
+            hostname,
+            vendor,
+            deviceType,
             firstSeenAt: toDate(d.first_seen_at) ?? seen,
             lastSeenAt: seen,
           })
@@ -626,8 +636,9 @@ export async function ingestBundle(
             set: {
               schoolId: school.id,
               ip: str(d.ip),
-              hostname: str(d.hostname),
-              vendor: str(d.vendor),
+              hostname,
+              vendor,
+              deviceType,
               lastSeenAt: seen,
               updatedAt: new Date(),
             },

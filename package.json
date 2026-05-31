@@ -13,7 +13,8 @@
     "db:studio": "drizzle-kit studio",
     "auth:seed": "tsx src/db/seed-admin.ts",
     "ingest": "tsx src/ingest/run.ts",
-    "ingest:sync": "tsx src/ingest/sync.ts"
+    "ingest:sync": "tsx src/ingest/sync.ts",
+    "enrich": "tsx src/ingest/enrich.ts"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",

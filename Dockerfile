@@ -26,7 +26,7 @@ FROM builder AS migrator
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-CMD ["sh", "-c", "npm run db:migrate && npm run auth:seed"]
+CMD ["sh", "-c", "npm run db:migrate && npm run auth:seed && npm run enrich"]
 
 # ---- ingest: one-shot image for the SFTP sync Container Apps Job (cron) ----
 # Also reuses the builder layer (needs tsx + the ingest source + drizzle ORM).

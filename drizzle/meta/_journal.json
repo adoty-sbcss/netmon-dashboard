@@ -43,6 +43,13 @@
       "when": 1780225039581,
       "tag": "0005_gray_rage",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780227072092,
+      "tag": "0006_fine_power_pack",
+      "breakpoints": true
     }
   ]
 }

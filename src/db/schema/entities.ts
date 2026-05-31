@@ -63,6 +63,11 @@ export const entitiesHost = pgTable(
     ip: text("ip"),
     hostname: text("hostname"),
     vendor: text("vendor"),
+    /** Best-effort classification: 'switch' | 'router' | 'ap' | 'firewall' |
+     *  'printer' | 'phone' | 'camera' | 'computer' | 'server' | 'mobile' |
+     *  'storage' | 'iot' | 'vm' | 'unknown'. Derived from OUI vendor + hostname
+     *  + SNMP at ingest (see src/lib/oui). */
+    deviceType: text("device_type"),
     attributes: jsonb("attributes").notNull().default({}),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),

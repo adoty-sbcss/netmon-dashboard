@@ -14,6 +14,7 @@ import {
 } from "@/db/queries";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { DeviceTypeBadge } from "@/components/device-type-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -59,6 +60,7 @@ export default async function HostDetailPage({
         <PageHeader
           title={host.hostname || host.ip || host.mac}
           description={`${school.name || titleizeSlug(school.slug)} · ${district.name}`}
+          actions={<DeviceTypeBadge type={host.deviceType} />}
         />
       </div>
 

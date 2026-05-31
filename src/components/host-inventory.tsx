@@ -5,8 +5,11 @@ import Link from "next/link";
 import { ArrowUpDown, ChevronRight, Search } from "lucide-react";
 
 import type { HostRow } from "@/db/queries";
+import type { DeviceType } from "@/lib/oui";
+import { DEVICE_TYPE_LABELS } from "@/lib/oui";
 import { relativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
+import { DeviceTypeBadge } from "@/components/device-type-badge";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -39,18 +42,32 @@ export function HostInventory({
   basePath: string;
 }) {
   const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<DeviceType | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("ip");
   const [asc, setAsc] = useState(true);
 
+  // Device types actually present, with counts, for the filter dropdown.
+  const typeCounts = useMemo(() => {
+    const m = new Map<DeviceType, number>();
+    for (const h of hosts) {
+      const t = (h.deviceType ?? "unknown") as DeviceType;
+      m.set(t, (m.get(t) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [hosts]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const rows = q
+    let rows = q
       ? hosts.filter((h) =>
-          [h.hostname, h.vendor, h.mac, h.ip]
+          [h.hostname, h.vendor, h.mac, h.ip, h.deviceType]
             .filter(Boolean)
             .some((v) => v!.toLowerCase().includes(q)),
         )
       : hosts;
+    if (typeFilter !== "all") {
+      rows = rows.filter((h) => (h.deviceType ?? "unknown") === typeFilter);
+    }
 
     const sorted = [...rows].sort((a, b) => {
       let cmp: number;
@@ -67,7 +84,7 @@ export function HostInventory({
       return asc ? cmp : -cmp;
     });
     return sorted;
-  }, [hosts, query, sortKey, asc]);
+  }, [hosts, query, typeFilter, sortKey, asc]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -80,15 +97,29 @@ export function HostInventory({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search host, vendor, MAC, IP…"
-            className="pl-8"
-          />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search host, vendor, MAC, IP…"
+              className="pl-8"
+            />
+          </div>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as DeviceType | "all")}
+            className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          >
+            <option value="all">All types ({hosts.length})</option>
+            {typeCounts.map(([t, n]) => (
+              <option key={t} value={t}>
+                {DEVICE_TYPE_LABELS[t]} ({n})
+              </option>
+            ))}
+          </select>
         </div>
         <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
           {filtered.length} of {hosts.length}
@@ -101,6 +132,7 @@ export function HostInventory({
             <TableRow>
               <SortHead label="IP" col="ip" sortKey={sortKey} onClick={toggleSort} />
               <SortHead label="Hostname" col="hostname" sortKey={sortKey} onClick={toggleSort} />
+              <TableHead>Type</TableHead>
               <SortHead
                 label="Vendor"
                 col="vendor"
@@ -129,7 +161,7 @@ export function HostInventory({
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                   No hosts match.
                 </TableCell>
               </TableRow>
@@ -165,6 +197,9 @@ export function HostInventory({
                           {h.source}
                         </Badge>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <DeviceTypeBadge type={h.deviceType} className="relative" />
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {h.vendor ?? <span className="text-muted-foreground">—</span>}
