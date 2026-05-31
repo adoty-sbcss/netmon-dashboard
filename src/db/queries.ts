@@ -7,7 +7,7 @@
  * than correlated subqueries: simpler to read and the dataset is small.
  */
 import "server-only";
-import { and, count, desc, eq, max, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte, max, min, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./index";
@@ -32,6 +32,7 @@ import {
   entitiesHost,
   entitiesSwitch,
   healthRollupDaily,
+  topologySnapshots,
 } from "./schema/entities";
 import { enrichHost, type DeviceType } from "../lib/oui";
 
@@ -1428,4 +1429,157 @@ export async function listStpForSchool(
     rootBridges,
     rows,
   };
+}
+
+// ---- network topology (maps) ----------------------------------------------
+
+export interface TopoNode {
+  id: string;
+  type: string;
+  label?: string | null;
+  ip?: string | null;
+  hostCount?: number | null;
+}
+export interface TopoEdge {
+  source: string;
+  target: string;
+  kind?: string | null;
+}
+export interface TopoGraph {
+  nodes: TopoNode[];
+  edges: TopoEdge[];
+  generatedAt: Date | null;
+}
+export interface SchoolTopology {
+  physical: TopoGraph;
+  logical: TopoGraph;
+}
+
+function emptyGraph(): TopoGraph {
+  return { nodes: [], edges: [], generatedAt: null };
+}
+
+/** Physical (LLDP/CDP) + logical (subnet/gateway) topology snapshots for a school. */
+export async function getSchoolTopology(schoolId: number): Promise<SchoolTopology> {
+  const rows = await db
+    .select({
+      kind: topologySnapshots.kind,
+      graph: topologySnapshots.graph,
+      generatedAt: topologySnapshots.generatedAt,
+    })
+    .from(topologySnapshots)
+    .where(
+      and(
+        eq(topologySnapshots.scopeType, "school"),
+        eq(topologySnapshots.scopeId, schoolId),
+      ),
+    );
+
+  const out: SchoolTopology = { physical: emptyGraph(), logical: emptyGraph() };
+  for (const r of rows) {
+    const g = (r.graph ?? {}) as { nodes?: TopoNode[]; edges?: TopoEdge[] };
+    const graph: TopoGraph = {
+      nodes: Array.isArray(g.nodes) ? g.nodes : [],
+      edges: Array.isArray(g.edges) ? g.edges : [],
+      generatedAt: r.generatedAt,
+    };
+    if (r.kind === "physical") out.physical = graph;
+    else if (r.kind === "logical") out.logical = graph;
+  }
+  return out;
+}
+
+// ---- admin: managed entity tree (rename / delete / purge) -----------------
+
+export interface ManagedSensor {
+  id: number;
+  slug: string;
+  name: string | null;
+  scanCount: number;
+  firstScanAt: Date | null;
+  lastScanAt: Date | null;
+}
+export interface ManagedSchool {
+  id: number;
+  slug: string;
+  name: string | null;
+  sensors: ManagedSensor[];
+}
+export interface ManagedDistrict {
+  id: number;
+  slug: string;
+  name: string;
+  schools: ManagedSchool[];
+}
+
+/**
+ * Full district → school → sensor tree with per-sensor scan stats, for the
+ * data-management admin page. Small dataset; stitched in JS.
+ */
+export async function getManagedTree(): Promise<ManagedDistrict[]> {
+  const [dRows, sRows, senRows, scanAgg] = await Promise.all([
+    db.select().from(districts).orderBy(districts.name),
+    db.select().from(schools).orderBy(schools.slug),
+    db.select().from(sensors).orderBy(sensors.slug),
+    db
+      .select({
+        sensorId: scanRuns.sensorId,
+        scanCount: count(scanRuns.id),
+        firstScanAt: min(scanRuns.startedAt),
+        lastScanAt: max(scanRuns.startedAt),
+      })
+      .from(scanRuns)
+      .groupBy(scanRuns.sensorId),
+  ]);
+
+  const aggBySensor = new Map(scanAgg.map((a) => [a.sensorId, a]));
+  const sensorsBySchool = new Map<number, ManagedSensor[]>();
+  for (const s of senRows) {
+    const agg = aggBySensor.get(s.id);
+    const list = sensorsBySchool.get(s.schoolId) ?? [];
+    list.push({
+      id: s.id,
+      slug: s.slug,
+      name: s.name,
+      scanCount: Number(agg?.scanCount ?? 0),
+      firstScanAt: agg?.firstScanAt ? new Date(agg.firstScanAt) : null,
+      lastScanAt: agg?.lastScanAt ? new Date(agg.lastScanAt) : null,
+    });
+    sensorsBySchool.set(s.schoolId, list);
+  }
+
+  const schoolsByDistrict = new Map<number, ManagedSchool[]>();
+  for (const sc of sRows) {
+    const list = schoolsByDistrict.get(sc.districtId) ?? [];
+    list.push({
+      id: sc.id,
+      slug: sc.slug,
+      name: sc.name,
+      sensors: sensorsBySchool.get(sc.id) ?? [],
+    });
+    schoolsByDistrict.set(sc.districtId, list);
+  }
+
+  return dRows.map((d) => ({
+    id: d.id,
+    slug: d.slug,
+    name: d.name,
+    schools: schoolsByDistrict.get(d.id) ?? [],
+  }));
+}
+
+/** Count scan_runs for a sensor within an optional [from,to] window. */
+export async function countScansInRange(
+  sensorId: number,
+  from: Date | null,
+  to: Date | null,
+): Promise<number> {
+  const clauses = [eq(scanRuns.sensorId, sensorId)];
+  if (from) clauses.push(gte(scanRuns.startedAt, from));
+  if (to) clauses.push(lte(scanRuns.startedAt, to));
+  const [row] = await db
+    .select({ n: count(scanRuns.id) })
+    .from(scanRuns)
+    .where(and(...clauses));
+  return Number(row?.n ?? 0);
 }

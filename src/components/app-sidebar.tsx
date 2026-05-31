@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DownloadCloud, Network, School } from "lucide-react";
+import { Building2, ChevronRight, DatabaseZap, DownloadCloud, Network, School } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -139,6 +139,18 @@ export function AppSidebar({
                   <Link href="/settings/ingestion">
                     <DownloadCloud />
                     <span>SFTP ingestion</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Data management"
+                  isActive={pathname === "/settings/data"}
+                >
+                  <Link href="/settings/data">
+                    <DatabaseZap />
+                    <span>Data management</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

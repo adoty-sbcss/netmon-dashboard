@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   Cpu,
   Globe,
   HardDrive,
+  Map as MapIcon,
   Network,
   Radio,
   RouteOff,
@@ -59,6 +61,15 @@ export default async function SchoolPage({
       <PageHeader
         title={school.name || titleizeSlug(school.slug)}
         description={`${district.name} · last scan ${relativeTime(stats.lastScanAt)}`}
+        actions={
+          <Link
+            href={`/${district.slug}/${school.slug}/map`}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors hover:bg-accent"
+          >
+            <MapIcon className="size-4" />
+            Network map
+          </Link>
+        }
       />
 
       {/* Primary metrics */}

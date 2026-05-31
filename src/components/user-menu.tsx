@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { KeyRound, LogOut, UserRound, DownloadCloud } from "lucide-react";
+import { KeyRound, LogOut, UserRound, DownloadCloud, DatabaseZap } from "lucide-react";
 
 import { logoutAction } from "@/lib/auth/actions";
 import { Button } from "@/components/ui/button";
@@ -37,12 +37,20 @@ export function UserMenu({
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {role === "superadmin" && (
-          <DropdownMenuItem asChild>
-            <Link href="/settings/ingestion">
-              <DownloadCloud />
-              SFTP ingestion
-            </Link>
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem asChild>
+              <Link href="/settings/ingestion">
+                <DownloadCloud />
+                SFTP ingestion
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/settings/data">
+                <DatabaseZap />
+                Data management
+              </Link>
+            </DropdownMenuItem>
+          </>
         )}
         <DropdownMenuItem asChild>
           <Link href="/account/change-password">
