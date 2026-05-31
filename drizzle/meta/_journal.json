@@ -29,6 +29,13 @@
       "when": 1780145980520,
       "tag": "0003_special_ezekiel_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780194339763,
+      "tag": "0004_fast_bastion",
+      "breakpoints": true
     }
   ]
 }

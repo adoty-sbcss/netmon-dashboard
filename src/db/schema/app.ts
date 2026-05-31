@@ -170,6 +170,46 @@ export const auditLog = pgTable(
   (t) => [index("idx_audit_at").on(t.at)],
 );
 
+// --- ingestion configuration -----------------------------------------------
+
+/**
+ * SFTP connection the ingester uses to pull NetMon bundles. SINGLETON: exactly
+ * one row, `id = 1`. Edited by a superadmin from /settings/ingestion and read by
+ * BOTH the on-demand "Sync now" (web app) and the scheduled cron Job.
+ *
+ * SECURITY: the secret fields (password / private key / passphrase) are stored
+ * ENCRYPTED at rest — AES-256-GCM keyed off AUTH_SECRET (see src/lib/crypto/
+ * secret-box.ts). A plaintext credential never touches this table or the repo.
+ */
+export const ingestSettings = pgTable("ingest_settings", {
+  /** Singleton guard: always 1. */
+  id: integer("id").primaryKey().default(1),
+  host: text("host"),
+  port: integer("port").notNull().default(22),
+  username: text("username"),
+  /** 'password' | 'key' */
+  authMode: text("auth_mode").notNull().default("password"),
+  /** AES-256-GCM ciphertext (base64). Null = not set / unchanged. */
+  passwordEnc: text("password_enc"),
+  privateKeyEnc: text("private_key_enc"),
+  passphraseEnc: text("passphrase_enc"),
+  /** Remote tree root to walk for *.zip bundles. */
+  baseDir: text("base_dir").notNull().default("/"),
+  /** Master switch: when false, scheduled + on-demand sync no-op early. */
+  enabled: boolean("enabled").notNull().default(false),
+  // --- last-run telemetry (surfaced on the settings page) ------------------
+  lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+  /** 'ok' | 'error' | 'running' */
+  lastSyncStatus: text("last_sync_status"),
+  lastSyncSummary: text("last_sync_summary"),
+  updatedBy: integer("updated_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 // --- ingestion bookkeeping -------------------------------------------------
 
 /**

@@ -93,34 +93,20 @@ param migratorImage string = '${acrName}.azurecr.io/netmon-dashboard-migrator:la
 param containerCpu string = '0.5'
 param containerMemory string = '1.0Gi'
 
-// ---- Ingestion (SFTP sync) Job — off by default until the SFTP endpoint is
-// confirmed (see docs/DESIGN.md §4). Flip enableIngestJob=true and supply the
-// SFTP_* params to provision the nightly cron Job. Uses password auth; for key
-// auth, add an SFTP_PRIVATE_KEY secret to the job (the sync code supports it).
-@description('Provision the nightly SFTP ingestion cron Job. Requires the SFTP params below.')
-param enableIngestJob bool = false
+// ---- Ingestion (SFTP sync) Job ----
+// The SFTP connection is now configured in-app (Settings → SFTP ingestion) and
+// stored ENCRYPTED in the DB, decrypted at run time with AUTH_SECRET. The Job
+// therefore needs only DATABASE_URL + AUTH_SECRET — no SFTP creds at deploy
+// time. Safe to leave enabled: the sync no-ops until an admin saves a config
+// and flips the in-app "enabled" switch.
+@description('Provision the scheduled SFTP ingestion cron Job (config comes from the in-app settings).')
+param enableIngestJob bool = true
 
 @description('Image the ingest Job runs. Built from the Dockerfile "ingest" target.')
 param ingestImage string = '${acrName}.azurecr.io/netmon-dashboard-ingest:latest'
 
-@description('Cron schedule (UTC) for the ingest Job. Default 08:00 UTC ≈ 00:00–01:00 Pacific.')
-param ingestCron string = '0 8 * * *'
-
-@description('SFTP host the collectors push bundles to.')
-param sftpHost string = ''
-
-@description('SFTP port.')
-param sftpPort string = '22'
-
-@description('SFTP username.')
-param sftpUser string = ''
-
-@secure()
-@description('SFTP password (password auth). Supplied at deploy time when enableIngestJob=true; never stored in the repo.')
-param sftpPassword string = ''
-
-@description('Remote base directory to walk for bundles.')
-param sftpBaseDir string = '/'
+@description('Cron schedule (UTC) for the ingest Job. Default: every 6 hours.')
+param ingestCron string = '0 */6 * * *'
 
 @description('Create the RBAC role assignments. Set false if Lighthouse blocks them and assign in the Portal instead.')
 param assignRoles bool = true
@@ -445,10 +431,11 @@ resource migrateJob 'Microsoft.App/jobs@2024-03-01' = {
     : [ kvAuthSecret, kvDatabaseUrl ]
 }
 
-// ---- Ingestion Job (cron; SFTP pull → parse → upsert) — opt-in ----
-// Runs inside the VNet to reach the private Postgres. DATABASE_URL comes from
-// Key Vault; the SFTP password is an inline (deploy-time) secret. Tenancy is
-// derived from each bundle's scan.json, not the SFTP path.
+// ---- Ingestion Job (cron; SFTP pull → parse → upsert) ----
+// Runs inside the VNet to reach the private Postgres. DATABASE_URL + AUTH_SECRET
+// come from Key Vault; the SFTP connection is read from the DB (ingest_settings)
+// and decrypted with AUTH_SECRET. Tenancy is derived from each bundle's
+// scan.json, not the SFTP path.
 resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
   name: 'w2-sbcss-netmon-ingest'
   location: location
@@ -477,13 +464,14 @@ resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
       ]
       secrets: [
         {
-          name: 'database-url'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          name: 'auth-secret'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
           identity: appIdentity.id
         }
         {
-          name: 'sftp-password'
-          value: sftpPassword
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
         }
       ]
     }
@@ -497,13 +485,9 @@ resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
             memory: containerMemory
           }
           env: [
+            { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'NODE_ENV', value: 'production' }
-            { name: 'SFTP_HOST', value: sftpHost }
-            { name: 'SFTP_PORT', value: sftpPort }
-            { name: 'SFTP_USER', value: sftpUser }
-            { name: 'SFTP_PASSWORD', secretRef: 'sftp-password' }
-            { name: 'SFTP_BASE_DIR', value: sftpBaseDir }
           ]
         }
       ]

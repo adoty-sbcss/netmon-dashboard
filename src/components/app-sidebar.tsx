@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, Network, School } from "lucide-react";
+import { Building2, ChevronRight, DownloadCloud, Network, School } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -27,7 +27,13 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 
-export function AppSidebar({ tree }: { tree: NavTree[] }) {
+export function AppSidebar({
+  tree,
+  isAdmin = false,
+}: {
+  tree: NavTree[];
+  isAdmin?: boolean;
+}) {
   const pathname = usePathname();
 
   return (
@@ -119,6 +125,26 @@ export function AppSidebar({ tree }: { tree: NavTree[] }) {
             })}
           </SidebarMenu>
         </SidebarGroup>
+
+        {isAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Administration</SidebarGroupLabel>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="SFTP ingestion"
+                  isActive={pathname === "/settings/ingestion"}
+                >
+                  <Link href="/settings/ingestion">
+                    <DownloadCloud />
+                    <span>SFTP ingestion</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
