@@ -99,6 +99,13 @@
       "when": 1780277697452,
       "tag": "0013_regular_prima",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1780315877840,
+      "tag": "0014_misty_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

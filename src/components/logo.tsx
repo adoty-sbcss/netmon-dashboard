@@ -22,8 +22,10 @@ export function BrandLogo({ className }: { className?: string }) {
     >
       <defs>
         <linearGradient id="sbcssStarGrad" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="50%" stopColor={SBCSS_GOLD} />
-          <stop offset="50%" stopColor={SBCSS_BLUE} />
+          {/* Driven by the branding config (injected --brand-a/--brand-b),
+              falling back to the SBCSS gold/blue. */}
+          <stop offset="50%" stopColor={`var(--brand-a, ${SBCSS_GOLD})`} />
+          <stop offset="50%" stopColor={`var(--brand-b, ${SBCSS_BLUE})`} />
         </linearGradient>
       </defs>
       <path d={STAR_PATH} fill="url(#sbcssStarGrad)" />

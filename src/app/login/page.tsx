@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
+
 import { enabledProviders } from "@/lib/auth/oidc";
+import { getBranding } from "@/lib/branding";
 import { BrandLogo } from "@/components/logo";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoginForm } from "./login-form";
 
-export const metadata = { title: "Sign in · NetMon Dashboard" };
+export async function generateMetadata(): Promise<Metadata> {
+  const b = await getBranding();
+  return { title: `Sign in · ${b.appName}` };
+}
 
 // Auth state is per-request; never prerender.
 export const dynamic = "force-dynamic";
@@ -23,16 +29,24 @@ export default async function LoginPage({
   const { error } = await searchParams;
   const providers = enabledProviders();
   const errorMessage = error ? (ERRORS[error] ?? "Sign-in failed. Please try again.") : null;
+  const b = await getBranding();
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-muted/30 p-4">
       <div className="flex flex-col items-center gap-2">
-        <BrandLogo className="size-14" />
+        {b.hasLogo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/branding/logo?v=${b.version}`}
+            alt={b.appName}
+            className="size-14 object-contain"
+          />
+        ) : (
+          <BrandLogo className="size-14" />
+        )}
         <div className="text-center leading-tight">
-          <p className="text-lg font-semibold">NetMon</p>
-          <p className="text-xs text-muted-foreground">
-            San Bernardino County Superintendent of Schools
-          </p>
+          <p className="text-lg font-semibold">{b.appName}</p>
+          <p className="text-xs text-muted-foreground">{b.tagline}</p>
         </div>
       </div>
 

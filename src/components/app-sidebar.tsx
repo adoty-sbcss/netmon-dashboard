@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DatabaseZap, DownloadCloud, School, Sparkles, Users } from "lucide-react";
+import { Building2, ChevronRight, DatabaseZap, DownloadCloud, Palette, School, Sparkles, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -28,12 +28,21 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 
+export interface SidebarBranding {
+  appName: string;
+  tagline: string;
+  hasLogo: boolean;
+  version: number;
+}
+
 export function AppSidebar({
   tree,
   isAdmin = false,
+  branding,
 }: {
   tree: NavTree[];
   isAdmin?: boolean;
+  branding: SidebarBranding;
 }) {
   const pathname = usePathname();
 
@@ -45,12 +54,21 @@ export function AppSidebar({
             <SidebarMenuButton size="lg" asChild>
               <Link href="/">
                 <div className="flex aspect-square size-8 items-center justify-center">
-                  <BrandLogo className="size-8" />
+                  {branding.hasLogo ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={`/branding/logo?v=${branding.version}`}
+                      alt={branding.appName}
+                      className="size-8 object-contain"
+                    />
+                  ) : (
+                    <BrandLogo className="size-8" />
+                  )}
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">NetMon</span>
+                  <span className="truncate font-semibold">{branding.appName}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    SBCSS Network Dashboard
+                    {branding.tagline}
                   </span>
                 </div>
               </Link>
@@ -152,6 +170,18 @@ export function AppSidebar({
                   <Link href="/settings/ai">
                     <Sparkles />
                     <span>AI analysis</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Branding"
+                  isActive={pathname === "/settings/branding"}
+                >
+                  <Link href="/settings/branding">
+                    <Palette />
+                    <span>Branding</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

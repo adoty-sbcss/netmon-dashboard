@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getNavTree } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope } from "@/lib/auth/scope";
+import { getBranding } from "@/lib/branding";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DynamicBreadcrumb } from "@/components/dynamic-breadcrumb";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -30,10 +31,20 @@ export default async function DashboardLayout({
 
   const scope = await getUserScope(user);
   const tree = await getNavTree({ districtIds: scope.all ? null : scope.districtIds });
+  const b = await getBranding();
 
   return (
     <SidebarProvider>
-      <AppSidebar tree={tree} isAdmin={user.role === "superadmin"} />
+      <AppSidebar
+        tree={tree}
+        isAdmin={user.role === "superadmin"}
+        branding={{
+          appName: b.appName,
+          tagline: b.tagline,
+          hasLogo: b.hasLogo,
+          version: b.version,
+        }}
+      />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <SidebarTrigger className="-ml-1" />
