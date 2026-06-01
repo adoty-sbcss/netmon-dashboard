@@ -20,6 +20,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -101,15 +102,23 @@ export function AppSidebar({
                   className="group/collapsible"
                 >
                   <SidebarMenuItem>
-                    <CollapsibleTrigger asChild>
-                      <SidebarMenuButton
-                        tooltip={d.name}
-                        isActive={isDistrictActive}
-                      >
+                    {/* The label navigates to the district page... */}
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={d.name}
+                      isActive={isDistrictActive}
+                    >
+                      <Link href={districtHref}>
                         <Building2 />
                         <span>{d.name}</span>
-                        <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                      </SidebarMenuButton>
+                      </Link>
+                    </SidebarMenuButton>
+                    {/* ...while a separate chevron expands/collapses the schools. */}
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuAction className="transition-transform duration-200 data-[state=open]:rotate-90">
+                        <ChevronRight />
+                        <span className="sr-only">Toggle schools</span>
+                      </SidebarMenuAction>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <SidebarMenuSub>
