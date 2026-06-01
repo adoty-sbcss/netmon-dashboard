@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Boxes,
@@ -125,10 +125,6 @@ export function NetworkMap({
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [pending, startSave] = useTransition();
-  useEffect(() => {
-    setDrag({});
-    setDirty(false);
-  }, [view]);
 
   const posOf = (id: string): XY =>
     drag[id] ?? graph.positions[id] ?? layout.get(id) ?? { x: W / 2, y: H / 2 };
@@ -136,7 +132,22 @@ export function NetworkMap({
   const [vb, setVb] = useState({ x: 0, y: 0, w: W, h: H });
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<{ id: string; sx: number; sy: number } | null>(null);
+  // Cursor state instead of reading the pan ref during render.
+  const [panning, setPanning] = useState(false);
+  // Measured render width of the SVG, kept in state so the hover-tooltip clamp
+  // never reads a ref during render. The callback ref (re)attaches the observer
+  // whenever the SVG mounts/unmounts (e.g. toggling to an empty view).
+  const [svgWidth, setSvgWidth] = useState(800);
   const svgRef = useRef<SVGSVGElement>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const setSvgEl = useCallback((el: SVGSVGElement | null) => {
+    svgRef.current = el;
+    roRef.current?.disconnect();
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSvgWidth(el.clientWidth));
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
   const pan = useRef<{ x: number; y: number } | null>(null);
   const node = useRef<{ id: string; off: XY; moved: boolean } | null>(null);
 
@@ -166,6 +177,7 @@ export function NetworkMap({
   }
   function onBgDown(e: React.PointerEvent) {
     pan.current = { x: e.clientX, y: e.clientY };
+    setPanning(true);
   }
   function onMove(e: React.PointerEvent) {
     if (node.current) {
@@ -186,6 +198,7 @@ export function NetworkMap({
   function onUp() {
     pan.current = null;
     node.current = null;
+    setPanning(false);
   }
 
   // ---- node interactions ----
@@ -244,7 +257,11 @@ export function NetworkMap({
               key={v}
               type="button"
               onClick={() => {
-                setView(v);
+                if (v !== view) {
+                  setView(v);
+                  setDrag({});
+                  setDirty(false);
+                }
                 reset();
               }}
               className={cn(
@@ -298,10 +315,10 @@ export function NetworkMap({
         ) : (
           <>
             <svg
-              ref={svgRef}
+              ref={setSvgEl}
               viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
               className="h-[560px] w-full touch-none select-none"
-              style={{ cursor: pan.current ? "grabbing" : "grab" }}
+              style={{ cursor: panning ? "grabbing" : "grab" }}
               onWheel={onWheel}
               onPointerDown={onBgDown}
               onPointerMove={onMove}
@@ -389,7 +406,7 @@ export function NetworkMap({
               <div
                 className="pointer-events-none absolute z-10 w-56 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md"
                 style={{
-                  left: Math.min(hover.sx + 14, (svgRef.current?.clientWidth ?? 800) - 230),
+                  left: Math.min(hover.sx + 14, svgWidth - 230),
                   top: hover.sy + 14,
                 }}
               >
