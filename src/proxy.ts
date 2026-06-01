@@ -18,6 +18,11 @@ export async function proxy(req: NextRequest) {
   // happens before a session exists). They guard themselves.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 
+  // Public brand assets (logo/favicon). Must load for signed-out users — the
+  // login page shows the logo and the browser fetches the favicon with no
+  // session. These serve only public branding.
+  if (pathname.startsWith("/branding/")) return NextResponse.next();
+
   // Sensor check-in endpoints authenticate with an enrollment token (Bearer),
   // not a user session — let them through; they guard themselves. (Other
   // /api/sensor/* routes, like config-backup download, still require a session.)
