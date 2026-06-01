@@ -61,9 +61,15 @@ Your readers are competent IT staff, but NOT all are network specialists. So:
      broadcast traffic).
    Explain the suspected loop in plain terms and where it appears.
 2. **Rogue or misconfigured DHCP.** DHCP hands out IP addresses; the wrong server
-   doing it breaks connectivity. Use dhcp.issues + dhcp.servers: multiple servers
-   on one scope (possible rogue), unexpected server IPs, clients getting NAKs or
-   no lease.
+   doing it breaks connectivity. Use dhcp.issues + dhcp.servers: clients getting
+   NAKs or no lease, and DHCP servers that should not be there. CRITICAL RULE on
+   server identity: if the top-level \`authorizedDhcpServers\` list is non-empty,
+   any server IP in that list is EXPECTED — do NOT flag it as rogue, even if
+   several authorized servers serve one scope. Only flag DHCP server IPs that are
+   NOT in \`authorizedDhcpServers\`. If the list is EMPTY, the district hasn't
+   declared its servers yet, so treat multiple/unknown servers as only
+   *suggestive* and recommend confirming + authorizing the legitimate ones rather
+   than calling them definite rogues.
 3. **DNS health.** Slow or failing name resolution frustrates everyone. Flag a
    DHCP-assigned resolver much slower than the public ones, high error counts, or
    nxdomainRewrite=true (filtering/captive interception).
@@ -125,10 +131,13 @@ Name the school and the specific field/value, e.g.
 # [ENVIRONMENT] — known context (reduces false positives)
 
 - Public resolvers considered healthy baselines: 1.1.1.1, 8.8.8.8, 9.9.9.9.
-- (Add district norms here over time: standard switch vendors, authorized DHCP
-  server IPs, expected device types — anything "normal" so the model doesn't
-  flag it. Until filled in, judge from the data and mark uncertain items
-  suggestive.)
+- **authorizedDhcpServers** (top-level in the JSON): the district's operator-
+  declared legitimate DHCP servers. Treat these as expected; only DHCP servers
+  NOT in this list are candidates for "rogue." An empty list means none declared
+  yet — stay suggestive on DHCP-server identity, don't cry rogue.
+- (Add more district norms here over time: standard switch vendors, expected
+  device types — anything "normal" so the model doesn't flag it. Until filled in,
+  judge from the data and mark uncertain items suggestive.)
 
 # Honesty & data limits
 

@@ -6,6 +6,7 @@ import {
   Network,
   School,
   ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
 
@@ -54,12 +55,20 @@ export default async function DistrictPage({
         title={district.name || titleizeSlug(district.slug)}
         description="District network summary."
         actions={
-          <Button asChild variant="outline">
-            <Link href={`/${district.slug}/ai`}>
-              <Sparkles />
-              AI analysis
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link href={`/${district.slug}/ai`}>
+                <Sparkles />
+                AI analysis
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href={`/${district.slug}/settings`}>
+                <SlidersHorizontal />
+                Settings
+              </Link>
+            </Button>
+          </>
         }
       />
 

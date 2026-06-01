@@ -7,6 +7,7 @@ import {
   listScanSnapshotsForSchool,
   getDhcpAnalysis,
 } from "@/db/queries";
+import { getAuthorizedDhcpServerSet } from "@/lib/dhcp-policy";
 import { dateTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SnapshotPicker } from "@/components/snapshot-picker";
@@ -33,10 +34,11 @@ export default async function DhcpPage({
   const scanId = scan ? Number.parseInt(scan, 10) : null;
   const validScanId = scanId != null && !Number.isNaN(scanId) ? scanId : null;
 
-  const [snapshots, analysis, snapshot] = await Promise.all([
+  const [snapshots, analysis, snapshot, authorized] = await Promise.all([
     listScanSnapshotsForSchool(school.id),
     getDhcpAnalysis(school.id, validScanId ? { scanId: validScanId } : {}),
     validScanId ? getScanSnapshot(school.id, validScanId) : Promise.resolve(null),
+    getAuthorizedDhcpServerSet(district.id),
   ]);
 
   return (
@@ -60,7 +62,7 @@ export default async function DhcpPage({
           </p>
         </div>
       ) : (
-        <DhcpAnalysisView analysis={analysis} />
+        <DhcpAnalysisView analysis={analysis} authorizedServers={[...authorized]} />
       )}
     </div>
   );

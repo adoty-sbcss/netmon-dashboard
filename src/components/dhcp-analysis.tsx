@@ -80,7 +80,13 @@ function FlowChips({ types }: { types: string[] }) {
   );
 }
 
-export function DhcpAnalysisView({ analysis }: { analysis: DhcpAnalysis }) {
+export function DhcpAnalysisView({
+  analysis,
+  authorizedServers,
+}: {
+  analysis: DhcpAnalysis;
+  authorizedServers: string[];
+}) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DhcpClientStatus | "all" | "issues">(
     "all",
@@ -111,7 +117,38 @@ export function DhcpAnalysisView({ analysis }: { analysis: DhcpAnalysis }) {
     analysis.summary.ackRate != null
       ? `${Math.round(Math.min(1, analysis.summary.ackRate) * 100)}%`
       : "—";
-  const issueCount = analysis.issues.filter((i) => i.severity === "warning").length;
+  // Authorized-server policy: when the district has declared authorized DHCP
+  // servers, treat those as expected (suppress the generic "multiple/extra
+  // servers" issues) and instead flag any server NOT on the list.
+  const authzSet = useMemo(() => new Set(authorizedServers), [authorizedServers]);
+  const hasPolicy = authzSet.size > 0;
+
+  const issues = useMemo(() => {
+    const unauthorized = hasPolicy
+      ? analysis.servers.map((s) => s.ip).filter((ip) => !authzSet.has(ip))
+      : [];
+    const base = hasPolicy
+      ? analysis.issues.filter(
+          (i) =>
+            !/served by .* dhcp servers/i.test(i.title) &&
+            !/dhcp servers seen/i.test(i.title),
+        )
+      : analysis.issues;
+    if (unauthorized.length > 0) {
+      return [
+        {
+          severity: "warning" as const,
+          title: `Unauthorized DHCP server${unauthorized.length > 1 ? "s" : ""} seen: ${unauthorized.join(", ")}`,
+          detail:
+            "Not on this district's authorized list — investigate for a rogue or misconfigured DHCP server (Settings → District settings to authorize a known server).",
+        },
+        ...base,
+      ];
+    }
+    return base;
+  }, [analysis.issues, analysis.servers, hasPolicy, authzSet]);
+
+  const issueCount = issues.filter((i) => i.severity === "warning").length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -130,7 +167,7 @@ export function DhcpAnalysisView({ analysis }: { analysis: DhcpAnalysis }) {
       </div>
 
       {/* Issues */}
-      {analysis.issues.length > 0 && (
+      {issues.length > 0 && (
         <Card className="border-[var(--warning)]/40">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -139,7 +176,7 @@ export function DhcpAnalysisView({ analysis }: { analysis: DhcpAnalysis }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {analysis.issues.map((iss, i) => (
+            {issues.map((iss, i) => (
               <div key={i} className="flex items-start gap-2.5">
                 <Badge
                   variant="outline"
@@ -206,11 +243,22 @@ export function DhcpAnalysisView({ analysis }: { analysis: DhcpAnalysis }) {
                               <Badge
                                 key={ip}
                                 variant="outline"
+                                title={
+                                  hasPolicy
+                                    ? authzSet.has(ip)
+                                      ? "Authorized"
+                                      : "Not on the authorized list"
+                                    : undefined
+                                }
                                 className={
                                   "font-mono text-xs " +
-                                  (s.servers.length > 1
-                                    ? "border-[var(--warning)] text-[var(--warning)]"
-                                    : "")
+                                  (hasPolicy
+                                    ? authzSet.has(ip)
+                                      ? "border-[var(--success)] text-[var(--success)]"
+                                      : "border-destructive text-destructive"
+                                    : s.servers.length > 1
+                                      ? "border-[var(--warning)] text-[var(--warning)]"
+                                      : "")
                                 }
                               >
                                 {ip}

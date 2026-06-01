@@ -26,6 +26,7 @@ import {
   listHostsForSchool,
   getSchoolHealthTrend,
 } from "@/db/queries";
+import { getAuthorizedDhcpServerSet } from "@/lib/dhcp-policy";
 import type { AnalysisScope, AnalysisWindow } from "./types";
 
 /** Compact per-school evidence block. */
@@ -136,9 +137,16 @@ export async function buildAnalysisContext(
     );
   }
 
+  // Operator-declared authorized DHCP servers for this district — the model must
+  // treat these as expected and only flag servers NOT in this list as rogue.
+  const authorizedDhcpServers = [
+    ...(await getAuthorizedDhcpServerSet(scope.districtId)),
+  ];
+
   const payload = {
     scope: { type: scope.type, label: scope.label },
     window: { start: window.start.toISOString(), end: window.end.toISOString() },
+    authorizedDhcpServers,
     schoolCount: schools_.length,
     schools: schools_,
   };
