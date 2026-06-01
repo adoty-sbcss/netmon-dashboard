@@ -268,6 +268,39 @@ export const stpEvents = pgTable(
   (t) => [index("idx_stp_scan").on(t.scanRunId)],
 );
 
+/**
+ * Network-device reachability — one row per (scan, infrastructure candidate).
+ * The collector pings + traceroutes the gateway / LLDP mgmt IPs / network-vendor
+ * OUIs and records whether each answers SNMP. Surfaces "which switches are out
+ * there, and which respond to SNMP vs. only ping" so blocked SNMP (ACL / disabled)
+ * is visible at a glance instead of needing an SSH session on the sensor.
+ */
+export const networkReachability = pgTable(
+  "network_reachability",
+  {
+    id: serial("id").primaryKey(),
+    scanRunId: integer("scan_run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    ip: text("ip"),
+    hostname: text("hostname"),
+    vendor: text("vendor"),
+    source: text("source"), // gateway | lldp | oui
+    pingAlive: boolean("ping_alive"),
+    pingRttMs: doublePrecision("ping_rtt_ms"),
+    pingLossPct: integer("ping_loss_pct"),
+    snmpResponded: boolean("snmp_responded"),
+    snmpVersion: text("snmp_version"),
+    tracerouteHops: integer("traceroute_hops"),
+    traceroutePath: jsonb("traceroute_path").notNull().default([]),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("idx_net_reach_scan").on(t.scanRunId),
+    index("idx_net_reach_ip").on(t.ip),
+  ],
+);
+
 export const findings = pgTable(
   "findings",
   {

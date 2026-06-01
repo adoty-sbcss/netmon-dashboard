@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight, Network } from "lucide-react";
+import { ChevronRight, Network, Radio } from "lucide-react";
 
 import {
   getDistrictBySlug,
   getSchoolBySlug,
   listSwitchesForSchool,
+  listReachabilityForSchool,
 } from "@/db/queries";
 import { relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -17,6 +18,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ReachabilityTable } from "./reachability-table";
+
+export const dynamic = "force-dynamic";
 
 export default async function SwitchesPage({
   params,
@@ -30,7 +34,10 @@ export default async function SwitchesPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const switches = await listSwitchesForSchool(school.id);
+  const [switches, reachability] = await Promise.all([
+    listSwitchesForSchool(school.id),
+    listReachabilityForSchool(school.id),
+  ]);
   const basePath = `/${district.slug}/${school.slug}`;
 
   return (
@@ -39,6 +46,32 @@ export default async function SwitchesPage({
         title="Switches & infrastructure"
         description={`${school.name || titleizeSlug(school.slug)} · discovered via LLDP/CDP neighbors`}
       />
+
+      {/* SNMP reachability — which infrastructure devices are out there and
+          which answer SNMP vs. only ping. */}
+      {reachability.total > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              <Radio className="size-4 text-primary" />
+              Network device reachability
+              {reachability.scanAt && (
+                <span className="text-sm font-normal text-muted-foreground">
+                  latest scan {relativeTime(reachability.scanAt)}
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ReachabilityTable summary={reachability} />
+            <p className="mt-3 text-xs text-muted-foreground">
+              Devices that ping but don&apos;t answer SNMP usually have an SNMP ACL that
+              excludes the sensor, or SNMP disabled — a clean Layer-1 map needs them to
+              respond. Click a row to see its traceroute path.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {switches.length === 0 ? (
         <Card>

@@ -32,6 +32,7 @@ import {
   snmpPolls,
   hostSwitchPorts,
   findings as findingsTbl,
+  networkReachability,
   entitiesSwitch,
   entitiesHost,
   topologySnapshots,
@@ -292,6 +293,7 @@ export async function ingestBundle(
     snmp_polls: 0,
     host_switch_ports: 0,
     findings: 0,
+    network_reachability: 0,
     entities_switch: 0,
     entities_host: 0,
   };
@@ -588,6 +590,27 @@ export async function ingestBundle(
         await tx.insert(findingsTbl).values(findingRows);
         counts.findings += findingRows.length;
         healthFindings += findingRows.length;
+      }
+
+      // network reachability (ping + SNMP-response + traceroute, per candidate)
+      const reachRows = scan.reachability.map((r) => ({
+        scanRunId,
+        ip: str(r.ip),
+        hostname: str(r.hostname),
+        vendor: str(r.vendor),
+        source: str(r.source),
+        pingAlive: toBool(r.ping_alive),
+        pingRttMs: toNum(r.ping_rtt_ms),
+        pingLossPct: toNum(r.ping_loss_pct),
+        snmpResponded: toBool(r.snmp_responded),
+        snmpVersion: str(r.snmp_version),
+        tracerouteHops: toNum(r.traceroute_hops),
+        traceroutePath: Array.isArray(r.traceroute_path) ? r.traceroute_path : [],
+        checkedAt: toDate(r.checked_at),
+      }));
+      if (reachRows.length) {
+        await tx.insert(networkReachability).values(reachRows);
+        counts.network_reachability += reachRows.length;
       }
 
       // ---- canonical switches (dedup on chassis_id within district) ----

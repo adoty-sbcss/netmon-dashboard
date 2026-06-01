@@ -140,6 +140,22 @@ export interface RawDnsHealth {
   probes?: RawDnsProbe[];
 }
 
+/** raw/net-reachability.json — one row per infrastructure candidate. */
+export interface RawReachability {
+  ip?: string | null;
+  hostname?: string | null;
+  vendor?: string | null;
+  source?: string | null; // gateway | lldp | oui
+  ping_alive?: boolean | null;
+  ping_rtt_ms?: number | null;
+  ping_loss_pct?: number | null;
+  snmp_responded?: boolean | null;
+  snmp_version?: string | null;
+  traceroute_hops?: number | null;
+  traceroute_path?: unknown;
+  checked_at?: string | null;
+}
+
 export interface RawFinding {
   rule?: string | null;
   severity?: string | null;
@@ -190,6 +206,7 @@ export interface ScanData {
   dns: RawDnsHealth;
   findings: RawFinding[];
   topology: RawTopology | null;
+  reachability: RawReachability[];
   scanDirName: string;
 }
 
@@ -339,6 +356,9 @@ export function readBundleDir(dir: string): Bundle {
         dns: readJson<RawDnsHealth>(join(scanDir, "dns_health.json"), {}),
         findings: asList<RawFinding>(readJson(join(scanDir, "findings.json"), [])),
         topology: readJson<RawTopology | null>(join(scanDir, "topology.json"), null),
+        reachability: asList<RawReachability>(
+          readJson(join(raw, "net-reachability.json"), []),
+        ),
         scanDirName: entry,
       });
     }

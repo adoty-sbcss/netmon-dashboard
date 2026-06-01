@@ -29,6 +29,7 @@ import {
   findings,
   snmpPolls,
   hostSwitchPorts,
+  networkReachability,
 } from "./schema/netmon";
 import {
   entitiesHost,
@@ -830,6 +831,124 @@ export async function listSwitchesForSchool(
     .from(entitiesSwitch)
     .where(eq(entitiesSwitch.schoolId, schoolId))
     .orderBy(entitiesSwitch.systemName);
+}
+
+// ---- network-device reachability (ping + SNMP-response + traceroute) ------
+
+export interface TracerouteHop {
+  hop: number;
+  ip: string | null;
+  rtt_ms: number | null;
+}
+
+export interface ReachabilityRow {
+  id: number;
+  ip: string | null;
+  hostname: string | null;
+  vendor: string | null;
+  source: string | null; // gateway | lldp | oui
+  pingAlive: boolean | null;
+  pingRttMs: number | null;
+  pingLossPct: number | null;
+  snmpResponded: boolean | null;
+  snmpVersion: string | null;
+  tracerouteHops: number | null;
+  traceroutePath: TracerouteHop[];
+  checkedAt: Date | null;
+  sensorSlug: string;
+}
+
+export interface ReachabilitySummary {
+  scanAt: Date | null;
+  total: number;
+  /** Answered SNMP (fully usable for topology). */
+  snmpOk: number;
+  /** Reachable (ping OR traceroute) but NOT answering SNMP — the gap to fix. */
+  reachableNoSnmp: number;
+  /** No ping AND traceroute never arrived — genuinely unreachable. */
+  unreachable: number;
+  rows: ReachabilityRow[];
+}
+
+/** A device is "reachable" if it pings OR traceroute reached it (many managed
+ * switches drop ICMP echo but still answer traceroute's probe). */
+function isReachable(r: { pingAlive: boolean | null; tracerouteHops: number | null }): boolean {
+  return Boolean(r.pingAlive) || r.tracerouteHops != null;
+}
+
+/**
+ * Network-device reachability for a school: ping + SNMP-response + traceroute for
+ * each infrastructure candidate (gateway / LLDP mgmt IPs / network-vendor OUIs).
+ * Uses the latest scan PER SENSOR so a multi-IDF school shows each sensor's local
+ * view. Answers "which switches are out there, and which answer SNMP vs only ping?"
+ */
+export async function listReachabilityForSchool(
+  schoolId: number,
+): Promise<ReachabilitySummary> {
+  // Latest scan per sensor that produced reachability rows.
+  const seen = await db
+    .select({
+      scanId: networkReachability.scanRunId,
+      sensorId: scanRuns.sensorId,
+      startedAt: scanRuns.startedAt,
+    })
+    .from(networkReachability)
+    .innerJoin(scanRuns, eq(networkReachability.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(desc(scanRuns.startedAt));
+
+  const latestBySensor = new Map<number, number>();
+  let scanAt: Date | null = null;
+  for (const r of seen) {
+    if (scanAt === null) scanAt = r.startedAt;
+    if (r.sensorId != null && !latestBySensor.has(r.sensorId)) {
+      latestBySensor.set(r.sensorId, r.scanId);
+    }
+  }
+  const scanIds = [...latestBySensor.values()];
+  if (scanIds.length === 0) {
+    return { scanAt: null, total: 0, snmpOk: 0, reachableNoSnmp: 0, unreachable: 0, rows: [] };
+  }
+
+  const raw = await db
+    .select({
+      id: networkReachability.id,
+      ip: networkReachability.ip,
+      hostname: networkReachability.hostname,
+      vendor: networkReachability.vendor,
+      source: networkReachability.source,
+      pingAlive: networkReachability.pingAlive,
+      pingRttMs: networkReachability.pingRttMs,
+      pingLossPct: networkReachability.pingLossPct,
+      snmpResponded: networkReachability.snmpResponded,
+      snmpVersion: networkReachability.snmpVersion,
+      tracerouteHops: networkReachability.tracerouteHops,
+      traceroutePath: networkReachability.traceroutePath,
+      checkedAt: networkReachability.checkedAt,
+      sensorSlug: sensors.slug,
+    })
+    .from(networkReachability)
+    .innerJoin(scanRuns, eq(networkReachability.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(inArray(networkReachability.scanRunId, scanIds))
+    .orderBy(desc(networkReachability.snmpResponded), networkReachability.ip);
+
+  const rows: ReachabilityRow[] = raw.map((r) => ({
+    ...r,
+    traceroutePath: Array.isArray(r.traceroutePath)
+      ? (r.traceroutePath as TracerouteHop[])
+      : [],
+  }));
+
+  return {
+    scanAt,
+    total: rows.length,
+    snmpOk: rows.filter((r) => r.snmpResponded).length,
+    reachableNoSnmp: rows.filter((r) => !r.snmpResponded && isReachable(r)).length,
+    unreachable: rows.filter((r) => !isReachable(r)).length,
+    rows,
+  };
 }
 
 export interface SwitchAppearance {
