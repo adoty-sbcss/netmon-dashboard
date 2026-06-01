@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  KeyRound,
   Pencil,
   ShieldCheck,
   Trash2,
@@ -15,6 +16,7 @@ import {
   updateUserAction,
   setUserDisabledAction,
   deleteUserAction,
+  setUserPasswordAction,
   type UserActionState,
 } from "@/lib/admin/user-actions";
 import type { ManagedUser } from "@/db/queries";
@@ -76,11 +78,15 @@ export function UsersAdmin({
   users,
   districts,
   currentUserId,
+  localUserIds,
 }: {
   users: ManagedUser[];
   districts: District[];
   currentUserId: number;
+  /** Ids of users that have a local-login password set. */
+  localUserIds: number[];
 }) {
+  const localSet = new Set(localUserIds);
   const [addRole, setAddRole] = useState<"user" | "superadmin">("user");
   const [editing, setEditing] = useState<number | null>(null);
   const [editRole, setEditRole] = useState<"user" | "superadmin">("user");
@@ -99,6 +105,10 @@ export function UsersAdmin({
   );
   const [delState, delAction] = useActionState<UserActionState, FormData>(
     deleteUserAction,
+    {},
+  );
+  const [pwState, pwAction, pwPending] = useActionState<UserActionState, FormData>(
+    setUserPasswordAction,
     {},
   );
 
@@ -145,6 +155,23 @@ export function UsersAdmin({
                 <DistrictPicker districts={districts} />
               </div>
             )}
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="password" className={labelCls}>
+                Temporary password <span className="text-muted-foreground">(optional)</span>
+              </label>
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="new-password"
+                placeholder="Leave blank for Google/Microsoft sign-in only"
+                className="max-w-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Set one to create a local-login account (email + password). Min 12
+                characters; they&apos;ll be required to change it at first sign-in.
+              </p>
+            </div>
             <Notice state={addState} />
             <div>
               <Button type="submit" disabled={adding}>
@@ -184,6 +211,11 @@ export function UsersAdmin({
                         <Badge variant="secondary">User</Badge>
                       )}
                       {locked && <Badge variant="outline">break-glass</Badge>}
+                      {localSet.has(u.id) && (
+                        <Badge variant="outline" className="gap-1">
+                          <KeyRound className="size-3" /> local login
+                        </Badge>
+                      )}
                       {u.disabled && <Badge variant="outline" className="border-destructive text-destructive">disabled</Badge>}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -237,6 +269,7 @@ export function UsersAdmin({
                 </div>
 
                 {isEditing && !locked && (
+                  <>
                   <form action={editAction} className="mt-3 flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
                     <input type="hidden" name="userId" value={u.id} />
                     <div className="flex flex-col gap-1.5">
@@ -267,6 +300,36 @@ export function UsersAdmin({
                       </Button>
                     </div>
                   </form>
+                  <form action={pwAction} className="mt-2 flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+                    <input type="hidden" name="userId" value={u.id} />
+                    <label className={labelCls}>Local password</label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        name="password"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder={localSet.has(u.id) ? "New password (min 12)" : "Set password (min 12)"}
+                        className="max-w-xs"
+                      />
+                      <Button type="submit" size="sm" variant="outline" disabled={pwPending}>
+                        <KeyRound className="size-3.5" /> {localSet.has(u.id) ? "Reset" : "Set password"}
+                      </Button>
+                      {localSet.has(u.id) && (
+                        <Button
+                          type="submit"
+                          name="clear"
+                          value="true"
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                        >
+                          Remove local login
+                        </Button>
+                      )}
+                    </div>
+                    <Notice state={pwState} />
+                  </form>
+                  </>
                 )}
               </div>
             );
