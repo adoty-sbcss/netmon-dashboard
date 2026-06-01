@@ -221,17 +221,70 @@ async function getOrCreateSensor(tx: Tx, schoolId: number, slug: string) {
   return row;
 }
 
-function buildPhysicalGraph(topo: RawTopology | null, sourceScanId: number | null) {
+function buildPhysicalGraph(
+  topo: RawTopology | null,
+  sourceScanId: number | null,
+  sensorId: number,
+) {
   if (!topo) return { nodes: [], edges: [], sourceScanId };
   const keepNode = (t?: string) =>
     t === "scanner" || t === "switch" || t === "gateway";
   const keepEdge = (k?: string) => k === "lldp" || k === "cdp" || k === "default_route";
-  const nodes = (topo.nodes ?? []).filter((n) => keepNode(n.type));
+
+  // The scanner ("self") node is per-sensor — namespace its id so two sensors at
+  // one school (e.g. both on "eth0") don't collapse into a single box. Switches
+  // (chassis) and the gateway keep their natural ids so they DEDUP across sensors,
+  // which is what stitches the two stars into one connected graph.
+  const remap = new Map<string, string>();
+  const nodes = (topo.nodes ?? [])
+    .filter((n) => keepNode(n.type))
+    .map((n) => {
+      if (n.type === "scanner") {
+        const newId = `${n.id}#s${sensorId}`;
+        remap.set(n.id, newId);
+        return { ...n, id: newId };
+      }
+      return n;
+    });
   const ids = new Set(nodes.map((n) => n.id));
-  const edges = (topo.edges ?? []).filter(
-    (e) => keepEdge(e.kind) && ids.has(e.source) && ids.has(e.target),
-  );
+  const edges = (topo.edges ?? [])
+    .map((e) => ({
+      ...e,
+      source: remap.get(e.source) ?? e.source,
+      target: remap.get(e.target) ?? e.target,
+    }))
+    .filter((e) => keepEdge(e.kind) && ids.has(e.source) && ids.has(e.target));
   return { nodes, edges, sourceScanId };
+}
+
+/** A topology graph as stored in topology_snapshots.graph (jsonb). */
+type TopoGraph = {
+  nodes: { id: string; [k: string]: unknown }[];
+  edges: { source: string; target: string; kind?: string | null; [k: string]: unknown }[];
+  sourceScanId?: number | null;
+};
+
+/**
+ * Union-merge a freshly-built graph into the school's existing snapshot so
+ * multiple sensors at one school accumulate into ONE map. Nodes dedup by id
+ * (new wins → fresh data; shared switches collapse), edges dedup by
+ * source|target|kind. NOTE: this never removes nodes a sensor stops seeing —
+ * stale entries linger until superseded by the same id (cleanup is a follow-up).
+ */
+function mergeTopoGraphs(existing: TopoGraph | null, incoming: TopoGraph): TopoGraph {
+  const nodeById = new Map<string, TopoGraph["nodes"][number]>();
+  for (const n of existing?.nodes ?? []) nodeById.set(n.id, n);
+  for (const n of incoming.nodes) nodeById.set(n.id, n);
+  const edgeKey = (e: TopoGraph["edges"][number]) =>
+    `${e.source}|${e.target}|${e.kind ?? ""}`;
+  const edgeByKey = new Map<string, TopoGraph["edges"][number]>();
+  for (const e of existing?.edges ?? []) edgeByKey.set(edgeKey(e), e);
+  for (const e of incoming.edges) edgeByKey.set(edgeKey(e), e);
+  return {
+    nodes: [...nodeById.values()],
+    edges: [...edgeByKey.values()],
+    sourceScanId: incoming.sourceScanId ?? null,
+  };
 }
 
 function buildLogicalGraph(scan: ScanData, sourceScanId: number | null) {
@@ -702,22 +755,38 @@ export async function ingestBundle(
       }
     }
 
-    // ---- topology snapshots (from the primary/first scan) per school ----
+    // ---- topology snapshots: MERGE this sensor's view into the school's map ----
+    // (was: overwrite from the primary scan, so a 2nd sensor clobbered the 1st)
     const primary =
       bundle.scans.find((s) => toBool(s.meta.is_primary)) ?? bundle.scans[0];
     const srcScanId = toNum(primary.meta.id);
     const snapshots = [
-      { kind: "physical", graph: buildPhysicalGraph(primary.topology, srcScanId) },
+      { kind: "physical", graph: buildPhysicalGraph(primary.topology, srcScanId, sensor.id) },
       { kind: "logical", graph: buildLogicalGraph(primary, srcScanId) },
     ];
     for (const snap of snapshots) {
+      const [existing] = await tx
+        .select({ graph: topologySnapshots.graph })
+        .from(topologySnapshots)
+        .where(
+          and(
+            eq(topologySnapshots.kind, snap.kind),
+            eq(topologySnapshots.scopeType, "school"),
+            eq(topologySnapshots.scopeId, school.id),
+          ),
+        )
+        .limit(1);
+      const merged = mergeTopoGraphs(
+        (existing?.graph as TopoGraph | undefined) ?? null,
+        snap.graph as TopoGraph,
+      );
       await tx
         .insert(topologySnapshots)
         .values({
           kind: snap.kind,
           scopeType: "school",
           scopeId: school.id,
-          graph: snap.graph,
+          graph: merged,
           generatedAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -726,7 +795,7 @@ export async function ingestBundle(
             topologySnapshots.scopeType,
             topologySnapshots.scopeId,
           ],
-          set: { graph: snap.graph, generatedAt: new Date() },
+          set: { graph: merged, generatedAt: new Date() },
         });
     }
 
