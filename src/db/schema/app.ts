@@ -94,6 +94,16 @@ export const sensors = pgTable(
     localIp: text("local_ip"),
     iface: text("iface"),
     ifaceCidr: text("iface_cidr"),
+    // --- actual config the box reports at check-in (ground truth; password NEVER
+    //     reported). Lets the dashboard show real current config, not just what
+    //     was pushed via desired_config.
+    reportedSnmpEnabled: boolean("reported_snmp_enabled"),
+    reportedSnmpCommunities: text("reported_snmp_communities"),
+    reportedSftpEnabled: boolean("reported_sftp_enabled"),
+    reportedSftpHost: text("reported_sftp_host"),
+    reportedSftpPort: integer("reported_sftp_port"),
+    reportedSftpUser: text("reported_sftp_user"),
+    reportedConfigAt: timestamp("reported_config_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

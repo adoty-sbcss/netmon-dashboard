@@ -120,6 +120,13 @@
       "when": 1780324184087,
       "tag": "0016_naive_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1780332633428,
+      "tag": "0017_high_white_tiger",
+      "breakpoints": true
     }
   ]
 }

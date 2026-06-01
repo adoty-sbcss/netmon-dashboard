@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Archive, Download, Radio, Wrench } from "lucide-react";
+import { ArrowLeft, Archive, Download, Radio, Settings2, Wrench } from "lucide-react";
+import { eq } from "drizzle-orm";
 
 import {
   getDistrictBySlug,
@@ -9,6 +10,8 @@ import {
   listConfigBackups,
   getSensorManagement,
 } from "@/db/queries";
+import { db } from "@/db";
+import { sensors as sensorsTable } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
@@ -56,6 +59,22 @@ export default async function SensorDetailPage({
   const [backups, mgmt] = isAdmin
     ? await Promise.all([listConfigBackups(sensor.id), getSensorManagement(sensor.id)])
     : [[], null];
+  // Actual config the box reported at its last check-in (ground truth).
+  const [reported] = isAdmin
+    ? await db
+        .select({
+          snmpEnabled: sensorsTable.reportedSnmpEnabled,
+          snmpCommunities: sensorsTable.reportedSnmpCommunities,
+          sftpEnabled: sensorsTable.reportedSftpEnabled,
+          sftpHost: sensorsTable.reportedSftpHost,
+          sftpPort: sensorsTable.reportedSftpPort,
+          sftpUser: sensorsTable.reportedSftpUser,
+          reportedAt: sensorsTable.reportedConfigAt,
+        })
+        .from(sensorsTable)
+        .where(eq(sensorsTable.id, sensor.id))
+        .limit(1)
+    : [null];
   const basePath = `/${district.slug}/${school.slug}`;
 
   return (
@@ -108,6 +127,72 @@ export default async function SensorDetailPage({
           </dl>
         </CardContent>
       </Card>
+
+      {/* Reported (actual) config from the sensor's last check-in */}
+      {isAdmin && reported && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              <Settings2 className="size-4 text-primary" />
+              Reported config (from the sensor)
+              {sensor.reportedConfigVersion != null && mgmt?.configVersion != null && (
+                <Badge
+                  variant="outline"
+                  className={
+                    sensor.reportedConfigVersion >= mgmt.configVersion
+                      ? "border-[var(--success)] text-[var(--success)]"
+                      : "border-[var(--warning)] text-[var(--warning)]"
+                  }
+                >
+                  {sensor.reportedConfigVersion >= mgmt.configVersion
+                    ? `up to date (v${sensor.reportedConfigVersion})`
+                    : `pending — applied v${sensor.reportedConfigVersion} of v${mgmt.configVersion}`}
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field
+                label="SNMP"
+                value={
+                  reported.snmpEnabled == null
+                    ? "—"
+                    : reported.snmpEnabled
+                      ? "enabled"
+                      : "disabled"
+                }
+              />
+              <Field label="SNMP communities" value={reported.snmpCommunities || "—"} mono />
+              <Field
+                label="SFTP uploads"
+                value={
+                  reported.sftpEnabled == null
+                    ? "—"
+                    : reported.sftpEnabled
+                      ? "enabled"
+                      : "disabled"
+                }
+              />
+              <Field
+                label="SFTP server"
+                value={reported.sftpHost ? `${reported.sftpHost}:${reported.sftpPort ?? 22}` : "—"}
+                mono
+              />
+              <Field label="SFTP user" value={reported.sftpUser || "—"} mono />
+              <Field
+                label="Reported"
+                value={reported.reportedAt ? relativeTime(reported.reportedAt) : "not yet reported"}
+              />
+            </dl>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Ground truth from the box&apos;s last check-in (the SFTP password is
+              never reported). &quot;Not yet reported&quot; means the agent predates
+              this feature — update the sensor.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Management (admin): enrollment, config push, commands */}
       {isAdmin && mgmt && (

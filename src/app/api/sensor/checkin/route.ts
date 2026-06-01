@@ -27,8 +27,18 @@ export async function POST(req: NextRequest) {
     localIp?: string;
     interface?: string;
     interfaceCidr?: string;
+    // Actual config the box is running (ground truth). Password is never sent.
+    currentConfig?: {
+      snmp_enabled?: boolean;
+      snmp_communities?: string;
+      sftp_enabled?: boolean;
+      sftp_host?: string;
+      sftp_port?: number;
+      sftp_user?: string;
+    };
   };
 
+  const cc = body.currentConfig;
   await db
     .update(sensors)
     .set({
@@ -40,6 +50,20 @@ export async function POST(req: NextRequest) {
       ...(typeof body.localIp === "string" ? { localIp: body.localIp } : {}),
       ...(typeof body.interface === "string" ? { iface: body.interface } : {}),
       ...(typeof body.interfaceCidr === "string" ? { ifaceCidr: body.interfaceCidr } : {}),
+      ...(cc
+        ? {
+            reportedSnmpEnabled:
+              typeof cc.snmp_enabled === "boolean" ? cc.snmp_enabled : null,
+            reportedSnmpCommunities:
+              typeof cc.snmp_communities === "string" ? cc.snmp_communities : null,
+            reportedSftpEnabled:
+              typeof cc.sftp_enabled === "boolean" ? cc.sftp_enabled : null,
+            reportedSftpHost: typeof cc.sftp_host === "string" ? cc.sftp_host : null,
+            reportedSftpPort: Number.isInteger(cc.sftp_port) ? cc.sftp_port : null,
+            reportedSftpUser: typeof cc.sftp_user === "string" ? cc.sftp_user : null,
+            reportedConfigAt: sql`now()`,
+          }
+        : {}),
     })
     .where(eq(sensors.id, sensorId));
 
