@@ -295,14 +295,51 @@ User stance: less worried about old data; keep what matters, purge the rest.
 
 ---
 
-## 10. AI analysis (deferred)
+## 10. AI analysis
 
-Build dashboard + auth + management first; leave a clean seam. When added, the
-candidate is **Azure OpenAI (in-tenant)** — runs inside the Azure tenant/region,
-data not sent to public OpenAI — which respects the standing air-gap preference.
-Pattern: a scheduled job generates per-school/district health summaries from new
-data and **caches results in a table**; the dashboard reads the cache (never call
-the model on every page load).
+Implemented as a provider-agnostic seam in `src/lib/ai/` (calling layer; the
+analyst instruction set in `instructions.ts` is provisional and refined in a
+follow-up). Key decisions:
+
+- **Multi-model, side-by-side.** One run fans out to every *active* provider
+  (enabled + configured) and writes **one `ai_analyses` row per model** (shared
+  `runId`), rendered as comparison columns. A provider with no key/disabled shows
+  as "not configured" — no code change to enable it later.
+  - **Azure OpenAI (in-tenant)** — GPT on the county's Azure credits; data stays
+    in-tenant (respects the air-gap-leaning preference).
+  - **OpenAI (direct)** — GPT via the org's platform API credits; same family,
+    different account/billing, data goes to OpenAI rather than the Azure tenant.
+  - **Anthropic (Claude)** — `console.anthropic.com` key (separate from a Claude
+    subscription).
+  - Add a model = one adapter + one line in `providers/registry.ts`.
+- **Configurable at runtime, no redeploy.** `/settings/ai` (superadmin) edits
+  per-provider enable/model/key + the daily schedule, output-token bound, and an
+  advisory monthly spend target. Keys are stored **AES-256-GCM encrypted**
+  (`ai_provider_settings`, secret-box keyed off `AUTH_SECRET`) — same posture as
+  the SFTP creds; env vars are a fallback. A per-provider **Test connection**
+  validates credentials with a tiny live call. `settings.ts` resolves DB→env into
+  a connect-ready config the adapters consume (they no longer read env directly).
+- **Usage tracking.** Each row records token counts + an estimated cost
+  (`pricing.ts`, approximate $/token table); `/settings/ai` shows per-model
+  runs/tokens/cost for the month against the advisory target. (Caps are tracked +
+  displayed, not yet enforced.)
+- **Compact context, not raw dumps.** `context.ts` composes the existing query
+  helpers to feed the model the same deduped rollups the dashboard renders
+  (resolver health, DHCP scopes+issues, STP summary, switch inventory, host-type
+  breakdown, recent findings, the 30-day health trend). Raw `raw/` SNMP stays in
+  Blob; a future "drill into scan N" hook can pull it on demand.
+- **Structured output.** Both providers answer through one JSON contract
+  (`output-schema.ts`): a prose `summary` + `findings[]` (severity, confidence,
+  title, detail, evidence citation, recommendation). OpenAI via `json_schema`
+  strict mode; Anthropic via a forced tool. Anthropic gets a cached system block.
+- **Two triggers, one path.** A daily **Azure Container Apps Job** (`aiJob`,
+  `npm run ai:analyze`, default 02:00 UTC) runs every district; the on-demand
+  **"Run AI analysis"** button (per district) uses write-row-then-poll —
+  inserts `running` rows, finishes the work in `next/server` `after()` (keeps the
+  scale-to-zero web app alive), and the page polls `getRunStatus`.
+- **Cached results.** Every run is stored in `ai_analyses` (durable tier, beside
+  `health_rollup_daily`); the dashboard reads stored rows — the model is only
+  called by the daily Job or an explicit button press, never on page load.
 
 ---
 
@@ -323,7 +360,9 @@ the model on every page load).
    entities/topology/findings/rollups.
 6. **Management plane** — sensor enrollment + check-in endpoint, desired-config
    + command queue, log collection; collector-side outbound agent loop.
-7. **AI analysis** — wire the deferred seam (Azure OpenAI, cached summaries).
+7. **AI analysis** — provider-agnostic seam (Azure OpenAI + Anthropic), daily
+   Job + on-demand button, side-by-side model comparison, cached in `ai_analyses`.
+   *(Calling layer done; analyst instruction set being refined.)*
 8. **Deploy** — Bicep for all Azure resources; GitHub Actions → ACR → Container
    Apps via OIDC federation.
 

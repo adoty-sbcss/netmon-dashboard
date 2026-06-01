@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { Fragment, useActionState, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  FileText,
   KeyRound,
   RefreshCw,
   Settings2,
@@ -46,6 +47,31 @@ const STATUS_TONE: Record<string, string> = {
   sent: "text-[var(--info,#3b82f6)]",
 };
 
+/** Render a command result — log files as <pre>, anything else as JSON. */
+function renderResult(result: Record<string, unknown>) {
+  const entries = Object.entries(result);
+  const logs = entries.filter(([k]) => k.toLowerCase().endsWith(".log"));
+  if (logs.length > 0) {
+    return (
+      <div className="flex flex-col gap-2">
+        {logs.map(([k, v]) => (
+          <div key={k}>
+            <p className="text-xs font-medium text-muted-foreground">{k}</p>
+            <pre className="mt-1 max-h-72 overflow-auto rounded bg-background p-2 text-[11px] leading-relaxed">
+              {String(v)}
+            </pre>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <pre className="overflow-auto rounded bg-background p-2 text-[11px]">
+      {JSON.stringify(result, null, 2)}
+    </pre>
+  );
+}
+
 export function SensorManagementPanel({
   sensorId,
   basePath,
@@ -67,6 +93,9 @@ export function SensorManagementPanel({
     queueCommandAction,
     {},
   );
+
+  const [manageSftp, setManageSftp] = useState(false);
+  const [openCmd, setOpenCmd] = useState<number | null>(null);
 
   const cfg = mgmt.config ?? {};
   const snmpCommunities = String((cfg.snmp_communities as string) ?? "");
@@ -166,6 +195,39 @@ export function SensorManagementPanel({
                 className="max-w-[12rem]"
               />
             </div>
+
+            {/* Push SFTP upload destination */}
+            <div className="rounded-lg border border-input p-3">
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  name="sftpManage"
+                  checked={manageSftp}
+                  onChange={(e) => setManageSftp(e.target.checked)}
+                  className="size-4 rounded border-input accent-primary"
+                />
+                <span className={labelCls}>Push SFTP upload settings to this box</span>
+              </label>
+              {manageSftp && (
+                <div className="mt-3 flex flex-col gap-3">
+                  <label className="flex items-center gap-2.5 text-sm">
+                    <input type="checkbox" name="sftpEnabled" defaultChecked={Boolean(cfg.sftp_enabled)} className="size-4 rounded border-input accent-primary" />
+                    SFTP uploads enabled
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
+                    <Input name="sftpHost" defaultValue={String((cfg.sftp_host as string) ?? "")} placeholder="sftp host" autoComplete="off" />
+                    <Input name="sftpPort" type="number" defaultValue={Number((cfg.sftp_port as number) ?? 22)} placeholder="22" />
+                  </div>
+                  <Input name="sftpUser" defaultValue={String((cfg.sftp_user as string) ?? "")} placeholder="username" autoComplete="off" />
+                  <Input name="sftpPassword" type="password" placeholder="password (blank = keep current)" autoComplete="new-password" />
+                  <Input name="sftpRemotePath" defaultValue={String((cfg.sftp_remote_path as string) ?? "/")} placeholder="/" />
+                  <p className="text-xs text-muted-foreground">
+                    Pushed on the next check-in; the box restarts to apply. The password is stored in the control DB.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <Notice state={cfgState} />
             <div>
               <Button type="submit" disabled={savingCfg}>
@@ -190,6 +252,7 @@ export function SensorManagementPanel({
               { cmd: "run-scan", label: "Force scan", icon: RefreshCw },
               { cmd: "upload-now", label: "Force upload", icon: UploadCloud },
               { cmd: "config-backup", label: "Back up config now", icon: KeyRound },
+              { cmd: "collect-logs", label: "Collect logs", icon: FileText },
             ].map(({ cmd, label, icon: Icon }) => (
               <form action={cmdAction} key={cmd}>
                 <input type="hidden" name="sensorId" value={sensorId} />
@@ -218,18 +281,37 @@ export function SensorManagementPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {mgmt.commands.map((c) => (
-                    <tr key={c.id} className="border-b last:border-0">
-                      <td className="px-3 py-2 font-mono text-xs">{c.command}</td>
-                      <td className={`px-3 py-2 ${STATUS_TONE[c.status] ?? "text-muted-foreground"}`}>{c.status}</td>
-                      <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell" title={dateTime(c.createdAt)}>
-                        {relativeTime(c.createdAt)}
-                      </td>
-                      <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
-                        {c.sentAt ? relativeTime(c.sentAt) : "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  {mgmt.commands.map((c) => {
+                    const hasResult = c.result && Object.keys(c.result).length > 0;
+                    const open = openCmd === c.id;
+                    return (
+                      <Fragment key={c.id}>
+                        <tr
+                          className={"border-b last:border-0 " + (hasResult ? "cursor-pointer hover:bg-accent/40" : "")}
+                          onClick={() => hasResult && setOpenCmd(open ? null : c.id)}
+                        >
+                          <td className="px-3 py-2 font-mono text-xs">
+                            {c.command}
+                            {hasResult && <span className="ml-1.5 text-[10px] text-primary">view</span>}
+                          </td>
+                          <td className={`px-3 py-2 ${STATUS_TONE[c.status] ?? "text-muted-foreground"}`}>{c.status}</td>
+                          <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell" title={dateTime(c.createdAt)}>
+                            {relativeTime(c.createdAt)}
+                          </td>
+                          <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
+                            {c.sentAt ? relativeTime(c.sentAt) : "—"}
+                          </td>
+                        </tr>
+                        {open && hasResult && (
+                          <tr className="bg-muted/30">
+                            <td colSpan={4} className="px-3 py-2">
+                              {renderResult(c.result!)}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

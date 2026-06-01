@@ -6,6 +6,7 @@ import {
   Network,
   School,
   ShieldAlert,
+  Sparkles,
 } from "lucide-react";
 
 import {
@@ -16,6 +17,7 @@ import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
@@ -51,6 +53,14 @@ export default async function DistrictPage({
       <PageHeader
         title={district.name || titleizeSlug(district.slug)}
         description="District network summary."
+        actions={
+          <Button asChild variant="outline">
+            <Link href={`/${district.slug}/ai`}>
+              <Sparkles />
+              AI analysis
+            </Link>
+          </Button>
+        }
       />
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">

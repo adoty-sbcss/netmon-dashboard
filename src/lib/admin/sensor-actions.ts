@@ -28,7 +28,7 @@ export interface SensorActionState {
   token?: string;
 }
 
-const SAFE_COMMANDS = new Set(["run-scan", "upload-now", "config-backup"]);
+const SAFE_COMMANDS = new Set(["run-scan", "upload-now", "config-backup", "collect-logs"]);
 
 async function requireAdmin() {
   const user = await getSessionUser();
@@ -102,10 +102,24 @@ export async function saveSensorConfigAction(
     return { error: "Scan interval must be at least 60 seconds." };
   }
 
+  // Optional SFTP upload destination push.
+  const sftp: Record<string, unknown> = {};
+  if (formData.has("sftpManage")) {
+    sftp.sftp_enabled = formData.get("sftpEnabled") === "on";
+    sftp.sftp_host = String(formData.get("sftpHost") ?? "").trim();
+    const sp = Number(String(formData.get("sftpPort") ?? "22"));
+    sftp.sftp_port = Number.isInteger(sp) && sp > 0 ? sp : 22;
+    sftp.sftp_user = String(formData.get("sftpUser") ?? "").trim();
+    sftp.sftp_remote_path = String(formData.get("sftpRemotePath") ?? "/").trim() || "/";
+    const pw = String(formData.get("sftpPassword") ?? "");
+    if (pw) sftp.sftp_password = pw; // only push when a new value is typed
+  }
+
   const config = {
     snmp_enabled: snmpEnabled,
     snmp_communities: snmpCommunities,
     ...(rescanInterval != null ? { rescan_interval: rescanInterval } : {}),
+    ...sftp,
   };
 
   const [existing] = await db

@@ -95,8 +95,14 @@ export default async function SensorDetailPage({
             <Field label="Agent version" value={sensor.agentVersion ?? "—"} mono />
             <Field
               label="Last check-in"
-              value={sensor.lastCheckinAt ? relativeTime(sensor.lastCheckinAt) : "— (management loop is Phase 1)"}
+              value={sensor.lastCheckinAt ? relativeTime(sensor.lastCheckinAt) : "no check-in yet"}
             />
+            <Field
+              label="Local IP"
+              value={sensor.localIp ? `${sensor.localIp}${sensor.iface ? ` (${sensor.iface})` : ""}` : "—"}
+              mono
+            />
+            <Field label="Interface CIDR" value={sensor.ifaceCidr ?? "—"} mono />
             <Field label="Applied config version" value={sensor.reportedConfigVersion != null ? `v${sensor.reportedConfigVersion}` : "—"} />
             <Field label="First seen" value={sensor.createdAt ? dateTime(sensor.createdAt) : "—"} />
           </dl>

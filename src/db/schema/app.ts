@@ -90,6 +90,10 @@ export const sensors = pgTable(
     reportedConfigVersion: integer("reported_config_version"),
     /** Collector/agent version string the sensor reported. */
     agentVersion: text("agent_version"),
+    /** The box's own LAN IP / interface / CIDR, reported at check-in. */
+    localIp: text("local_ip"),
+    iface: text("iface"),
+    ifaceCidr: text("iface_cidr"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

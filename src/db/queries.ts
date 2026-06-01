@@ -41,6 +41,7 @@ import {
   configBackups,
   desiredConfig,
   commandQueue,
+  commandResults,
   sensorEnrollments,
 } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
@@ -1750,6 +1751,9 @@ export interface SensorDetail {
   createdAt: Date | null;
   lastScanAt: Date | null;
   scanCount: number;
+  localIp: string | null;
+  iface: string | null;
+  ifaceCidr: string | null;
 }
 
 export async function getSensorDetail(
@@ -1777,6 +1781,9 @@ export async function getSensorDetail(
     createdAt: s.createdAt,
     lastScanAt: agg?.last ?? null,
     scanCount: Number(agg?.c ?? 0),
+    localIp: s.localIp,
+    iface: s.iface,
+    ifaceCidr: s.ifaceCidr,
   };
 }
 
@@ -1824,6 +1831,7 @@ export interface SensorManagement {
     status: string;
     createdAt: Date;
     sentAt: Date | null;
+    result: Record<string, unknown> | null;
   }[];
 }
 
@@ -1848,8 +1856,10 @@ export async function getSensorManagement(sensorId: number): Promise<SensorManag
         status: commandQueue.status,
         createdAt: commandQueue.createdAt,
         sentAt: commandQueue.sentAt,
+        result: commandResults.result,
       })
       .from(commandQueue)
+      .leftJoin(commandResults, eq(commandResults.commandId, commandQueue.id))
       .where(eq(commandQueue.sensorId, sensorId))
       .orderBy(desc(commandQueue.createdAt))
       .limit(10),
@@ -1860,7 +1870,10 @@ export async function getSensorManagement(sensorId: number): Promise<SensorManag
     enrollLastUsedAt: enroll[0]?.lastUsedAt ?? null,
     configVersion: cfg[0]?.v ?? null,
     config: (cfg[0]?.config as Record<string, unknown> | undefined) ?? null,
-    commands: cmds,
+    commands: cmds.map((c) => ({
+      ...c,
+      result: (c.result as Record<string, unknown> | null) ?? null,
+    })),
   };
 }
 

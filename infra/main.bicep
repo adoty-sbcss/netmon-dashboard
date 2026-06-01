@@ -108,6 +108,37 @@ param ingestImage string = '${acrName}.azurecr.io/netmon-dashboard-ingest:latest
 @description('Cron (UTC) for the ingest Job wake-up. Default: hourly. The job then pulls only when the per-cadence interval (set in /settings/ingestion) has elapsed, so it stays near one real pass per chosen frequency.')
 param ingestCron string = '0 * * * *'
 
+// ---- AI analysis Job (docs/DESIGN.md §10) ----
+// Daily model-driven review per district. Reuses the migrator image (full source
+// + tsx) and overrides the command to `npm run ai:analyze`. No-ops cleanly while
+// no model key is set, so it's safe to leave enabled. The same model env is wired
+// into the web app so the on-demand "Run AI analysis" button works there too.
+@description('Provision the daily AI analysis cron Job. No-ops until a model key is set.')
+param enableAiJob bool = true
+
+@description('Cron (UTC) for the daily AI analysis run. Default 02:00 UTC (~end of school day, US Pacific).')
+param aiCron string = '0 2 * * *'
+
+@description('Azure OpenAI endpoint, e.g. https://<resource>.openai.azure.com. Empty = GPT column stays "not configured".')
+param azureOpenAiEndpoint string = ''
+
+@description('Azure OpenAI deployment name, e.g. gpt-4o.')
+param azureOpenAiDeployment string = ''
+
+@description('Azure OpenAI API version.')
+param azureOpenAiApiVersion string = '2024-10-21'
+
+@description('Azure OpenAI API key. Empty keeps the GPT column disabled until set.')
+@secure()
+param azureOpenAiApiKey string = ''
+
+@description('Anthropic (Claude) API key. Empty keeps the Claude column "not configured" until added.')
+@secure()
+param anthropicApiKey string = ''
+
+@description('Anthropic model id.')
+param anthropicModel string = 'claude-opus-4-8'
+
 @description('Create the RBAC role assignments. Set false if Lighthouse blocks them and assign in the Portal instead.')
 param assignRoles bool = true
 
@@ -130,6 +161,27 @@ var databaseUrlSecretName = 'DATABASE-URL'
 // Constructed at deploy time from the private FQDN + admin creds. Lives only in
 // Key Vault; the app/job pull it via managed identity.
 var databaseUrlValue = 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${postgresDbName}?sslmode=require'
+
+// AI model credentials. App-level secrets (not KV) so an UNSET key is simply an
+// absent array entry — Key Vault rejects empty secret values, and these are
+// optional/empty by default. Each provider's adapter treats a missing key as
+// "not configured", so the AI Job and the web button no-op until a key lands.
+var aiSecrets = concat(
+  empty(azureOpenAiApiKey) ? [] : [ { name: 'azure-openai-api-key', value: azureOpenAiApiKey } ],
+  empty(anthropicApiKey) ? [] : [ { name: 'anthropic-api-key', value: anthropicApiKey } ]
+)
+var aiEnv = concat(
+  empty(azureOpenAiEndpoint) ? [] : [
+    { name: 'AZURE_OPENAI_ENDPOINT', value: azureOpenAiEndpoint }
+    { name: 'AZURE_OPENAI_DEPLOYMENT', value: azureOpenAiDeployment }
+    { name: 'AZURE_OPENAI_API_VERSION', value: azureOpenAiApiVersion }
+  ],
+  empty(azureOpenAiApiKey) ? [] : [ { name: 'AZURE_OPENAI_API_KEY', secretRef: 'azure-openai-api-key' } ],
+  empty(anthropicApiKey) ? [] : [
+    { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }
+    { name: 'ANTHROPIC_MODEL', value: anthropicModel }
+  ]
+)
 
 // ---- Log Analytics ----
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -324,7 +376,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       // Pull runtime secrets from Key Vault via the app identity (versionless
       // URIs auto-pick the latest version on each revision).
-      secrets: [
+      secrets: concat([
         {
           name: 'auth-secret'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
@@ -335,7 +387,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
           identity: appIdentity.id
         }
-      ]
+      ], aiSecrets)
     }
     template: {
       containers: [
@@ -346,11 +398,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json(containerCpu)
             memory: containerMemory
           }
-          env: [
+          env: concat([
             { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'NODE_ENV', value: 'production' }
-          ]
+          ], aiEnv)
         }
       ]
       scale: {
@@ -489,6 +541,74 @@ resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'NODE_ENV', value: 'production' }
           ]
+        }
+      ]
+    }
+  }
+  dependsOn: assignRoles
+    ? [ kvDatabaseUrl, acrPullAssignment, kvSecretsUserAssignment ]
+    : [ kvDatabaseUrl ]
+}
+
+// ---- AI analysis Job (cron; per-district model review → ai_analyses) ----
+// Reuses the migrator image (full source + tsx) and overrides the command to run
+// `npm run ai:analyze`. Reads DATABASE_URL/AUTH_SECRET from Key Vault and the
+// model keys from the app-level aiSecrets. No-ops while no model key is present.
+resource aiJob 'Microsoft.App/jobs@2024-03-01' = if (enableAiJob) {
+  name: 'w2-sbcss-netmon-ai'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerEnv.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 3600
+      replicaRetryLimit: 1
+      scheduleTriggerConfig: {
+        cronExpression: aiCron
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: appIdentity.id
+        }
+      ]
+      secrets: concat([
+        {
+          name: 'auth-secret'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
+          identity: appIdentity.id
+        }
+        {
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
+        }
+      ], aiSecrets)
+    }
+    template: {
+      containers: [
+        {
+          name: 'ai'
+          image: migratorImage
+          command: [ 'npm' ]
+          args: [ 'run', 'ai:analyze' ]
+          resources: {
+            cpu: json(containerCpu)
+            memory: containerMemory
+          }
+          env: concat([
+            { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'NODE_ENV', value: 'production' }
+          ], aiEnv)
         }
       ]
     }

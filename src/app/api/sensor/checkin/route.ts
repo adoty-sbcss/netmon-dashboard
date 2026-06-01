@@ -24,6 +24,9 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     agentVersion?: string;
     configVersion?: number;
+    localIp?: string;
+    interface?: string;
+    interfaceCidr?: string;
   };
 
   await db
@@ -34,6 +37,9 @@ export async function POST(req: NextRequest) {
       ...(Number.isInteger(body.configVersion)
         ? { reportedConfigVersion: body.configVersion }
         : {}),
+      ...(typeof body.localIp === "string" ? { localIp: body.localIp } : {}),
+      ...(typeof body.interface === "string" ? { iface: body.interface } : {}),
+      ...(typeof body.interfaceCidr === "string" ? { ifaceCidr: body.interfaceCidr } : {}),
     })
     .where(eq(sensors.id, sensorId));
 
