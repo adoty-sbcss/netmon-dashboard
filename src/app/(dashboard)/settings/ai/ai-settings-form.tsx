@@ -19,6 +19,13 @@ import {
 import type { AiProviderSettingsView, AiGlobalSettings } from "@/lib/ai/settings";
 import type { ProviderFieldSpec } from "@/lib/ai/types";
 import type { ProviderUsage } from "@/lib/ai/queries";
+import {
+  modelOptionsFor,
+  AZURE_API_VERSIONS,
+  CRON_PRESETS,
+  OTHER_OPTION,
+  type CatalogOption,
+} from "@/lib/ai/catalog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -61,6 +68,69 @@ function Notice({ state }: { state: AiSettingsActionState }) {
 function fmtUsd(n: number): string {
   if (n === 0) return "$0.00";
   return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
+/**
+ * A <select> of curated options plus an "Other…" choice that reveals a free-text
+ * input. Submits via a single field `name`: the chosen preset, or the typed
+ * value when "Other" is active. If the saved value isn't a known option, it
+ * starts in "Other" pre-filled — so existing custom values are preserved.
+ */
+function SelectWithOther({
+  id,
+  name,
+  options,
+  defaultValue,
+  otherPlaceholder,
+  className,
+}: {
+  id?: string;
+  name: string;
+  options: CatalogOption[];
+  defaultValue: string;
+  otherPlaceholder?: string;
+  className?: string;
+}) {
+  const known = options.some((o) => o.value === defaultValue);
+  const [choice, setChoice] = useState(
+    defaultValue ? (known ? defaultValue : OTHER_OPTION) : "",
+  );
+  const [custom, setCustom] = useState(known ? "" : defaultValue || "");
+  const selectCls =
+    "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30" +
+    (className ? " " + className : "");
+  return (
+    <>
+      <select
+        id={id}
+        value={choice}
+        onChange={(e) => setChoice(e.target.value)}
+        className={selectCls}
+      >
+        <option value="" disabled>
+          Select…
+        </option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+        <option value={OTHER_OPTION}>Other… (type it in)</option>
+      </select>
+      {choice === OTHER_OPTION ? (
+        <Input
+          name={name}
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder={otherPlaceholder}
+          autoComplete="off"
+          className={className}
+        />
+      ) : (
+        <input type="hidden" name={name} value={choice} />
+      )}
+    </>
+  );
 }
 
 function ProviderCard({ provider }: { provider: ProviderProp }) {
@@ -107,11 +177,12 @@ function ProviderCard({ provider }: { provider: ProviderProp }) {
             <label htmlFor={`${id}-model`} className={labelCls}>
               {fields.modelLabel}
             </label>
-            <Input
+            <SelectWithOther
               id={`${id}-model`}
               name="model"
+              options={modelOptionsFor(id)}
               defaultValue={view.model}
-              placeholder={fields.modelPlaceholder}
+              otherPlaceholder={fields.modelPlaceholder}
             />
           </div>
 
@@ -134,11 +205,12 @@ function ProviderCard({ provider }: { provider: ProviderProp }) {
               <label htmlFor={`${id}-apiVersion`} className={labelCls}>
                 API version
               </label>
-              <Input
+              <SelectWithOther
                 id={`${id}-apiVersion`}
                 name="apiVersion"
+                options={AZURE_API_VERSIONS}
                 defaultValue={view.apiVersion}
-                placeholder="2024-10-21"
+                otherPlaceholder="2024-10-21"
               />
             </div>
           )}
@@ -233,11 +305,12 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
             <label htmlFor="scheduleCron" className={labelCls}>
               Daily run schedule (cron, UTC)
             </label>
-            <Input
+            <SelectWithOther
               id="scheduleCron"
               name="scheduleCron"
+              options={CRON_PRESETS}
               defaultValue={settings.scheduleCron}
-              placeholder="0 2 * * *"
+              otherPlaceholder="0 2 * * *"
               className="max-w-xs"
             />
             <p className="text-xs text-muted-foreground">
