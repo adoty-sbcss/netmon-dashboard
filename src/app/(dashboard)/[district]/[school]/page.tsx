@@ -116,7 +116,12 @@ export default async function SchoolPage({
 
       {/* Activity metrics */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
-        <StatCard label="Neighbors (LLDP)" value={num(stats.neighborCount)} icon={Waypoints} />
+        <StatCard
+          label="Neighbors (LLDP)"
+          value={num(stats.neighborCount)}
+          icon={Waypoints}
+          href={`/${district.slug}/${school.slug}/neighbors`}
+        />
         <StatCard
           label="DHCP observed"
           value={num(stats.dhcpCount)}

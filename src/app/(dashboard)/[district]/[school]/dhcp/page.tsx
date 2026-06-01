@@ -62,7 +62,11 @@ export default async function DhcpPage({
           </p>
         </div>
       ) : (
-        <DhcpAnalysisView analysis={analysis} authorizedServers={[...authorized]} />
+        <DhcpAnalysisView
+          analysis={analysis}
+          authorizedServers={[...authorized]}
+          districtSlug={district.slug}
+        />
       )}
     </div>
   );

@@ -1,13 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronRight,
   Info,
   Layers,
   Search,
   Server,
+  ShieldCheck,
 } from "lucide-react";
 
 import type {
@@ -15,9 +18,14 @@ import type {
   DhcpClientStatus,
   DhcpClientView,
 } from "@/db/queries";
+import {
+  addAuthorizedDhcpServerAction,
+  type DhcpPolicyActionState,
+} from "@/lib/dhcp-policy-actions";
 import { relativeTime } from "@/lib/format";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -83,9 +91,11 @@ function FlowChips({ types }: { types: string[] }) {
 export function DhcpAnalysisView({
   analysis,
   authorizedServers,
+  districtSlug,
 }: {
   analysis: DhcpAnalysis;
   authorizedServers: string[];
+  districtSlug: string;
 }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DhcpClientStatus | "all" | "issues">(
@@ -122,33 +132,40 @@ export function DhcpAnalysisView({
   // servers" issues) and instead flag any server NOT on the list.
   const authzSet = useMemo(() => new Set(authorizedServers), [authorizedServers]);
   const hasPolicy = authzSet.size > 0;
+  const unauthorized = useMemo(
+    () =>
+      hasPolicy
+        ? analysis.servers.map((s) => s.ip).filter((ip) => !authzSet.has(ip))
+        : [],
+    [analysis.servers, hasPolicy, authzSet],
+  );
 
-  const issues = useMemo(() => {
-    const unauthorized = hasPolicy
-      ? analysis.servers.map((s) => s.ip).filter((ip) => !authzSet.has(ip))
-      : [];
-    const base = hasPolicy
-      ? analysis.issues.filter(
-          (i) =>
-            !/served by .* dhcp servers/i.test(i.title) &&
-            !/dhcp servers seen/i.test(i.title),
-        )
-      : analysis.issues;
-    if (unauthorized.length > 0) {
-      return [
-        {
-          severity: "warning" as const,
-          title: `Unauthorized DHCP server${unauthorized.length > 1 ? "s" : ""} seen: ${unauthorized.join(", ")}`,
-          detail:
-            "Not on this district's authorized list — investigate for a rogue or misconfigured DHCP server (Settings → District settings to authorize a known server).",
-        },
-        ...base,
-      ];
-    }
-    return base;
-  }, [analysis.issues, analysis.servers, hasPolicy, authzSet]);
+  // When a policy exists, the dedicated banner below carries the unauthorized
+  // alert (with one-click Authorize), so drop the generic server-count issues.
+  const issues = useMemo(
+    () =>
+      hasPolicy
+        ? analysis.issues.filter(
+            (i) =>
+              !/served by .* dhcp servers/i.test(i.title) &&
+              !/dhcp servers seen/i.test(i.title),
+          )
+        : analysis.issues,
+    [analysis.issues, hasPolicy],
+  );
 
   const issueCount = issues.filter((i) => i.severity === "warning").length;
+
+  // Servers to offer a one-click "Authorize" on: the unauthorized ones when a
+  // policy exists, else every seen server (so a district can seed its list).
+  const serversToOffer = hasPolicy
+    ? unauthorized
+    : analysis.servers.map((s) => s.ip);
+
+  const [authzState, authorizeAction, authorizing] = useActionState<
+    DhcpPolicyActionState,
+    FormData
+  >(addAuthorizedDhcpServerAction, {});
 
   return (
     <div className="flex flex-col gap-6">
@@ -165,6 +182,55 @@ export function DhcpAnalysisView({
           hint={`ACK/DISCOVER ratio ${ackPct}`}
         />
       </div>
+
+      {/* Authorize DHCP servers — one click, no trip to settings */}
+      {serversToOffer.length > 0 && (
+        <Card className={hasPolicy ? "border-destructive/40" : "border-[var(--warning)]/40"}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle
+                className={`size-4 ${hasPolicy ? "text-destructive" : "text-[var(--warning)]"}`}
+              />
+              {hasPolicy
+                ? `Unauthorized DHCP server${serversToOffer.length > 1 ? "s" : ""}`
+                : "Authorize your DHCP servers"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2.5">
+            <p className="text-sm text-muted-foreground">
+              {hasPolicy
+                ? "These are sending DHCP but aren't on the district's authorized list. Authorize a legitimate server to stop the alerts; investigate any you don't recognize."
+                : "No authorized DHCP servers are declared for this district yet. Authorize your legitimate servers so future scans stop flagging them as possible rogues."}
+            </p>
+            {serversToOffer.map((ip) => (
+              <div key={ip} className="flex items-center gap-3">
+                <span className="font-mono text-sm">{ip}</span>
+                <form action={authorizeAction} className="ml-auto">
+                  <input type="hidden" name="districtSlug" value={districtSlug} />
+                  <input type="hidden" name="serverIp" value={ip} />
+                  <Button type="submit" size="sm" variant="outline" disabled={authorizing}>
+                    <ShieldCheck /> Authorize
+                  </Button>
+                </form>
+              </div>
+            ))}
+            {authzState.error && (
+              <p className="text-sm text-destructive">{authzState.error}</p>
+            )}
+            {authzState.ok && authzState.message && (
+              <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="size-4" /> {authzState.message}
+              </p>
+            )}
+            <Link
+              href={`/${districtSlug}/settings`}
+              className="text-sm text-primary hover:underline"
+            >
+              Manage authorized DHCP servers →
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Issues */}
       {issues.length > 0 && (

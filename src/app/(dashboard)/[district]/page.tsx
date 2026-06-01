@@ -74,13 +74,24 @@ export default async function DistrictPage({
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard label="Schools" value={num(schools.length)} icon={School} />
-        <StatCard label="Sensors" value={num(totals.sensors)} icon={Network} />
-        <StatCard label="Hosts" value={num(totals.hosts)} icon={Cpu} />
+        <StatCard
+          label="Sensors"
+          value={num(totals.sensors)}
+          icon={Network}
+          href={`/${district.slug}/sensors`}
+        />
+        <StatCard
+          label="Hosts"
+          value={num(totals.hosts)}
+          icon={Cpu}
+          href={`/${district.slug}/hosts`}
+        />
         <StatCard
           label="Open findings"
           value={num(totals.findings)}
           icon={ShieldAlert}
           tone={totals.findings > 0 ? "warning" : "success"}
+          href={`/${district.slug}/findings`}
         />
       </div>
 

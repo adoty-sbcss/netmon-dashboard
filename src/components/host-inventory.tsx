@@ -43,6 +43,7 @@ export function HostInventory({
 }) {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<DeviceType | "all">("all");
+  const [vendorFilter, setVendorFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("ip");
   const [asc, setAsc] = useState(true);
 
@@ -52,6 +53,16 @@ export function HostInventory({
     for (const h of hosts) {
       const t = (h.deviceType ?? "unknown") as DeviceType;
       m.set(t, (m.get(t) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [hosts]);
+
+  // Vendors actually present, with counts, for the vendor filter dropdown.
+  const vendorCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const h of hosts) {
+      const v = h.vendor?.trim() || "Unknown";
+      m.set(v, (m.get(v) ?? 0) + 1);
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [hosts]);
@@ -67,6 +78,9 @@ export function HostInventory({
       : hosts;
     if (typeFilter !== "all") {
       rows = rows.filter((h) => (h.deviceType ?? "unknown") === typeFilter);
+    }
+    if (vendorFilter !== "all") {
+      rows = rows.filter((h) => (h.vendor?.trim() || "Unknown") === vendorFilter);
     }
 
     const sorted = [...rows].sort((a, b) => {
@@ -84,7 +98,7 @@ export function HostInventory({
       return asc ? cmp : -cmp;
     });
     return sorted;
-  }, [hosts, query, typeFilter, sortKey, asc]);
+  }, [hosts, query, typeFilter, vendorFilter, sortKey, asc]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -117,6 +131,18 @@ export function HostInventory({
             {typeCounts.map(([t, n]) => (
               <option key={t} value={t}>
                 {DEVICE_TYPE_LABELS[t]} ({n})
+              </option>
+            ))}
+          </select>
+          <select
+            value={vendorFilter}
+            onChange={(e) => setVendorFilter(e.target.value)}
+            className="h-8 max-w-[12rem] rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          >
+            <option value="all">All vendors</option>
+            {vendorCounts.map(([v, n]) => (
+              <option key={v} value={v}>
+                {v} ({n})
               </option>
             ))}
           </select>
