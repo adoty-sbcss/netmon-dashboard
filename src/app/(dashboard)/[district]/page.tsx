@@ -14,8 +14,10 @@ import {
   getDistrictBySlug,
   listSchools,
 } from "@/db/queries";
+import { getLatestAiSummary } from "@/lib/ai/queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { AiFindingsCard } from "@/components/ai-findings-card";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,7 +38,10 @@ export default async function DistrictPage({
   const district = await getDistrictBySlug(districtSlug);
   if (!district) notFound();
 
-  const schools = await listSchools(district.id);
+  const [schools, aiSummary] = await Promise.all([
+    listSchools(district.id),
+    getLatestAiSummary(district.id, "district"),
+  ]);
 
   const totals = schools.reduce(
     (acc, s) => {
@@ -94,6 +99,12 @@ export default async function DistrictPage({
           href={`/${district.slug}/findings`}
         />
       </div>
+
+      <AiFindingsCard
+        summary={aiSummary}
+        href={`/${district.slug}/ai`}
+        title="AI health summary"
+      />
 
       <div>
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Schools</h2>

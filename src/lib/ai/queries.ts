@@ -100,6 +100,58 @@ export async function getLatestRunForDistrict(
   return getRun(latest.runId);
 }
 
+// ---- latest-run summary for surfacing in Findings / overview --------------
+
+export interface AiFindingItem extends AiFinding {
+  /** Which model produced it (so a merged list stays attributable). */
+  model: string | null;
+}
+
+export interface LatestAiSummary {
+  runId: string;
+  createdAt: Date;
+  trigger: string;
+  /** Narrative from the first successful model (the exec summary). */
+  prose: string | null;
+  model: string | null;
+  /** How many models succeeded in this run. */
+  providerCount: number;
+  /** Findings merged across successful models, severity-sorted. */
+  findings: AiFindingItem[];
+}
+
+const SEVERITY_RANK: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+};
+
+/** The latest analysis run for a scope, flattened for display in the Findings
+ *  section + district overview. Null when no run exists yet. */
+export async function getLatestAiSummary(
+  districtId: number,
+  scopeType: "district" | "school" = "district",
+  scopeId?: number,
+): Promise<LatestAiSummary | null> {
+  const run = await getLatestRunForDistrict(districtId, scopeType, scopeId);
+  if (!run) return null;
+  const ok = run.rows.filter((r) => r.status === "ok");
+  const findings: AiFindingItem[] = ok
+    .flatMap((r) => r.findings.map((f) => ({ ...f, model: r.model })))
+    .sort((a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9));
+  return {
+    runId: run.runId,
+    createdAt: run.createdAt,
+    trigger: run.trigger,
+    prose: ok[0]?.prose ?? null,
+    model: ok[0]?.model ?? null,
+    providerCount: ok.length,
+    findings,
+  };
+}
+
 // ---- usage analysis -------------------------------------------------------
 
 export interface ProviderUsage {

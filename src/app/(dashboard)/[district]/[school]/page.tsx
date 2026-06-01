@@ -21,8 +21,10 @@ import {
   listFindingsForSchool,
   getSchoolHealthTrend,
 } from "@/db/queries";
+import { getLatestAiSummary } from "@/lib/ai/queries";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { AiFindingsCard } from "@/components/ai-findings-card";
 import { StatCard } from "@/components/stat-card";
 import { SeverityBadge } from "@/components/severity-badge";
 import { Badge } from "@/components/ui/badge";
@@ -48,11 +50,12 @@ export default async function SchoolPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [stats, sensors, findings, health] = await Promise.all([
+  const [stats, sensors, findings, health, aiSummary] = await Promise.all([
     getSchoolStats(school.id),
     listSensorsForSchool(school.id),
     listFindingsForSchool(school.id),
     getSchoolHealthTrend(school.id),
+    getLatestAiSummary(district.id, "school", school.id),
   ]);
 
   const latestHealth = health.at(-1);
@@ -218,7 +221,13 @@ export default async function SchoolPage({
         </CardContent>
       </Card>
 
-      {/* Findings */}
+      {/* AI analysis (latest run) */}
+      <AiFindingsCard
+        summary={aiSummary}
+        href={`/${district.slug}/${school.slug}/ai`}
+      />
+
+      {/* Findings (rule-based, on-box) */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Findings</CardTitle>
