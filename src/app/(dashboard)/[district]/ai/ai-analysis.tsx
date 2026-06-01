@@ -14,7 +14,7 @@ import { SeverityBadge } from "@/components/severity-badge";
 import { relativeTime } from "@/lib/format";
 import type { ProviderDescriptor } from "@/lib/ai/providers/registry";
 import type { AnalysisRun, AnalysisRow } from "@/lib/ai/queries";
-import { startDistrictAnalysis, getRunStatus } from "@/lib/ai/actions";
+import { getRunStatus, type StartAnalysisResult } from "@/lib/ai/actions";
 
 const POLL_MS = 3000;
 
@@ -23,11 +23,12 @@ function runHasPending(run: AnalysisRun | null): boolean {
 }
 
 export function AiAnalysisPanel({
-  districtSlug,
+  runAction,
   providers,
   initialRun,
 }: {
-  districtSlug: string;
+  /** Bound server action that starts a run for this scope and returns its runId. */
+  runAction: () => Promise<StartAnalysisResult>;
   providers: ProviderDescriptor[];
   initialRun: AnalysisRun | null;
 }) {
@@ -61,7 +62,7 @@ export function AiAnalysisPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await startDistrictAnalysis(districtSlug);
+      const res = await runAction();
       if (res.error) {
         setError(res.error);
         return;
@@ -87,7 +88,7 @@ export function AiAnalysisPanel({
               {run.trigger === "scheduled" ? "scheduled daily run" : "manual run"}
             </>
           ) : (
-            "No analysis has been run for this district yet."
+            "No analysis has been run for this scope yet."
           )}
         </div>
         <Button onClick={onRun} disabled={pending || !anyConfigured}>

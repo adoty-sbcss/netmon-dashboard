@@ -12,7 +12,7 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import { auditLog } from "@/db/schema/app";
-import { getDistrictBySlug } from "@/db/queries";
+import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope, scopeAllowsDistrict } from "@/lib/auth/scope";
 import { prepareRun, executeRun, type RunRequest } from "./orchestrator";
@@ -106,6 +106,64 @@ export async function startDistrictAnalysis(
       actor: user.email,
       action: "ai_analysis_run",
       target: `district:${district.slug}`,
+      detail: { runId, trigger: "manual" },
+    })
+    .catch(() => {});
+
+  return { ok: true, runId };
+}
+
+/** Kick off a school-scoped analysis (just that school's data). Returns the runId. */
+export async function startSchoolAnalysis(
+  districtSlug: string,
+  schoolSlug: string,
+): Promise<StartAnalysisResult> {
+  const user = await getSessionUser();
+  if (!user) return { error: "Not authenticated." };
+
+  const district = await getDistrictBySlug(districtSlug);
+  if (!district) return { error: "District not found." };
+
+  const scope = await getUserScope(user);
+  if (!scopeAllowsDistrict(scope, district.id)) {
+    return { error: "Not authorized for this district." };
+  }
+
+  const school = await getSchoolBySlug(district.id, schoolSlug);
+  if (!school) return { error: "School not found." };
+
+  if ((await activeProviders()).length === 0) {
+    return {
+      error:
+        "No AI provider is enabled yet. Configure one in Settings → AI analysis.",
+    };
+  }
+
+  const now = new Date();
+  const req: RunRequest = {
+    scope: {
+      type: "school",
+      id: school.id,
+      districtId: district.id,
+      label: `${district.name || district.slug} — ${school.name || school.slug}`,
+    },
+    window: { start: new Date(now.getTime() - ANALYSIS_WINDOW_MS), end: now },
+    trigger: "manual",
+    requestedBy: user.id,
+  };
+
+  const { runId } = await prepareRun(req);
+  after(async () => {
+    await executeRun(runId, req);
+  });
+
+  await db
+    .insert(auditLog)
+    .values({
+      actorType: "user",
+      actor: user.email,
+      action: "ai_analysis_run",
+      target: `school:${district.slug}/${school.slug}`,
       detail: { runId, trigger: "manual" },
     })
     .catch(() => {});

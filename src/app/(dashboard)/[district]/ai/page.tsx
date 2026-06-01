@@ -5,6 +5,7 @@ import { titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { providerDescriptors } from "@/lib/ai/providers/registry";
 import { getLatestRunForDistrict } from "@/lib/ai/queries";
+import { startDistrictAnalysis } from "@/lib/ai/actions";
 import { AiAnalysisPanel } from "./ai-analysis";
 
 export default async function DistrictAiPage({
@@ -30,7 +31,7 @@ export default async function DistrictAiPage({
         }'s network data. Runs automatically once a day; run on demand below.`}
       />
       <AiAnalysisPanel
-        districtSlug={district.slug}
+        runAction={startDistrictAnalysis.bind(null, district.slug)}
         providers={providers}
         initialRun={latestRun}
       />
