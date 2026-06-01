@@ -58,13 +58,13 @@ export default async function OverviewPage() {
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard label="Districts" value={num(districts.length)} icon={Building2} href={only} />
         <StatCard label="Schools" value={num(totals.schools)} icon={School} href={only} />
-        <StatCard label="Sensors" value={num(totals.sensors)} icon={Network} href={only} />
+        <StatCard label="Sensors" value={num(totals.sensors)} icon={Network} href="/sensors" />
         <StatCard
           label="Open findings"
           value={num(totals.findings)}
           icon={ShieldAlert}
           tone={totals.findings > 0 ? "warning" : "success"}
-          href={only}
+          href="/findings"
         />
       </div>
 

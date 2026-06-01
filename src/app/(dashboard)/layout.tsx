@@ -6,6 +6,7 @@ import { getUserScope } from "@/lib/auth/scope";
 import { getBranding } from "@/lib/branding";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DynamicBreadcrumb } from "@/components/dynamic-breadcrumb";
+import { GlobalSearch } from "@/components/global-search";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 import { Separator } from "@/components/ui/separator";
@@ -51,6 +52,7 @@ export default async function DashboardLayout({
           <Separator orientation="vertical" className="mr-2 h-4" />
           <DynamicBreadcrumb tree={tree} />
           <div className="ml-auto flex items-center gap-2">
+            <GlobalSearch />
             <ThemeToggle />
             <UserMenu email={user.email} role={user.role} />
           </div>

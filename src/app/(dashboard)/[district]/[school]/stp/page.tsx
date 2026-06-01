@@ -1,14 +1,14 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, GitBranch, RouteOff, Waypoints } from "lucide-react";
+import { GitBranch, RouteOff, Waypoints } from "lucide-react";
 
 import {
   getDistrictBySlug,
   getSchoolBySlug,
   listStpForSchool,
 } from "@/db/queries";
-import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
+import { dateTime, num, relativeTime } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,24 +37,15 @@ export default async function StpPage({
   if (!school) notFound();
 
   const stp = await listStpForSchool(school.id);
-  const basePath = `/${district.slug}/${school.slug}`;
   const multipleRoots = stp.rootBridges.length > 1;
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <Link
-          href={basePath}
-          className="mb-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" />
-          {school.name || titleizeSlug(school.slug)}
-        </Link>
-        <PageHeader
-          title="Spanning-tree (STP) events"
-          description={`${district.name} · BPDU activity seen on the wire by this school's sensors`}
-        />
-      </div>
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
+      <PageHeader
+        title="Spanning-tree (STP) events"
+        description={`${district.name} · BPDU activity seen on the wire by this school's sensors`}
+      />
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard label="STP events" value={num(stp.total)} icon={RouteOff} />

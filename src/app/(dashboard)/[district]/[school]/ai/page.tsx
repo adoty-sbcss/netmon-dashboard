@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { providerDescriptors } from "@/lib/ai/providers/registry";
 import { getLatestRunForDistrict } from "@/lib/ai/queries";
 import { startSchoolAnalysis } from "@/lib/ai/actions";
@@ -29,6 +30,7 @@ export default async function SchoolAiPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="AI analysis"
         description={`Model-driven review of ${

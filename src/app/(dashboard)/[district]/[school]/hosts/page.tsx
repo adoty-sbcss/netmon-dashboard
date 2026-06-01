@@ -10,6 +10,7 @@ import {
 } from "@/db/queries";
 import { dateTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { SnapshotPicker } from "@/components/snapshot-picker";
 import { HostInventory } from "@/components/host-inventory";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,6 +44,7 @@ export default async function HostsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="Host inventory"
         description={

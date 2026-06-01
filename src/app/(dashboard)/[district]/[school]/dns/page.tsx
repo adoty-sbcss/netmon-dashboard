@@ -10,6 +10,7 @@ import {
 } from "@/db/queries";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { SnapshotPicker } from "@/components/snapshot-picker";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,6 +52,7 @@ export default async function DnsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="DNS health"
         description={

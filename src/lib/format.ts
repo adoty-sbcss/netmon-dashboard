@@ -47,3 +47,39 @@ export function titleizeSlug(slug: string): string {
     .replace(/[-_]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+/**
+ * Acronyms that should stay upper-cased when a slug is humanized for navigation
+ * chrome (breadcrumbs, tabs). Keyed by their lower-case form.
+ */
+const ACRONYMS = new Set([
+  "ai",
+  "dns",
+  "dhcp",
+  "stp",
+  "lldp",
+  "cdp",
+  "sftp",
+  "snmp",
+  "idf",
+  "vlan",
+  "ip",
+  "id",
+]);
+
+/**
+ * Like titleizeSlug, but keeps known networking acronyms upper-cased:
+ * "dns" → "DNS", "north-idf" → "North IDF".
+ */
+export function prettySegment(slug: string): string {
+  return slug
+    .replace(/[-_]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) =>
+      ACRONYMS.has(w.toLowerCase())
+        ? w.toUpperCase()
+        : w.charAt(0).toUpperCase() + w.slice(1),
+    )
+    .join(" ");
+}

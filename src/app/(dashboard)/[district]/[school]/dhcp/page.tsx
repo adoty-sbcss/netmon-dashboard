@@ -10,6 +10,7 @@ import {
 import { getAuthorizedDhcpServerSet } from "@/lib/dhcp-policy";
 import { dateTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { SnapshotPicker } from "@/components/snapshot-picker";
 import { DhcpAnalysisView } from "@/components/dhcp-analysis";
 
@@ -43,6 +44,7 @@ export default async function DhcpPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="DHCP"
         description={

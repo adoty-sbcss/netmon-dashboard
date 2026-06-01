@@ -5,6 +5,7 @@ import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import { listNeighborsForSchool } from "@/db/district-queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -32,6 +33,7 @@ export default async function NeighborsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="LLDP / CDP neighbors"
         description={`${school.name || titleizeSlug(school.slug)} · ${num(neighbors.length)} discovered adjacenc${neighbors.length === 1 ? "y" : "ies"}`}

@@ -10,6 +10,7 @@ import {
 } from "@/db/queries";
 import { relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -42,6 +43,7 @@ export default async function SwitchesPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="Switches & infrastructure"
         description={`${school.name || titleizeSlug(school.slug)} · discovered via LLDP/CDP neighbors`}

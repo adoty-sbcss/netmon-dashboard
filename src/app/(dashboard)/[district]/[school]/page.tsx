@@ -4,12 +4,10 @@ import {
   Cpu,
   Globe,
   HardDrive,
-  Map as MapIcon,
   Network,
   Radio,
   RouteOff,
   ShieldAlert,
-  Sparkles,
   Waypoints,
 } from "lucide-react";
 
@@ -24,6 +22,7 @@ import {
 import { getLatestAiSummary } from "@/lib/ai/queries";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { AiFindingsCard } from "@/components/ai-findings-card";
 import { StatCard } from "@/components/stat-card";
 import { SeverityBadge } from "@/components/severity-badge";
@@ -62,30 +61,14 @@ export default async function SchoolPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
+
       <PageHeader
         title={school.name || titleizeSlug(school.slug)}
         description={`${district.name} · last scan ${relativeTime(stats.lastScanAt)}`}
-        actions={
-          <>
-            <Link
-              href={`/${district.slug}/${school.slug}/ai`}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors hover:bg-accent"
-            >
-              <Sparkles className="size-4" />
-              AI analysis
-            </Link>
-            <Link
-              href={`/${district.slug}/${school.slug}/map`}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors hover:bg-accent"
-            >
-              <MapIcon className="size-4" />
-              Network map
-            </Link>
-          </>
-        }
       />
 
-      {/* Primary metrics */}
+      {/* Primary metrics — the at-a-glance health of the site */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard
           label="Switches"
@@ -98,6 +81,7 @@ export default async function SchoolPage({
           value={num(stats.hostCount)}
           icon={Cpu}
           href={`/${district.slug}/${school.slug}/hosts`}
+          hint={`${num(stats.deviceCount)} sightings across scans`}
         />
         <StatCard
           label="Sensors"
@@ -117,7 +101,49 @@ export default async function SchoolPage({
         />
       </div>
 
-      {/* Activity metrics */}
+      {/* What needs attention first: AI health summary + rule-based findings,
+          kept above the deeper telemetry so issues surface before counts. */}
+      <AiFindingsCard
+        summary={aiSummary}
+        href={`/${district.slug}/${school.slug}/ai`}
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Findings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {findings.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <ShieldAlert className="size-7 text-[var(--success)]" />
+              <p className="text-sm font-medium">No findings</p>
+              <p className="text-sm text-muted-foreground">
+                The most recent scans reported no issues at this school.
+              </p>
+            </div>
+          ) : (
+            <ul className="divide-y">
+              {findings.map((f) => (
+                <li key={f.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+                  <SeverityBadge severity={f.severity} />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{f.title}</p>
+                    {f.detail && (
+                      <p className="text-sm text-muted-foreground">{f.detail}</p>
+                    )}
+                    <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                      {f.rule}
+                      {f.createdAt ? ` · ${relativeTime(f.createdAt)}` : ""}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Activity metrics — deeper telemetry */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard
           label="Neighbors (LLDP)"
@@ -142,13 +168,6 @@ export default async function SchoolPage({
           value={num(stats.stpCount)}
           icon={RouteOff}
           href={`/${district.slug}/${school.slug}/stp`}
-        />
-        <StatCard
-          label="Devices seen"
-          value={num(stats.deviceCount)}
-          icon={Cpu}
-          href={`/${district.slug}/${school.slug}/hosts`}
-          hint="raw sightings across scans — open Hosts for unique devices"
         />
       </div>
 
@@ -217,48 +236,6 @@ export default async function SchoolPage({
                 </TableBody>
               </Table>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* AI analysis (latest run) */}
-      <AiFindingsCard
-        summary={aiSummary}
-        href={`/${district.slug}/${school.slug}/ai`}
-      />
-
-      {/* Findings (rule-based, on-box) */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Findings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {findings.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <ShieldAlert className="size-7 text-[var(--success)]" />
-              <p className="text-sm font-medium">No findings</p>
-              <p className="text-sm text-muted-foreground">
-                The most recent scans reported no issues at this school.
-              </p>
-            </div>
-          ) : (
-            <ul className="divide-y">
-              {findings.map((f) => (
-                <li key={f.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-                  <SeverityBadge severity={f.severity} />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">{f.title}</p>
-                    {f.detail && (
-                      <p className="text-sm text-muted-foreground">{f.detail}</p>
-                    )}
-                    <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                      {f.rule}
-                      {f.createdAt ? ` · ${relativeTime(f.createdAt)}` : ""}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
           )}
         </CardContent>
       </Card>

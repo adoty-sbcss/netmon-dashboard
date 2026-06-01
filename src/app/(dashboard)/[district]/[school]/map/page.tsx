@@ -1,6 +1,4 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 
 import {
   getDistrictBySlug,
@@ -8,8 +6,8 @@ import {
   getSchoolMap,
 } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
-import { titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SchoolTabs } from "@/components/school-tabs";
 import { NetworkMap } from "@/components/network-map";
 
 export const dynamic = "force-dynamic";
@@ -34,19 +32,11 @@ export default async function MapPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <Link
-          href={basePath}
-          className="mb-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" />
-          {school.name || titleizeSlug(school.slug)}
-        </Link>
-        <PageHeader
-          title="Network map"
-          description={`${district.name} · physical (LLDP/CDP) and logical (subnet/gateway) topology`}
-        />
-      </div>
+      <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
+      <PageHeader
+        title="Network map"
+        description={`${district.name} · physical (LLDP/CDP) and logical (subnet/gateway) topology`}
+      />
 
       <NetworkMap
         physical={map.physical}
