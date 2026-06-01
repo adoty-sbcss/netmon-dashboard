@@ -33,6 +33,10 @@ function parseArgs(argv: string[]): SyncOptions {
       a.limit = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
     }
   }
+  // Env-var escape hatch (handy in the Container App job, where passing CLI
+  // flags via `az ... job start` is awkward): INGEST_FORCE=1 bypasses the
+  // cron cadence gate exactly like --force.
+  if (process.env.INGEST_FORCE === "1") a.force = true;
   return a;
 }
 
