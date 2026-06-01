@@ -4,9 +4,11 @@ import { getDistrictBySlug } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope, scopeAllowsDistrict } from "@/lib/auth/scope";
 import { listAuthorizedDhcpServers } from "@/lib/dhcp-policy";
+import { getDistrictIperf } from "@/lib/iperf";
 import { titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { DhcpServersManager } from "./dhcp-servers-manager";
+import { IperfServerForm } from "./iperf-server-form";
 
 export const metadata = { title: "District settings" };
 export const dynamic = "force-dynamic";
@@ -24,7 +26,10 @@ export default async function DistrictSettingsPage({
   const scope = await getUserScope(user);
   if (!scopeAllowsDistrict(scope, district.id)) redirect(`/${district.slug}`);
 
-  const servers = await listAuthorizedDhcpServers(district.id);
+  const [servers, iperf] = await Promise.all([
+    listAuthorizedDhcpServers(district.id),
+    getDistrictIperf(district.id),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -35,6 +40,7 @@ export default async function DistrictSettingsPage({
         } — network policy that tunes alerts and AI reports.`}
       />
       <DhcpServersManager districtSlug={district.slug} servers={servers} />
+      <IperfServerForm districtSlug={district.slug} iperf={iperf} />
     </div>
   );
 }

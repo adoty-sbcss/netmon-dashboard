@@ -12,8 +12,10 @@ import {
 } from "@/db/queries";
 import { db } from "@/db";
 import { sensors as sensorsTable } from "@/db/schema/app";
+import { getDistrictIperf, listIperfResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
+import { IperfPanel } from "./iperf-panel";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -75,6 +77,17 @@ export default async function SensorDetailPage({
         .where(eq(sensorsTable.id, sensor.id))
         .limit(1)
     : [null];
+  const [iperfCfg, iperfRuns] = isAdmin
+    ? await Promise.all([getDistrictIperf(district.id), listIperfResults(sensor.id)])
+    : [{ serverHost: "", serverPort: 5201, enabled: false }, []];
+  const dcfg = (mgmt?.config ?? {}) as Record<string, unknown>;
+  const iperfSchedule = {
+    enabled: Boolean(dcfg.iperf_enabled),
+    scheduleSec: typeof dcfg.iperf_schedule_sec === "number" ? dcfg.iperf_schedule_sec : 3600,
+    duration: typeof dcfg.iperf_duration === "number" ? dcfg.iperf_duration : 10,
+    direction: typeof dcfg.iperf_direction === "string" ? dcfg.iperf_direction : "down",
+    protocol: typeof dcfg.iperf_protocol === "string" ? dcfg.iperf_protocol : "tcp",
+  };
   const basePath = `/${district.slug}/${school.slug}`;
 
   return (
@@ -197,6 +210,19 @@ export default async function SensorDetailPage({
       {/* Management (admin): enrollment, config push, commands */}
       {isAdmin && mgmt && (
         <SensorManagementPanel sensorId={sensor.id} basePath={basePath} mgmt={mgmt} />
+      )}
+
+      {/* iperf3 throughput (admin) */}
+      {isAdmin && (
+        <IperfPanel
+          sensorId={sensor.id}
+          basePath={basePath}
+          districtSlug={district.slug}
+          serverConfigured={iperfCfg.enabled && Boolean(iperfCfg.serverHost)}
+          serverLabel={`${iperfCfg.serverHost}:${iperfCfg.serverPort}`}
+          schedule={iperfSchedule}
+          results={iperfRuns}
+        />
       )}
 
       {/* Config backups (admin) */}
