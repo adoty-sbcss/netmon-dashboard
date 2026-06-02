@@ -12,12 +12,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+export interface SftpProvision {
+  host: string;
+  port: number;
+  user: string;
+  /** null when the drop uses key auth (sensors need a password) or none set. */
+  password: string | null;
+  remotePath: string;
+}
+
 export function EnrollmentSettings({
   enrollment,
   appOrigin,
+  sftp,
 }: {
   enrollment: EnrollmentView;
   appOrigin: string;
+  sftp: SftpProvision | null;
 }) {
   const [state, action, saving] = useActionState<EnrollmentActionState, FormData>(
     saveEnrollmentAction,
@@ -25,6 +36,26 @@ export function EnrollmentSettings({
   );
   const [enabled, setEnabled] = useState(enrollment.autoEnrollEnabled);
   const labelCls = "text-sm font-medium";
+
+  // The full contents of config/provisioning.env: dashboard URL + bootstrap key,
+  // plus the shared SFTP drop creds when configured. Host/port/user/password and
+  // the base path are identical fleet-wide; the box appends
+  // /<district>/<school>/<device> from its identity slugs automatically.
+  const provisionLines = [
+    `NETMON_DASHBOARD_URL=${appOrigin}`,
+    `NETMON_BOOTSTRAP_KEY=${enrollment.bootstrapKey ?? ""}`,
+  ];
+  if (sftp) {
+    provisionLines.push(
+      `NETMON_SFTP_HOST=${sftp.host}`,
+      `NETMON_SFTP_PORT=${sftp.port}`,
+      `NETMON_SFTP_USER=${sftp.user}`,
+    );
+    if (sftp.password) provisionLines.push(`NETMON_SFTP_PASSWORD=${sftp.password}`);
+    provisionLines.push(`NETMON_SFTP_REMOTE_PATH=${sftp.remotePath || "/"}`);
+  }
+  const provisionEnv = provisionLines.join("\n");
+  const sftpNeedsPassword = !!sftp && !sftp.password;
 
   return (
     <Card>
@@ -50,11 +81,12 @@ export function EnrollmentSettings({
                 bootstrap key. The same key is used by every sensor in your fleet.
               </li>
               <li>
-                On each new box, the dashboard URL and bootstrap key are
-                pre-filled from a small <code>config/provisioning.env</code> file
-                (snippet below). The on-site technician enters only the{" "}
-                <strong>site identity</strong> — district / school / device — and
-                presses Enter to accept everything else.
+                On each new box, the dashboard URL, bootstrap key, and SFTP
+                upload credentials are pre-filled from a small{" "}
+                <code>config/provisioning.env</code> file (snippet below). The
+                on-site technician enters only the <strong>site identity</strong>{" "}
+                — district / school / device — and presses Enter to accept
+                everything else.
               </li>
               <li>
                 On its first check-in the box presents the bootstrap key plus its
@@ -102,9 +134,29 @@ export function EnrollmentSettings({
                 presses Enter:
               </p>
               <pre className="mt-1 overflow-x-auto rounded bg-background px-2 py-1.5 text-[11px] leading-relaxed select-all">
-{`NETMON_DASHBOARD_URL=${appOrigin}
-NETMON_BOOTSTRAP_KEY=${enrollment.bootstrapKey}`}
+{provisionEnv}
               </pre>
+
+              {sftp ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  SFTP credentials are the same ones this dashboard uses to pull
+                  bundles (Settings → SFTP ingestion). The box appends{" "}
+                  <code>/&lt;district&gt;/&lt;school&gt;/&lt;device&gt;</code> to
+                  the path automatically from its identity.
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Configure <strong>SFTP ingestion</strong> above to also bake the
+                  upload credentials into this snippet.
+                </p>
+              )}
+              {sftpNeedsPassword && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
+                  Your SFTP drop uses key authentication. Sensors upload with a
+                  password, so add a <code>NETMON_SFTP_PASSWORD=…</code> line
+                  manually (or switch the ingestion settings to password auth).
+                </p>
+              )}
 
               <p className="mt-3 text-xs text-muted-foreground">
                 <strong>One-time install</strong> on a fresh Ubuntu box:
@@ -112,9 +164,9 @@ NETMON_BOOTSTRAP_KEY=${enrollment.bootstrapKey}`}
               <pre className="mt-1 overflow-x-auto rounded bg-background px-2 py-1.5 text-[11px] leading-relaxed select-all">
 {`git clone https://github.com/adoty-sbcss/net_mon.git
 cd net_mon
-printf 'NETMON_DASHBOARD_URL=%s\\nNETMON_BOOTSTRAP_KEY=%s\\n' \\
-  "${appOrigin}" \\
-  "${enrollment.bootstrapKey}" > config/provisioning.env
+cat > config/provisioning.env <<'EOF'
+${provisionEnv}
+EOF
 sudo ./setup.sh`}
               </pre>
               <p className="mt-2 text-xs text-muted-foreground">
@@ -124,9 +176,10 @@ sudo ./setup.sh`}
               </p>
 
               <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
-                This key is a shared secret. The collector repo is public —
-                never commit <code>config/provisioning.env</code> (it is
-                git-ignored). Rotate the key below if it leaks.
+                The bootstrap key and SFTP password are shared secrets. The
+                collector repo is public — never commit{" "}
+                <code>config/provisioning.env</code> (it is git-ignored).
+                Distribute it out-of-band and rotate the key below if it leaks.
               </p>
             </div>
           ) : (
