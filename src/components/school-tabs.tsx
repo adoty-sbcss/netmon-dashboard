@@ -12,6 +12,7 @@ import {
   Network,
   RouteOff,
   Sparkles,
+  Table2,
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import { cn } from "@/lib/utils";
 const TABS: { label: string; seg: string; icon: LucideIcon }[] = [
   { label: "Overview", seg: "", icon: LayoutDashboard },
   { label: "Network map", seg: "map", icon: MapIcon },
+  { label: "Inventory", seg: "inventory", icon: Table2 },
   { label: "Registry", seg: "registry", icon: Boxes },
   { label: "Switches", seg: "switches", icon: Network },
   { label: "Hosts", seg: "hosts", icon: Cpu },
