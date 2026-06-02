@@ -42,6 +42,40 @@ export function EnrollmentSettings({
             its own token automatically — no per-sensor token copying.
           </p>
 
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <p className="mb-2 text-sm font-medium">How sensor enrollment works</p>
+            <ol className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
+              <li>
+                Turn on auto-enrollment below and set <strong>one</strong> shared
+                bootstrap key. The same key is used by every sensor in your fleet.
+              </li>
+              <li>
+                On each new box, the dashboard URL and bootstrap key are
+                pre-filled from a small <code>config/provisioning.env</code> file
+                (snippet below). The on-site technician enters only the{" "}
+                <strong>site identity</strong> — district / school / device — and
+                presses Enter to accept everything else.
+              </li>
+              <li>
+                On its first check-in the box presents the bootstrap key plus its
+                identity. The dashboard verifies the key, creates the sensor, and
+                issues it a unique per-sensor token that the box stores. Nobody
+                copies a token by hand.
+              </li>
+              <li>
+                From then on the box checks in over <strong>outbound HTTPS only</strong>{" "}
+                (it opens no inbound ports). It appears under{" "}
+                <strong>Sensors</strong>, where you can watch it, push config
+                (SNMP, scan cadence, SFTP), and run commands.
+              </li>
+            </ol>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Turning auto-enrollment <strong>off</strong> immediately stops new
+              boxes from registering. Already-enrolled sensors keep working with
+              the tokens they were issued.
+            </p>
+          </div>
+
           <label className="flex items-center gap-2.5">
             <input
               type="checkbox"
@@ -59,13 +93,41 @@ export function EnrollmentSettings({
               <code className="mt-1 block break-all rounded bg-background px-2 py-1.5 font-mono text-xs select-all">
                 {enrollment.bootstrapKey}
               </code>
-              <p className="mt-2 text-xs text-muted-foreground">
-                On each box, set in <code>/etc/netmon/netmon.env</code>:
+
+              <p className="mt-3 text-xs text-muted-foreground">
+                <strong>Provision new boxes</strong> — save this as{" "}
+                <code>config/provisioning.env</code> in the cloned repo on each
+                box (or place it at <code>/etc/netmon/provisioning.env</code>).
+                The setup wizard pre-fills these values so the technician just
+                presses Enter:
               </p>
-              <pre className="mt-1 overflow-x-auto rounded bg-background px-2 py-1.5 text-[11px] leading-relaxed">
+              <pre className="mt-1 overflow-x-auto rounded bg-background px-2 py-1.5 text-[11px] leading-relaxed select-all">
 {`NETMON_DASHBOARD_URL=${appOrigin}
 NETMON_BOOTSTRAP_KEY=${enrollment.bootstrapKey}`}
               </pre>
+
+              <p className="mt-3 text-xs text-muted-foreground">
+                <strong>One-time install</strong> on a fresh Ubuntu box:
+              </p>
+              <pre className="mt-1 overflow-x-auto rounded bg-background px-2 py-1.5 text-[11px] leading-relaxed select-all">
+{`git clone https://github.com/adoty-sbcss/net_mon.git
+cd net_mon
+printf 'NETMON_DASHBOARD_URL=%s\\nNETMON_BOOTSTRAP_KEY=%s\\n' \\
+  "${appOrigin}" \\
+  "${enrollment.bootstrapKey}" > config/provisioning.env
+sudo ./setup.sh`}
+              </pre>
+              <p className="mt-2 text-xs text-muted-foreground">
+                During setup the tech enters only district / school / device.
+                The box enrolls on its first check-in and shows up under{" "}
+                <strong>Sensors</strong> within a few minutes.
+              </p>
+
+              <p className="mt-3 text-xs text-amber-600 dark:text-amber-500">
+                This key is a shared secret. The collector repo is public —
+                never commit <code>config/provisioning.env</code> (it is
+                git-ignored). Rotate the key below if it leaks.
+              </p>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
