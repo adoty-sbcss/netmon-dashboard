@@ -1627,10 +1627,66 @@ function refineInfraType(
 }
 
 /**
+ * Resolve each host MAC to its most-specific (access) switch port via the bridge
+ * forwarding table, disambiguating uplinks: a device's access port is the one
+ * carrying the FEWEST MACs (an edge port usually has one; an uplink has many).
+ * Uses the latest scan per sensor. Returns mac(lowercased) -> {switchIp, port}.
+ */
+async function getFdbAttachments(
+  schoolId: number,
+): Promise<Map<string, { switchIp: string; port: string | null }>> {
+  const rows = await db
+    .select({
+      scanRunId: hostSwitchPorts.scanRunId,
+      sensorId: scanRuns.sensorId,
+      switchIp: hostSwitchPorts.sourceDeviceIp,
+      mac: hostSwitchPorts.mac,
+      ifName: hostSwitchPorts.ifName,
+    })
+    .from(hostSwitchPorts)
+    .innerJoin(scanRuns, eq(hostSwitchPorts.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId));
+
+  const latest = new Map<number, number>();
+  for (const r of rows) {
+    const sid = r.sensorId ?? -1;
+    if (r.scanRunId > (latest.get(sid) ?? -1)) latest.set(sid, r.scanRunId);
+  }
+  const fresh = rows.filter((r) => r.scanRunId === latest.get(r.sensorId ?? -1));
+
+  // distinct MAC count per (switch, port)
+  const portMacs = new Map<string, Set<string>>();
+  for (const r of fresh) {
+    if (!r.switchIp || !r.mac) continue;
+    const key = `${r.switchIp}|${r.ifName ?? ""}`;
+    let set = portMacs.get(key);
+    if (!set) {
+      set = new Set();
+      portMacs.set(key, set);
+    }
+    set.add(r.mac.toLowerCase());
+  }
+  // pick the lowest-MAC-count port per MAC = its access port
+  const best = new Map<string, { switchIp: string; port: string | null; count: number }>();
+  for (const r of fresh) {
+    if (!r.switchIp || !r.mac) continue;
+    const mac = r.mac.toLowerCase();
+    const count = portMacs.get(`${r.switchIp}|${r.ifName ?? ""}`)?.size ?? Number.MAX_SAFE_INTEGER;
+    const cur = best.get(mac);
+    if (!cur || count < cur.count) best.set(mac, { switchIp: r.switchIp, port: r.ifName, count });
+  }
+  const out = new Map<string, { switchIp: string; port: string | null }>();
+  for (const [mac, v] of best) out.set(mac, { switchIp: v.switchIp, port: v.port });
+  return out;
+}
+
+/**
  * Render-ready network map for a school: the physical (LLDP/CDP) and logical
  * (subnet/gateway) snapshots, with each node enriched from canonical entities
  * (refined device type, model, and a detail link), plus any saved manual
- * positions.
+ * positions. The physical map is additionally overlaid with leaf devices
+ * attached to their access switch port via the bridge FDB.
  */
 export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
   const [snapRows, switchRows, hostRows, posRows] = await Promise.all([
@@ -1655,7 +1711,13 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
       .from(entitiesSwitch)
       .where(eq(entitiesSwitch.schoolId, schoolId)),
     db
-      .select({ id: entitiesHost.id, ip: entitiesHost.ip, hostname: entitiesHost.hostname })
+      .select({
+        id: entitiesHost.id,
+        ip: entitiesHost.ip,
+        mac: entitiesHost.mac,
+        hostname: entitiesHost.hostname,
+        deviceType: entitiesHost.deviceType,
+      })
       .from(entitiesHost)
       .where(eq(entitiesHost.schoolId, schoolId)),
     db
@@ -1725,7 +1787,41 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     };
   }
 
-  return { physical: build("physical"), logical: build("logical") };
+  const physical = build("physical");
+  const logical = build("logical");
+
+  // --- FDB overlay: attach leaf devices to their access switch port ---------
+  const fdb = await getFdbAttachments(schoolId);
+  if (fdb.size > 0) {
+    const switchNodeByIp = new Map<string, string>();
+    for (const n of physical.nodes) if (n.ip) switchNodeByIp.set(n.ip, n.id);
+    const hostByMac = new Map(
+      hostRows.filter((h) => h.mac).map((h) => [h.mac!.toLowerCase(), h]),
+    );
+    const present = new Set(physical.nodes.map((n) => n.id));
+    for (const [mac, att] of fdb) {
+      const swNode = switchNodeByIp.get(att.switchIp);
+      if (!swNode) continue; // its access switch isn't on the map (yet)
+      const host = hostByMac.get(mac);
+      if (!host) continue; // unidentified MAC — skip until we know the device
+      const hostNodeId = `host:${host.id}`;
+      if (!present.has(hostNodeId)) {
+        physical.nodes.push({
+          id: hostNodeId,
+          type: host.deviceType || "host",
+          label: host.hostname || host.ip || mac,
+          ip: host.ip,
+          model: att.port ? `on ${att.port}` : null,
+          entityId: host.id,
+          entityKind: "host",
+        });
+        present.add(hostNodeId);
+      }
+      physical.edges.push({ source: hostNodeId, target: swNode, kind: "fdb" });
+    }
+  }
+
+  return { physical, logical };
 }
 
 // ---- admin: managed entity tree (rename / delete / purge) -----------------

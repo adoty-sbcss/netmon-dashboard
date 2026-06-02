@@ -83,6 +83,7 @@ export async function getLatestRunForDistrict(
   districtId: number,
   scopeType: "district" | "school" = "district",
   scopeId?: number,
+  kind: string = "general",
 ): Promise<AnalysisRun | null> {
   const [latest] = await db
     .select({ runId: aiAnalyses.runId })
@@ -91,6 +92,7 @@ export async function getLatestRunForDistrict(
       and(
         eq(aiAnalyses.districtId, districtId),
         eq(aiAnalyses.scopeType, scopeType),
+        eq(aiAnalyses.kind, kind),
         scopeId != null ? eq(aiAnalyses.scopeId, scopeId) : undefined,
       ),
     )
@@ -98,6 +100,14 @@ export async function getLatestRunForDistrict(
     .limit(1);
   if (!latest) return null;
   return getRun(latest.runId);
+}
+
+/** The most recent TOPOLOGY analysis run for a school. */
+export function getLatestTopologyRun(
+  districtId: number,
+  schoolId: number,
+): Promise<AnalysisRun | null> {
+  return getLatestRunForDistrict(districtId, "school", schoolId, "topology");
 }
 
 // ---- latest-run summary for surfacing in Findings / overview --------------

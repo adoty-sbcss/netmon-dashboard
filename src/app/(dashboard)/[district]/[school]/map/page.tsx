@@ -6,9 +6,11 @@ import {
   getSchoolMap,
 } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
+import { getLatestTopologyRun } from "@/lib/ai/queries";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
-import { NetworkMap } from "@/components/network-map";
+import { CytoscapePhysicalMap } from "@/components/topology/cytoscape-physical-map";
+import { TopologyAiPanel } from "@/components/topology/topology-ai-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +29,10 @@ export default async function MapPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const map = await getSchoolMap(school.id);
+  const [map, topoRun] = await Promise.all([
+    getSchoolMap(school.id),
+    getLatestTopologyRun(district.id, school.id),
+  ]);
   const basePath = `/${district.slug}/${school.slug}`;
 
   return (
@@ -35,15 +40,16 @@ export default async function MapPage({
       <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="Network map"
-        description={`${district.name} · physical (LLDP/CDP) and logical (subnet/gateway) topology`}
+        description={`${district.name} · physical topology (LLDP/CDP backbone + bridge-table device attachment)`}
       />
 
-      <NetworkMap
-        physical={map.physical}
-        logical={map.logical}
-        basePath={basePath}
-        schoolId={school.id}
-        canSave={user.role === "superadmin"}
+      <CytoscapePhysicalMap graph={map.physical} basePath={basePath} />
+
+      <TopologyAiPanel
+        districtSlug={district.slug}
+        schoolSlug={school.slug}
+        canRun={user.role === "superadmin"}
+        initialRun={topoRun}
       />
     </div>
   );

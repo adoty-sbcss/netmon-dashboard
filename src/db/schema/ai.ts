@@ -58,6 +58,9 @@ export const aiAnalyses = pgTable(
     windowEnd: timestamp("window_end", { withTimezone: true }),
     /** 'scheduled' | 'manual'. */
     trigger: text("trigger").notNull(),
+    /** 'general' (the daily health analysis) | 'topology' (physical-map design
+     *  review). Lets the two analyses coexist without mixing in the UI. */
+    kind: text("kind").notNull().default("general"),
     /** 'azure-openai' | 'anthropic' | ... */
     providerId: text("provider_id").notNull(),
     /** Concrete model/deployment used, e.g. "gpt-4o" or "claude-opus-4-8". */

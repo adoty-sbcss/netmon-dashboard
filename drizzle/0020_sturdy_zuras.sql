@@ -1,0 +1,1 @@
+ALTER TABLE "ai_analyses" ADD COLUMN "kind" text DEFAULT 'general' NOT NULL;
