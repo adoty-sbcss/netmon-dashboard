@@ -1,13 +1,12 @@
 /**
- * Push the SNMP community strings entered in the equipment registry down to the
- * school's sensors, so the sensor trials them on its next scan.
+ * Push registry SNMP intent down to a school's sensors: the community strings
+ * AND the explicit target IPs of devices the operator marked monitor=SNMP, so
+ * the sensor polls them even if its OUI/heuristics wouldn't flag them as gear.
  *
- * SAFE-MERGE: the pushed community list is the UNION of
- *   (the box's currently-reported communities) ∪ (current desired config) ∪
- *   (registry communities)
- * so a push never wipes the install-time strings the box already has. We also
- * skip the write entirely when nothing changed, to avoid pointless config-version
- * bumps (which make the sensor restart to re-apply).
+ * SAFE: communities are the UNION of (box-reported ∪ current desired ∪ registry)
+ * so a push never wipes the box's install-time strings. Target IPs are
+ * dashboard-owned, so they're replaced with the current registry set. We skip
+ * the write when nothing changed (no needless config-version bump / restart).
  */
 import "server-only";
 import { and, eq } from "drizzle-orm";
@@ -43,6 +42,7 @@ export function mergeCommunityLists(...lists: string[][]): string {
 
 export interface SyncResult {
   communities: number;
+  targets: number;
   sensorsTotal: number;
   sensorsUpdated: number;
 }
@@ -50,32 +50,44 @@ export interface SyncResult {
 export async function syncRegistryCommunitiesToSensors(
   schoolId: number,
 ): Promise<SyncResult> {
-  // Distinct SNMP communities entered for this school's registry devices.
+  // SNMP-marked registry devices for this school: their communities + IPs.
   const rows = await db
-    .select({ enc: registryDevices.snmpCommunityEnc })
+    .select({ enc: registryDevices.snmpCommunityEnc, ip: registryDevices.ip })
     .from(registryDevices)
     .where(
       and(eq(registryDevices.schoolId, schoolId), eq(registryDevices.monitorType, "snmp")),
     );
+
   const registryComms: string[] = [];
-  const seen = new Set<string>();
+  const commSeen = new Set<string>();
+  const registryIps: string[] = [];
+  const ipSeen = new Set<string>();
   for (const r of rows) {
-    if (!r.enc) continue;
-    try {
-      const c = decryptSecret(r.enc).trim();
-      const k = c.toLowerCase();
-      if (c && !seen.has(k)) {
-        seen.add(k);
-        registryComms.push(c);
+    if (r.enc) {
+      try {
+        const c = decryptSecret(r.enc).trim();
+        const k = c.toLowerCase();
+        if (c && !commSeen.has(k)) {
+          commSeen.add(k);
+          registryComms.push(c);
+        }
+      } catch {
+        // skip undecryptable
       }
-    } catch {
-      // skip undecryptable
+    }
+    if (r.ip) {
+      const ip = r.ip.trim();
+      if (ip && !ipSeen.has(ip)) {
+        ipSeen.add(ip);
+        registryIps.push(ip);
+      }
     }
   }
-  if (registryComms.length === 0) {
-    return { communities: 0, sensorsTotal: 0, sensorsUpdated: 0 };
+  if (registryComms.length === 0 && registryIps.length === 0) {
+    return { communities: 0, targets: 0, sensorsTotal: 0, sensorsUpdated: 0 };
   }
 
+  const targetsStr = registryIps.join(",");
   const schoolSensors = await db.select().from(sensors).where(eq(sensors.schoolId, schoolId));
   let updated = 0;
   for (const sensor of schoolSensors) {
@@ -84,16 +96,22 @@ export async function syncRegistryCommunitiesToSensors(
       .from(desiredConfig)
       .where(eq(desiredConfig.sensorId, sensor.id));
     const curConfig = (existing?.config as Record<string, unknown>) ?? {};
-    const curStr = String(curConfig.snmp_communities ?? "");
+    const curComm = String(curConfig.snmp_communities ?? "");
+    const curTargets = String(curConfig.snmp_targets ?? "");
     const merged = mergeCommunityLists(
-      toList(sensor.reportedSnmpCommunities), // what the box actually runs now
-      toList(curStr), // what we've already pushed
-      registryComms, // what the registry wants
+      toList(sensor.reportedSnmpCommunities),
+      toList(curComm),
+      registryComms,
     );
     const enabledOk = curConfig.snmp_enabled === true;
-    if (existing && merged === curStr && enabledOk) continue; // no change
+    if (existing && merged === curComm && targetsStr === curTargets && enabledOk) continue;
 
-    const nextConfig = { ...curConfig, snmp_enabled: true, snmp_communities: merged };
+    const nextConfig = {
+      ...curConfig,
+      snmp_enabled: true,
+      snmp_communities: merged,
+      snmp_targets: targetsStr,
+    };
     const nextVersion = (existing?.configVersion ?? 0) + 1;
     await db
       .insert(desiredConfig)
@@ -104,5 +122,10 @@ export async function syncRegistryCommunitiesToSensors(
       });
     updated++;
   }
-  return { communities: registryComms.length, sensorsTotal: schoolSensors.length, sensorsUpdated: updated };
+  return {
+    communities: registryComms.length,
+    targets: registryIps.length,
+    sensorsTotal: schoolSensors.length,
+    sensorsUpdated: updated,
+  };
 }

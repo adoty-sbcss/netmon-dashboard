@@ -115,10 +115,10 @@ export async function syncRegistryToSensorAction(
   });
   revalidatePath(`${basePath}/inventory`);
 
-  if (res.communities === 0)
-    return { ok: true, message: "No registry devices have an SNMP community to push." };
+  if (res.communities === 0 && res.targets === 0)
+    return { ok: true, message: "No SNMP-marked registry devices to push (set a device's monitor type to SNMP)." };
   return {
     ok: true,
-    message: `Pushed ${res.communities} community string(s) to ${res.sensorsUpdated} of ${res.sensorsTotal} sensor(s). They'll be tried on the next scan.`,
+    message: `Pushed ${res.communities} community string(s) + ${res.targets} target IP(s) to ${res.sensorsUpdated} of ${res.sensorsTotal} sensor(s). They'll be polled on the next scan.`,
   };
 }
