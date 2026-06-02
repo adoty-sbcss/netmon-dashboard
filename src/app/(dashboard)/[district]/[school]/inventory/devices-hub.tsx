@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pencil, Plus, Radio, Upload, Waypoints } from "lucide-react";
+import { KeyRound, Pencil, Plus, Radio, Upload, Waypoints } from "lucide-react";
 
 import type { InventoryRow } from "@/lib/inventory/queries";
 import type { ReachabilitySummary } from "@/db/queries";
+import {
+  syncRegistryToSensorAction,
+  type InventoryActionState,
+} from "@/lib/inventory/actions";
 import { ReachabilityTable } from "../switches/reachability-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +74,7 @@ export function DevicesHub({
   rows,
   neighbors,
   reachability,
+  schoolId,
   basePath,
   isAdmin,
   initialTab = "devices",
@@ -79,6 +84,7 @@ export function DevicesHub({
   rows: InventoryRow[];
   neighbors: NeighborLink[];
   reachability: ReachabilitySummary;
+  schoolId: number;
   basePath: string;
   isAdmin: boolean;
   initialTab?: Tab;
@@ -87,6 +93,10 @@ export function DevicesHub({
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [syncState, syncAction, syncing] = useActionState<InventoryActionState, FormData>(
+    syncRegistryToSensorAction,
+    {},
+  );
   const [category, setCategory] = useState<Category>(initialCategory);
   const [source, setSource] = useState<SourceFilter>(initialSource);
   const [snmp, setSnmp] = useState<SnmpFilter>("all");
@@ -131,7 +141,14 @@ export function DevicesHub({
           ))}
         </div>
         {isAdmin && tab === "devices" && (
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex flex-wrap gap-2">
+            <form action={syncAction}>
+              <input type="hidden" name="schoolId" value={schoolId} />
+              <input type="hidden" name="basePath" value={basePath} />
+              <Button type="submit" variant="outline" size="sm" disabled={syncing} title="Push registry SNMP community strings to this school's sensors">
+                <KeyRound className="size-4" /> {syncing ? "Syncing…" : "Sync SNMP to sensor"}
+              </Button>
+            </form>
             <Button asChild variant="outline" size="sm">
               <Link href={`${basePath}/registry/import`}><Upload className="size-4" /> Import CSV</Link>
             </Button>
@@ -141,6 +158,12 @@ export function DevicesHub({
           </div>
         )}
       </div>
+
+      {(syncState.message || syncState.error) && (
+        <p className={syncState.error ? "text-sm text-destructive" : "text-sm text-emerald-600 dark:text-emerald-400"}>
+          {syncState.error || syncState.message}
+        </p>
+      )}
 
       {tab === "devices" && (
         <>

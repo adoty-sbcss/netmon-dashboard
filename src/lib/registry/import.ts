@@ -17,6 +17,7 @@ import { auditLog } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { encryptSecret } from "@/lib/crypto/secret-box";
 import { parseCsv, type DeviceRow } from "@/ingest/bundle";
+import { syncRegistryCommunitiesToSensors } from "./sensor-sync";
 import {
   isMonitorType,
   isRegistryDeviceType,
@@ -293,6 +294,14 @@ export async function commitRegistryCsvAction(input: {
     action: "registry_csv_import",
     detail: { ...res, strategy: input.strategy, districtId: input.districtId },
   });
-  revalidatePath(`${input.basePath}/registry`);
+  // Push any SNMP communities the import added down to the school's sensors.
+  if (input.schoolId != null) {
+    try {
+      await syncRegistryCommunitiesToSensors(input.schoolId);
+    } catch {
+      // non-fatal
+    }
+  }
+  revalidatePath(`${input.basePath}/inventory`);
   return res;
 }

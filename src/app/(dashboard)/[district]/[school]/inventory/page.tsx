@@ -85,6 +85,7 @@ export default async function DevicesPage({
         rows={inv.rows}
         neighbors={neighbors}
         reachability={reachability}
+        schoolId={school.id}
         basePath={basePath}
         isAdmin={isAdmin}
         initialTab={initialTab}

@@ -14,12 +14,23 @@ import { registryDevices } from "@/db/schema";
 import { auditLog } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { encryptSecret } from "@/lib/crypto/secret-box";
+import { syncRegistryCommunitiesToSensors } from "./sensor-sync";
 import {
   isMonitorType,
   isRegistryDeviceType,
   isRegistryStatus,
   normalizeMac,
 } from "./types";
+
+/** Best-effort: push the school's registry SNMP communities to its sensors. */
+async function pushCommunities(schoolId: number | null | undefined) {
+  if (schoolId == null) return;
+  try {
+    await syncRegistryCommunitiesToSensors(schoolId);
+  } catch {
+    // non-fatal — the manual "Sync to sensor" button can retry
+  }
+}
 
 export interface RegistryActionState {
   error?: string;
@@ -102,7 +113,11 @@ export async function saveRegistryDeviceAction(
 
   if (id != null && Number.isInteger(id)) {
     const [existing] = await db
-      .select({ id: registryDevices.id, districtId: registryDevices.districtId })
+      .select({
+        id: registryDevices.id,
+        districtId: registryDevices.districtId,
+        schoolId: registryDevices.schoolId,
+      })
       .from(registryDevices)
       .where(eq(registryDevices.id, id));
     if (!existing) return { error: "That device no longer exists." };
@@ -111,8 +126,9 @@ export async function saveRegistryDeviceAction(
       .set({ ...base, ...encField })
       .where(eq(registryDevices.id, id));
     await audit(admin.email, "registry_device_updated", { id, name });
+    if (monitorType === "snmp") await pushCommunities(existing.schoolId);
     revalidatePath(basePath);
-    revalidatePath(`${basePath}/registry`);
+    revalidatePath(`${basePath}/inventory`);
     return { ok: true, id, message: "Device saved." };
   }
 
@@ -135,8 +151,9 @@ export async function saveRegistryDeviceAction(
     .returning({ id: registryDevices.id });
 
   await audit(admin.email, "registry_device_created", { id: created.id, name });
-  revalidatePath(`${basePath}/registry`);
-  redirect(`${basePath}/registry`);
+  if (monitorType === "snmp") await pushCommunities(schoolId);
+  revalidatePath(`${basePath}/inventory`);
+  redirect(`${basePath}/inventory?source=manual`);
 }
 
 /** Soft-retire (reason + timestamp). Retired devices remain queryable. */
