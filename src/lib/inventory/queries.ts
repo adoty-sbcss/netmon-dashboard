@@ -106,7 +106,15 @@ export async function getInventoryForSchool(
     if (rr) {
       const reachable = Boolean(rr.pingAlive) || rr.tracerouteHops != null;
       if (rr.snmpResponded) return { snmp: "responding", reachable };
-      return { snmp: reachable ? "gap" : "unknown", reachable };
+      // Only treat missing SNMP as a GAP for gear we actually expect to speak it
+      // (switches / routers / APs / firewalls). Endpoints — computers, printers,
+      // cameras, phones — legitimately don't answer SNMP, so they're 'n/a' even
+      // if they landed in the probe set (e.g. an HP PC matching a vendor hint).
+      // The gateway and LLDP-management probes are infra by definition, so they
+      // count as a gap even if the device-type was misclassified.
+      const infraByProbe = rr.source === "gateway" || rr.source === "lldp";
+      if (opts.expected || infraByProbe) return { snmp: reachable ? "gap" : "unknown", reachable };
+      return { snmp: "na", reachable };
     }
     // No reachability probe for this IP — it wasn't an infra candidate.
     return { snmp: opts.expected ? "unknown" : "na", reachable: null };
