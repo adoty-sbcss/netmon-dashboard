@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Boxes,
   Cpu,
   Globe,
   HardDrive,
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 const TABS: { label: string; seg: string; icon: LucideIcon }[] = [
   { label: "Overview", seg: "", icon: LayoutDashboard },
   { label: "Network map", seg: "map", icon: MapIcon },
+  { label: "Registry", seg: "registry", icon: Boxes },
   { label: "Switches", seg: "switches", icon: Network },
   { label: "Hosts", seg: "hosts", icon: Cpu },
   { label: "Neighbors", seg: "neighbors", icon: Waypoints },

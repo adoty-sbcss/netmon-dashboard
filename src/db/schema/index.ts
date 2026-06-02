@@ -7,3 +7,4 @@ export * from "./ai";
 export * from "./branding";
 export * from "./policy";
 export * from "./iperf";
+export * from "./registry";
