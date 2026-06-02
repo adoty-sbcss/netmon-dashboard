@@ -38,9 +38,32 @@ roughly by value. Not committed scope — a parking lot to pull from.
   but inert until we accept Windows credentials.
 - **AP metrics**: per-AP client count + channel utilization + PoE (vendor SNMP).
 
+## Network map — shipped + next steps
+Shipped: read-time deterministic graph, FDB device-to-access-port attachment
+(uplink-disambiguated), Cytoscape hierarchical renderer (icons/shapes, hover,
+click-through, infra-only toggle, fit, PNG + CSV export), and an AI topology
+review (kind='topology' analyses) on the map tab.
+
+Next steps (come back to these):
+- **Collapsible "N devices" leaf groups** (the green-chevron folders) for sites
+  with large leaf counts — expand/collapse per switch.
+- **Status coloring on map nodes** (online / offline / SNMP-gap) from the
+  inventory overlay; border or badge per node.
+- **Wireless (dotted) edges** — needs AP client-association collection
+  (vendor-specific: Meraki API, Cisco WLC, Aruba, UniFi).
+- **Re-add the logical (subnet/VLAN) map view** + a physical/logical toggle
+  (the old SVG NetworkMap was set aside when physical went to Cytoscape).
+- **Edge/port labels** — show the switch port (ifName) on hover/click of an edge.
+- **Floating/known-but-unplaced switches** — add discovered switches that aren't
+  yet on the LLDP backbone so their FDB devices still show (currently skipped).
+- **Per-interface detail + link utilization** — collect ifXTable HC counter
+  deltas (+ ifOperStatus/ifSpeed/ifAlias) → link up/down, speed, % util, edge
+  thickness, an "Interfaces" panel.
+- **PoE per-port** (POWER-ETHERNET-MIB) and **WAN throughput** (router WAN HC
+  octet deltas) for the "Down/Up Mb/s" uplink label.
+- **SVG / Visio export** (currently PNG + CSV) via cytoscape-svg + a VDX/CSV.
+- **STP port roles** (dot1dStpPortTable) → show active vs blocked redundant links.
+
 ## In focus now
-- **Network mapping overhaul** — Domotz-style: deterministic L2/L3 graph from
-  LLDP + per-switch bridge FDB + ARP (+ wireless association), device icons by
-  type, collapsible leaf groups, wired vs wireless edges, interface/PoE detail,
-  filters, PNG/SVG/Excel/Visio export, and AI as the analyst on top. See the
-  data-collection plan in chat / docs/DESIGN.md.
+- **Consolidate device views** — fold Inventory + Switches + Hosts + Neighbors +
+  Registry into one "Devices" hub.
