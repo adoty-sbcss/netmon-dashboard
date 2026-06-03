@@ -3,21 +3,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, Maximize2, Network, Table2 } from "lucide-react";
+import { Download, Layers, Maximize2, Network, Table2 } from "lucide-react";
 
 import type { MapGraph } from "@/db/queries";
 import { Button } from "@/components/ui/button";
+import { iconUri } from "./device-icons";
 
-/** Per-type node appearance: shape + fill. Border encodes nothing yet (status
- *  lives in the Inventory tab); selection highlights in indigo. */
+/** Per-type node appearance. Infra render as rounded tiles, endpoints as circles. */
 const TYPE_STYLE: Record<string, { color: string; shape: string }> = {
   internet: { color: "#0f172a", shape: "round-rectangle" },
-  router: { color: "#f59e0b", shape: "diamond" },
-  gateway: { color: "#f59e0b", shape: "diamond" },
+  router: { color: "#f59e0b", shape: "round-rectangle" },
+  gateway: { color: "#f59e0b", shape: "round-rectangle" },
   scanner: { color: "#3b82f6", shape: "round-rectangle" },
   switch: { color: "#8b5cf6", shape: "round-rectangle" },
   ap: { color: "#06b6d4", shape: "round-rectangle" },
-  firewall: { color: "#ef4444", shape: "hexagon" },
+  firewall: { color: "#ef4444", shape: "round-rectangle" },
   server: { color: "#6366f1", shape: "round-rectangle" },
   printer: { color: "#64748b", shape: "ellipse" },
   camera: { color: "#0ea5e9", shape: "ellipse" },
@@ -27,29 +27,70 @@ const TYPE_STYLE: Record<string, { color: string; shape: string }> = {
   storage: { color: "#0d9488", shape: "ellipse" },
   iot: { color: "#eab308", shape: "ellipse" },
   subnet: { color: "#14b8a6", shape: "round-rectangle" },
+  group: { color: "#cbd5e1", shape: "round-rectangle" },
   host: { color: "#94a3b8", shape: "ellipse" },
   default: { color: "#94a3b8", shape: "ellipse" },
 };
 const styleFor = (t: string) => TYPE_STYLE[t] ?? TYPE_STYLE.default;
 const INFRA = new Set(["internet", "router", "gateway", "scanner", "switch", "ap", "firewall"]);
+const trunc = (s: string) => (s && s.length > 22 ? s.slice(0, 21) + "…" : s);
 
-function buildElements(graph: MapGraph, infraOnly: boolean) {
+function buildElements(
+  graph: MapGraph,
+  infraOnly: boolean,
+  groupLeaves: boolean,
+  status: Record<string, string>,
+) {
   const keep = (t: string) => (infraOnly ? INFRA.has(t) : true);
   const nodes = graph.nodes.filter((n) => keep(n.type));
   const nodeIds = new Set(nodes.map((n) => n.id));
+  const edges = graph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
-  // Synthesize an Internet root above the gateway/router for the Domotz look.
-  const gw = nodes.find((n) => n.type === "gateway" || n.type === "router");
+  // Group: fold degree-1 endpoint leaves under their single switch parent into
+  // one "N devices" node (only when it declutters — 3+ leaves on a parent).
+  const grouped = new Set<string>();
+  const groupNodes: { parent: string; count: number }[] = [];
+  if (groupLeaves) {
+    const adj = new Map<string, string[]>();
+    for (const n of nodes) adj.set(n.id, []);
+    for (const e of edges) {
+      adj.get(e.source)?.push(e.target);
+      adj.get(e.target)?.push(e.source);
+    }
+    const isLeaf = (t: string) => !INFRA.has(t) && t !== "subnet" && t !== "group";
+    const byParent = new Map<string, string[]>();
+    for (const n of nodes) {
+      const nbrs = adj.get(n.id) ?? [];
+      if (isLeaf(n.type) && nbrs.length === 1) {
+        const p = nbrs[0];
+        const arr = byParent.get(p) ?? [];
+        arr.push(n.id);
+        byParent.set(p, arr);
+      }
+    }
+    for (const [p, ids] of byParent) {
+      if (ids.length >= 3) {
+        ids.forEach((id) => grouped.add(id));
+        groupNodes.push({ parent: p, count: ids.length });
+      }
+    }
+  }
+
   const els: any[] = [];
+  const gw = nodes.find((n) => n.type === "gateway" || n.type === "router");
   if (gw) {
-    els.push({ data: { id: "__internet", label: "Internet", type: "internet", ...styleFor("internet") } });
+    els.push({
+      data: { id: "__internet", label: "Internet", full: "Internet", type: "internet", ip: "", model: "", entityId: null, entityKind: null, color: TYPE_STYLE.internet.color, shape: "round-rectangle", icon: iconUri("internet"), status: "" },
+    });
   }
   for (const n of nodes) {
+    if (grouped.has(n.id)) continue;
     const s = styleFor(n.type);
+    const key = n.entityId && n.entityKind ? `${n.entityKind}:${n.entityId}` : "";
     els.push({
       data: {
         id: n.id,
-        label: n.label?.length > 22 ? n.label.slice(0, 21) + "…" : n.label,
+        label: trunc(n.label),
         full: n.label,
         type: n.type,
         ip: n.ip ?? "",
@@ -58,14 +99,20 @@ function buildElements(graph: MapGraph, infraOnly: boolean) {
         entityKind: n.entityKind ?? null,
         color: s.color,
         shape: s.shape,
+        icon: iconUri(n.type),
+        status: status[key] ?? "",
       },
     });
   }
-  if (gw) els.push({ data: { id: `e_internet`, source: "__internet", target: gw.id, kind: "wan" } });
-  for (const e of graph.edges) {
-    if (nodeIds.has(e.source) && nodeIds.has(e.target)) {
-      els.push({ data: { id: `e_${e.source}_${e.target}_${e.kind ?? ""}`, source: e.source, target: e.target, kind: e.kind ?? "" } });
-    }
+  for (const g of groupNodes) {
+    const gid = `${g.parent}__grp`;
+    els.push({ data: { id: gid, label: `${g.count} devices`, full: `${g.count} devices`, type: "group", ip: "", model: "", entityId: null, entityKind: null, color: TYPE_STYLE.group.color, shape: "round-rectangle", icon: iconUri("group"), status: "" } });
+    els.push({ data: { id: `e_${gid}`, source: gid, target: g.parent, kind: "fdb" } });
+  }
+  if (gw) els.push({ data: { id: "e_internet", source: "__internet", target: gw.id, kind: "wan" } });
+  for (const e of edges) {
+    if (grouped.has(e.source) || grouped.has(e.target)) continue;
+    els.push({ data: { id: `e_${e.source}_${e.target}_${e.kind ?? ""}`, source: e.source, target: e.target, kind: e.kind ?? "" } });
   }
   return els;
 }
@@ -74,43 +121,76 @@ const STYLESHEET: any[] = [
   {
     selector: "node",
     style: {
-      "background-color": "data(color)",
       shape: "data(shape)",
+      "background-color": "data(color)",
+      "background-image": "data(icon)",
+      "background-fit": "contain",
       label: "data(label)",
-      "font-size": 9,
+      "font-size": 9.5,
       "text-valign": "bottom",
       "text-margin-y": 4,
-      color: "#475569",
-      width: 26,
-      height: 26,
+      "text-max-width": 120,
+      "text-wrap": "ellipsis",
+      color: "#334155",
+      width: 40,
+      height: 32,
       "border-width": 2,
       "border-color": "#ffffff",
       "text-background-color": "#ffffff",
       "text-background-opacity": 0.7,
-      "text-background-padding": 1,
+      "text-background-padding": 2,
+      "text-background-shape": "round-rectangle",
     },
   },
-  { selector: 'node[type="switch"]', style: { width: 34, height: 26 } },
-  { selector: 'node[type="internet"]', style: { width: 36, height: 28, color: "#0f172a" } },
+  { selector: 'node[shape="ellipse"]', style: { width: 30, height: 30 } },
+  { selector: 'node[type="switch"]', style: { width: 50, height: 34 } },
+  { selector: 'node[type="internet"]', style: { width: 46, height: 32 } },
+  { selector: 'node[type="group"]', style: { width: 42, height: 30, color: "#475569" } },
+  // Status ring (from the inventory overlay).
+  { selector: 'node[status="snmp"]', style: { "border-color": "#10b981", "border-width": 3 } },
+  { selector: 'node[status="gap"]', style: { "border-color": "#f59e0b", "border-width": 3 } },
+  { selector: 'node[status="online"]', style: { "border-color": "#38bdf8", "border-width": 3 } },
+  { selector: 'node[status="offline"]', style: { "border-color": "#cbd5e1", "border-width": 2, opacity: 0.6 } },
   { selector: "edge", style: { width: 1.4, "line-color": "#cbd5e1", "curve-style": "bezier", "target-arrow-shape": "none" } },
   { selector: 'edge[kind="fdb"]', style: { "line-color": "#93c5fd", width: 1 } },
-  { selector: 'edge[kind="wan"]', style: { "line-color": "#fbbf24", width: 2 } },
+  { selector: 'edge[kind="wan"]', style: { "line-color": "#fbbf24", width: 2.5 } },
   { selector: "node:selected", style: { "border-color": "#6366f1", "border-width": 4 } },
-  { selector: ".dim", style: { opacity: 0.25 } },
+  { selector: ".dim", style: { opacity: 0.2 } },
 ];
 
-export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; basePath: string }) {
+const STATUS_LEGEND: { key: string; label: string; color: string }[] = [
+  { key: "snmp", label: "Answering SNMP", color: "#10b981" },
+  { key: "gap", label: "Reachable, no SNMP", color: "#f59e0b" },
+  { key: "online", label: "Online", color: "#38bdf8" },
+  { key: "offline", label: "Offline", color: "#cbd5e1" },
+];
+
+export function CytoscapePhysicalMap({
+  graph,
+  basePath,
+  status = {},
+}: {
+  graph: MapGraph;
+  basePath: string;
+  status?: Record<string, string>;
+}) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<any>(null);
   const [infraOnly, setInfraOnly] = useState(false);
+  const [groupLeaves, setGroupLeaves] = useState(true);
+  const [cw, setCw] = useState(800);
   const [hover, setHover] = useState<{ x: number; y: number; label: string; ip: string; type: string; model: string } | null>(null);
 
-  const elements = useMemo(() => buildElements(graph, infraOnly), [graph, infraOnly]);
+  const elements = useMemo(
+    () => buildElements(graph, infraOnly, groupLeaves, status),
+    [graph, infraOnly, groupLeaves, status],
+  );
 
   useEffect(() => {
     let cy: any;
     let cancelled = false;
+    let ro: ResizeObserver | null = null;
     (async () => {
       const cytoscape = (await import("cytoscape")).default;
       const dagre = (await import("cytoscape-dagre")).default;
@@ -120,14 +200,18 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
         /* already registered */
       }
       if (cancelled || !containerRef.current) return;
+      setCw(containerRef.current.clientWidth || 800);
+      ro = new ResizeObserver(() => setCw(containerRef.current?.clientWidth || 800));
+      ro.observe(containerRef.current);
+
       cy = cytoscape({
         container: containerRef.current,
         elements,
         style: STYLESHEET,
-        layout: { name: "dagre", rankDir: "TB", nodeSep: 18, rankSep: 60, fit: true, padding: 28 } as any,
+        layout: { name: "dagre", rankDir: "TB", nodeSep: 22, rankSep: 64, fit: true, padding: 30 } as any,
         wheelSensitivity: 0.2,
-        minZoom: 0.15,
-        maxZoom: 3,
+        minZoom: 0.12,
+        maxZoom: 3.5,
       });
       cyRef.current = cy;
 
@@ -149,12 +233,13 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
     })();
     return () => {
       cancelled = true;
+      ro?.disconnect();
       cy?.destroy();
     };
   }, [elements, basePath, router]);
 
   function fit() {
-    cyRef.current?.fit(undefined, 28);
+    cyRef.current?.fit(undefined, 30);
   }
   function exportPng() {
     const cy = cyRef.current;
@@ -167,8 +252,8 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
   }
   function exportCsv() {
     const lines = ["id,label,type,ip,model"];
+    const esc = (v: string) => `"${(v ?? "").replace(/"/g, '""')}"`;
     for (const n of graph.nodes) {
-      const esc = (v: string) => `"${(v ?? "").replace(/"/g, '""')}"`;
       lines.push([n.id, n.label, n.type, n.ip ?? "", n.model ?? ""].map((x) => esc(String(x))).join(","));
     }
     const blob = new Blob([lines.join("\r\n")], { type: "text/csv" });
@@ -178,13 +263,16 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
     a.click();
   }
 
-  const types = [...new Set(graph.nodes.map((n) => n.type))];
+  const hasStatus = Object.keys(status).length > 0;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" variant={groupLeaves ? "default" : "outline"} onClick={() => setGroupLeaves((v) => !v)}>
+          <Layers className="size-4" /> {groupLeaves ? "Grouped leaves" : "Group leaves"}
+        </Button>
         <Button type="button" size="sm" variant={infraOnly ? "default" : "outline"} onClick={() => setInfraOnly((v) => !v)}>
-          <Network className="size-4" /> {infraOnly ? "Showing infrastructure" : "Infrastructure only"}
+          <Network className="size-4" /> Infrastructure only
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={fit}>
           <Maximize2 className="size-4" /> Fit
@@ -195,14 +283,16 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
         <Button type="button" size="sm" variant="outline" onClick={exportCsv}>
           <Table2 className="size-4" /> CSV
         </Button>
-        <div className="ml-auto flex flex-wrap gap-2">
-          {types.map((t) => (
-            <span key={t} className="flex items-center gap-1.5 text-xs capitalize text-muted-foreground">
-              <span className="size-2.5 rounded-full" style={{ background: styleFor(t).color }} />
-              {t}
-            </span>
-          ))}
-        </div>
+        {hasStatus && (
+          <div className="ml-auto flex flex-wrap gap-2.5">
+            {STATUS_LEGEND.map((s) => (
+              <span key={s.key} className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="size-2.5 rounded-full" style={{ boxShadow: `0 0 0 2px ${s.color}` }} />
+                {s.label}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="relative overflow-hidden rounded-xl border bg-[var(--muted)]/30">
@@ -217,12 +307,13 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
             {hover && (
               <div
                 className="pointer-events-none absolute z-10 w-56 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md"
-                style={{ left: Math.min(hover.x + 14, 600), top: hover.y + 14 }}
+                style={{ left: Math.min(hover.x + 14, Math.max(8, cw - 232)), top: hover.y + 14 }}
               >
-                <p className="text-xs font-medium capitalize text-muted-foreground">{hover.type}</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{hover.type}</p>
                 <p className="truncate text-sm font-semibold">{hover.label}</p>
                 {hover.ip && <p className="font-mono text-xs text-muted-foreground">{hover.ip}</p>}
                 {hover.model && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hover.model}</p>}
+                <p className="mt-1.5 text-[11px] text-muted-foreground">Click to open device detail</p>
               </div>
             )}
           </>
@@ -230,8 +321,9 @@ export function CytoscapePhysicalMap({ graph, basePath }: { graph: MapGraph; bas
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {graph.nodes.length} nodes · {graph.edges.length} links · scroll to zoom, drag to pan,
-        click a device to open its detail. Leaf devices attach to their access switch port via the bridge table.
+        {graph.nodes.length} nodes · {graph.edges.length} links · scroll to zoom, drag to pan, click a
+        device to open it. Leaf devices attach to their access switch port via the bridge table; toggle
+        grouping to expand them.
       </p>
     </div>
   );
