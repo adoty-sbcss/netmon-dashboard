@@ -84,6 +84,14 @@ const SNMP_BULK_ROW_CAP = (() => {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 })();
 
+/**
+ * Max rows per INSERT. A single .values() with tens of thousands of rows (a
+ * multi-switch fabric's SNMP dump now that the cap is lifted) overflows both
+ * drizzle's query builder ("Maximum call stack size exceeded") and Postgres'
+ * 65535 bind-parameter ceiling. Batching keeps every statement well under both.
+ */
+const INSERT_CHUNK = 500;
+
 /** BRIDGE-MIB / IF-MIB OID prefixes used to derive a host's switch port. */
 const FDB_PORT_PREFIX = "1.3.6.1.2.1.17.4.3.1.2."; // dot1dTpFdbPort: suffix=MAC octets, val=bridgePort
 const BASEPORT_IFINDEX_PREFIX = "1.3.6.1.2.1.17.1.4.1.2."; // dot1dBasePortIfIndex: suffix=bridgePort, val=ifIndex
@@ -667,7 +675,9 @@ export async function ingestBundle(
         polledAt: toDate(p.polled_at),
       }));
       if (snmpRows.length) {
-        await tx.insert(snmpPolls).values(snmpRows);
+        for (let i = 0; i < snmpRows.length; i += INSERT_CHUNK) {
+          await tx.insert(snmpPolls).values(snmpRows.slice(i, i + INSERT_CHUNK));
+        }
         counts.snmp_polls += snmpRows.length;
       }
 
@@ -681,7 +691,9 @@ export async function ingestBundle(
         ifName: d.ifName,
       }));
       if (portRows.length) {
-        await tx.insert(hostSwitchPorts).values(portRows);
+        for (let i = 0; i < portRows.length; i += INSERT_CHUNK) {
+          await tx.insert(hostSwitchPorts).values(portRows.slice(i, i + INSERT_CHUNK));
+        }
         counts.host_switch_ports += portRows.length;
       }
 
