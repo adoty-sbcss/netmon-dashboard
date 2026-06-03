@@ -1,5 +1,41 @@
 # NetMon — feature wishlist / deferred work
 
+## Integrations & platform (new ideas)
+- **Uptime.com status feed** — pull the public Uptime.com status-page/API data
+  into the dashboard so public-site uptime + incidents show alongside the network
+  view. Dashboard-side (has internet); needs an Uptime.com API token in admin.
+- **Usage analytics** — track how the dashboard is accessed/used (per-user page
+  views + activity) and surface it in an admin "Usage" view. Extend the existing
+  `audit_log` with page-view events via middleware; privacy-conscious (internal
+  tool — keep it aggregate / county-staff-visible).
+- **In-app help / chatbot** — an assistant (reusing the AI connectors) that
+  answers (a) how-to questions about the app and (b) questions about the network
+  data for the current scope. A chat panel given the district/school context +
+  a help knowledge base (RAG over docs/DESIGN.md + this wishlist).
+- **Scheduled AI across ALL scopes** — extend the daily AI cron to run every
+  district + school (+ topology per school) on one schedule, auto-feeding the new
+  Issues tracker. Mind token cost — gate by the monthly spend cap + cadence.
+- **Azure cost in-app** — pull the dashboard resource-group cost via the Azure
+  Cost Management Query API (grant the managed identity `Cost Management Reader`
+  on the RG `W2-SBCSS-District-NetMon-Dashboard`), and combine with the AI token
+  cost (`ai_analyses.cost_usd`) for a "total cost of the app" admin view.
+
+## Data we currently filter out at ingest (could bring in)
+The dashboard CURATES SNMP at ingest — raw is thousands of rows/scan and only a
+priority subset is mirrored (the bulk `ifTable` / `ipNetToMediaTable` are capped).
+The FULL raw already lives in the bundle ZIP, so most of these are ingest-only
+changes (no extra collection), high value:
+- **Entity-MIB serial + model** (`entPhysicalSerialNum` / `entPhysicalModelName`)
+  — already collected; surfacing it gives real serial numbers + clean model
+  strings → much better inventory + EOL matching. Best effort/value ratio.
+- **Per-interface status / speed / errors / utilization** (`ifXTable` HC counters,
+  `ifOperStatus`, `ifSpeed`, `ifAlias`) — link health, edge thickness/labels on
+  the map, "what's saturated," an Interfaces panel.
+- **PoE per-port** (`POWER-ETHERNET-MIB`) — power draw; auto-spot APs/cameras +
+  power budget. (Needs a small collector add.)
+- **STP port roles** (`dot1dStpPortTable`) — show active vs blocked redundant links.
+- **sysObjectID → vendor/model decode** (static table) — cleaner identity + icons.
+
 ## Bugs & fixes (reported)
 - **District page school links** — the "Schools" stat card and the per-school
   cards on the district page don't link anywhere; they should go to
