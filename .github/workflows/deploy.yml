@@ -43,13 +43,45 @@ jobs:
       - name: Ensure containerapp CLI extension
         run: az extension add --name containerapp --upgrade --only-show-errors
 
-      - name: Build image in ACR (server-side build)
+      - name: Build web image in ACR (server-side build)
         run: |
           az acr build \
             --registry "$ACR_NAME" \
             --image "$IMAGE:${{ github.sha }}" \
             --image "$IMAGE:latest" \
             .
+
+      # The ingest + migrate Jobs run SEPARATE images (Dockerfile --target ingest
+      # / migrator), not the web image. Without rebuilding them here they run
+      # stale code: a change to the ingester or migrations would silently never
+      # reach the scheduled Jobs. Build both on every deploy so all three images
+      # stay in lockstep with main.
+      - name: Build ingest image in ACR
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE-ingest:${{ github.sha }}" \
+            --image "$IMAGE-ingest:latest" \
+            --target ingest \
+            .
+
+      - name: Build migrator image in ACR
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE-migrator:${{ github.sha }}" \
+            --image "$IMAGE-migrator:latest" \
+            --target migrator \
+            .
+
+      - name: Point ingest Job at the new image
+        # Jobs don't have revisions; update the template so the next scheduled
+        # (or manual) execution pulls the freshly built ingest image.
+        run: |
+          az containerapp job update \
+            --name w2-sbcss-netmon-ingest \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE-ingest:${{ github.sha }}"
 
       - name: Roll Container App to the new image
         # --revision-suffix forces a fresh revision on every run. On scheduled
