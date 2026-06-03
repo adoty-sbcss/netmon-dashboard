@@ -28,7 +28,15 @@ export interface SensorActionState {
   token?: string;
 }
 
-const SAFE_COMMANDS = new Set(["run-scan", "upload-now", "config-backup", "collect-logs"]);
+const SAFE_COMMANDS = new Set([
+  "run-scan",
+  "upload-now",
+  "config-backup",
+  "collect-logs",
+  // Remote code update: the box pulls + rebuilds on its next check-in, with the
+  // collector's own healthcheck + auto-rollback. Honored by checkin.py (exit 11).
+  "update",
+]);
 
 async function requireAdmin() {
   const user = await getSessionUser();
@@ -164,4 +172,99 @@ export async function queueCommandAction(
   await audit(admin.email, "sensor_command_queued", { sensorId, command });
   revalidatePath(basePathFor(formData));
   return { ok: true, message: `Queued “${command}” — runs on the next check-in.` };
+}
+
+/**
+ * Queue a code update for EVERY sensor (fleet-wide). Each box updates on its
+ * next check-in; the ~10-min check-in timing + the collector's per-box jitter
+ * stagger the rollout naturally so the fleet doesn't all rebuild at once. The
+ * collector's healthcheck + auto-rollback protect each box.
+ */
+export async function bulkQueueUpdateAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const all = await db.select({ id: sensors.id }).from(sensors);
+  if (all.length === 0) return { error: "No sensors to update." };
+
+  // Rely on column defaults (status='pending', requires_approval=false).
+  await db
+    .insert(commandQueue)
+    .values(all.map((s) => ({ sensorId: s.id, command: "update", createdBy: admin.id })));
+
+  await audit(admin.email, "sensor_bulk_update_queued", { count: all.length });
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Queued update for ${all.length} sensor(s) — each updates on its next check-in (rollout staggers by check-in timing).`,
+  };
+}
+
+/**
+ * Fleet-wide SFTP credential rotation: push the same SFTP destination to EVERY
+ * sensor's desired config (merging into each box's existing config so SNMP etc.
+ * is preserved) and bump each version. Each box flips on its next check-in; the
+ * rollout view watches `reportedSftpUser`/`reportedConfigVersion` so you can
+ * confirm every box is on the new creds before retiring the old SFTP user.
+ */
+export async function bulkSetSftpAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const sftpHost = String(formData.get("sftpHost") ?? "").trim();
+  const sftpUser = String(formData.get("sftpUser") ?? "").trim();
+  if (!sftpHost || !sftpUser) return { error: "SFTP host and user are required." };
+  const sp = Number(String(formData.get("sftpPort") ?? "22"));
+  const sftp: Record<string, unknown> = {
+    sftp_enabled: formData.get("sftpEnabled") === "on",
+    sftp_host: sftpHost,
+    sftp_port: Number.isInteger(sp) && sp > 0 ? sp : 22,
+    sftp_user: sftpUser,
+    sftp_remote_path: String(formData.get("sftpRemotePath") ?? "/").trim() || "/",
+  };
+  const pw = String(formData.get("sftpPassword") ?? "");
+  if (pw) sftp.sftp_password = pw; // only push when a new value is typed
+
+  // One row per sensor with its current desired config (null for never-configured).
+  const rows = await db
+    .select({
+      sensorId: sensors.id,
+      v: desiredConfig.configVersion,
+      config: desiredConfig.config,
+    })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id));
+  if (rows.length === 0) return { error: "No sensors to push to." };
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const merged = { ...((row.config as Record<string, unknown>) ?? {}), ...sftp };
+      const nextV = (row.v ?? 0) + 1;
+      await tx
+        .insert(desiredConfig)
+        .values({ sensorId: row.sensorId, configVersion: nextV, config: merged, updatedBy: admin.id })
+        .onConflictDoUpdate({
+          target: desiredConfig.sensorId,
+          set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+        });
+    }
+  });
+
+  await audit(admin.email, "sensor_bulk_sftp_set", {
+    count: rows.length,
+    host: sftpHost,
+    user: sftpUser,
+    passwordChanged: Boolean(pw),
+  });
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Pushed SFTP creds to ${rows.length} sensor(s) — watch the rollout below as each box reports the new user, then retire the old SFTP account.`,
+  };
 }

@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope } from "@/lib/auth/scope";
 import { listFleetSensors } from "@/db/fleet-queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
+import { FleetUpdateAll } from "./fleet-update-all";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,6 +46,7 @@ export default async function FleetSensorsPage() {
         description={`${num(sensors.length)} sensor${sensors.length === 1 ? "" : "s"} across every district you oversee${
           staleCount > 0 ? ` · ${num(staleCount)} need attention` : ""
         }`}
+        actions={user.role === "superadmin" ? <FleetUpdateAll /> : undefined}
       />
       <Card>
         <CardContent className="px-0 sm:px-6">

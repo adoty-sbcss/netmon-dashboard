@@ -3,6 +3,7 @@
 import { Fragment, useActionState, useState } from "react";
 import {
   AlertCircle,
+  ArrowUpCircle,
   CheckCircle2,
   FileText,
   KeyRound,
@@ -263,6 +264,23 @@ export function SensorManagementPanel({
                 </Button>
               </form>
             ))}
+          </div>
+          {/* Code update — more consequential than the safe commands above, so
+              it's separated with its own explanation. */}
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-input p-3">
+            <form action={cmdAction}>
+              <input type="hidden" name="sensorId" value={sensorId} />
+              <input type="hidden" name="basePath" value={basePath} />
+              <input type="hidden" name="command" value="update" />
+              <Button type="submit" variant="outline" size="sm" disabled={queuing}>
+                <ArrowUpCircle className="size-4" /> Update now
+              </Button>
+            </form>
+            <p className="flex-1 text-xs text-muted-foreground">
+              Pulls the latest release and rebuilds on the next check-in (≤ poll interval).
+              The collector healthchecks and <strong>auto-rolls-back</strong> if the new build
+              is unhealthy; the box reports its new version when it&apos;s back.
+            </p>
           </div>
           <Notice state={cmdState} />
           <p className="text-xs text-muted-foreground">
