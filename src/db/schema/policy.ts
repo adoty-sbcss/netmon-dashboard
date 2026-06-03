@@ -9,11 +9,12 @@ import {
   serial,
   integer,
   text,
+  boolean,
   timestamp,
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
-import { districts, users } from "./app";
+import { districts, schools, users } from "./app";
 
 export const dhcpAuthorizedServers = pgTable(
   "dhcp_authorized_servers",
@@ -39,3 +40,25 @@ export const dhcpAuthorizedServers = pgTable(
     index("idx_dhcp_authz_district").on(t.districtId),
   ],
 );
+
+/**
+ * Per-school operational policy. First field: a master SNMP-crawl switch. When
+ * `snmpEnabled` is false the dashboard pushes `snmp_enabled=false` to every
+ * sensor at the school, so an operator can turn the whole site's SNMP crawl off
+ * (it isn't always wanted). One row per school.
+ */
+export const schoolPolicy = pgTable("school_policy", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id")
+    .notNull()
+    .unique()
+    .references(() => schools.id, { onDelete: "cascade" }),
+  /** Master switch for the SNMP topology crawl across this school's sensors. */
+  snmpEnabled: boolean("snmp_enabled").notNull().default(true),
+  updatedBy: integer("updated_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});

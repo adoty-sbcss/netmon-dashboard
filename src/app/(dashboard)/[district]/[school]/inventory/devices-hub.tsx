@@ -3,14 +3,20 @@
 import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { KeyRound, Pencil, Plus, Radio, Upload, Waypoints } from "lucide-react";
+import { Ban, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Trash2, Upload, Waypoints } from "lucide-react";
 
-import type { InventoryRow } from "@/lib/inventory/queries";
+import type { InventoryRow, ExcludedRow } from "@/lib/inventory/queries";
 import type { ReachabilitySummary } from "@/db/queries";
 import {
   syncRegistryToSensorAction,
   type InventoryActionState,
 } from "@/lib/inventory/actions";
+import {
+  setSchoolSnmpAction,
+  purgeAllDiscoveredAction,
+  purgeDeviceAction,
+  restoreDeviceAction,
+} from "@/lib/inventory/snmp-control";
 import { ReachabilityTable } from "../switches/reachability-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,7 +43,7 @@ export interface NeighborLink {
   protocol: string | null;
 }
 
-type Tab = "devices" | "links" | "reach";
+type Tab = "devices" | "links" | "reach" | "excluded";
 type Category = "all" | "infra" | "endpoints";
 type SourceFilter = "all" | "discovered" | "manual";
 type SnmpFilter = "all" | "ok" | "gap";
@@ -77,6 +83,8 @@ export function DevicesHub({
   schoolId,
   basePath,
   isAdmin,
+  excluded,
+  snmpCrawlEnabled,
   initialTab = "devices",
   initialCategory = "all",
   initialSource = "all",
@@ -87,6 +95,8 @@ export function DevicesHub({
   schoolId: number;
   basePath: string;
   isAdmin: boolean;
+  excluded: ExcludedRow[];
+  snmpCrawlEnabled: boolean;
   initialTab?: Tab;
   initialCategory?: Category;
   initialSource?: SourceFilter;
@@ -95,6 +105,14 @@ export function DevicesHub({
   const [tab, setTab] = useState<Tab>(initialTab);
   const [syncState, syncAction, syncing] = useActionState<InventoryActionState, FormData>(
     syncRegistryToSensorAction,
+    {},
+  );
+  const [snmpState, snmpAction, snmpSaving] = useActionState<InventoryActionState, FormData>(
+    setSchoolSnmpAction,
+    {},
+  );
+  const [purgeAllState, purgeAllAction, purging] = useActionState<InventoryActionState, FormData>(
+    purgeAllDiscoveredAction,
     {},
   );
   const [category, setCategory] = useState<Category>(initialCategory);
@@ -129,6 +147,9 @@ export function DevicesHub({
             ["devices", "Devices"],
             ["links", "Links (LLDP)"],
             ["reach", "Reachability"],
+            ...(isAdmin
+              ? ([["excluded", excluded.length ? `Excluded (${excluded.length})` : "Excluded"]] as [Tab, string][])
+              : []),
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -142,6 +163,40 @@ export function DevicesHub({
         </div>
         {isAdmin && tab === "devices" && (
           <div className="ml-auto flex flex-wrap gap-2">
+            <form action={snmpAction}>
+              <input type="hidden" name="schoolId" value={schoolId} />
+              <input type="hidden" name="basePath" value={basePath} />
+              <input type="hidden" name="enabled" value={snmpCrawlEnabled ? "false" : "true"} />
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                disabled={snmpSaving}
+                title="Master SNMP-crawl switch for every sensor at this school"
+                onClick={(e) => {
+                  if (snmpCrawlEnabled && !confirm("Disable the SNMP crawl for every sensor at this school?")) e.preventDefault();
+                }}
+              >
+                {snmpCrawlEnabled ? <ShieldOff className="size-4" /> : <ShieldCheck className="size-4" />}
+                {snmpSaving ? "Saving…" : snmpCrawlEnabled ? "Disable SNMP crawl" : "Enable SNMP crawl"}
+              </Button>
+            </form>
+            <form action={purgeAllAction}>
+              <input type="hidden" name="schoolId" value={schoolId} />
+              <input type="hidden" name="basePath" value={basePath} />
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                disabled={purging}
+                title="Purge every discovered device that isn't in your registry"
+                onClick={(e) => {
+                  if (!confirm("Purge ALL discovered (non-registered) devices at this school? They'll be hidden and the sensors will stop SNMP-polling them. Restore any from the Excluded tab.")) e.preventDefault();
+                }}
+              >
+                <Ban className="size-4" /> {purging ? "Purging…" : "Purge discovered"}
+              </Button>
+            </form>
             <form action={syncAction}>
               <input type="hidden" name="schoolId" value={schoolId} />
               <input type="hidden" name="basePath" value={basePath} />
@@ -159,11 +214,16 @@ export function DevicesHub({
         )}
       </div>
 
-      {(syncState.message || syncState.error) && (
-        <p className={syncState.error ? "text-sm text-destructive" : "text-sm text-emerald-600 dark:text-emerald-400"}>
-          {syncState.error || syncState.message}
-        </p>
-      )}
+      {(() => {
+        const err = purgeAllState.error || snmpState.error || syncState.error;
+        const msg = purgeAllState.message || snmpState.message || syncState.message;
+        if (!err && !msg) return null;
+        return (
+          <p className={err ? "text-sm text-destructive" : "text-sm text-emerald-600 dark:text-emerald-400"}>
+            {err || msg}
+          </p>
+        );
+      })()}
 
       {tab === "devices" && (
         <>
@@ -236,9 +296,20 @@ export function DevicesHub({
                       <TableCell><SourceBadge source={r.source} /></TableCell>
                       {isAdmin && (
                         <TableCell onClick={(e) => e.stopPropagation()}>
-                          {r.registryId ? (
-                            <Link href={`${basePath}/registry/${r.registryId}/edit`} className="text-primary hover:underline"><Pencil className="size-3.5" /></Link>
-                          ) : null}
+                          <div className="flex items-center gap-2">
+                            {r.registryId ? (
+                              <Link href={`${basePath}/registry/${r.registryId}/edit`} className="text-primary hover:underline" title="Edit"><Pencil className="size-3.5" /></Link>
+                            ) : null}
+                            <form action={purgeDeviceAction}>
+                              <input type="hidden" name="schoolId" value={schoolId} />
+                              <input type="hidden" name="basePath" value={basePath} />
+                              <input type="hidden" name="key" value={r.key} />
+                              <input type="hidden" name="registryId" value={r.registryId ?? ""} />
+                              <button type="submit" className="text-muted-foreground hover:text-destructive" title="Purge from inventory + stop SNMP-polling it">
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </form>
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>
@@ -299,6 +370,53 @@ export function DevicesHub({
               No reachability probes yet. They appear after the sensor scans the
               infrastructure candidate set (gateway, LLDP mgmt IPs, network-vendor gear).
             </p>
+          )}
+        </div>
+      )}
+
+      {tab === "excluded" && (
+        <div className="overflow-x-auto rounded-lg border">
+          {excluded.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-12 text-center">
+              <Ban className="size-8 text-muted-foreground" />
+              <p className="font-medium">No purged devices</p>
+              <p className="max-w-sm text-sm text-muted-foreground">
+                Devices you purge from the inventory land here. Restoring one un-hides
+                it and resumes SNMP polling on the next scan.
+              </p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Device</TableHead>
+                  <TableHead className="hidden md:table-cell">IP / MAC</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="w-24" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {excluded.map((e) => (
+                  <TableRow key={e.key}>
+                    <TableCell className="font-medium">{e.name}</TableCell>
+                    <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
+                      {e.ip ?? "—"}{e.mac ? <div>{e.mac}</div> : null}
+                    </TableCell>
+                    <TableCell>{e.isSwitch ? "switch" : "host"}</TableCell>
+                    <TableCell>
+                      <form action={restoreDeviceAction}>
+                        <input type="hidden" name="schoolId" value={schoolId} />
+                        <input type="hidden" name="basePath" value={basePath} />
+                        <input type="hidden" name="key" value={e.key} />
+                        <button type="submit" className="inline-flex items-center gap-1 text-sm text-primary hover:underline" title="Restore to inventory">
+                          <RotateCcw className="size-3.5" /> Restore
+                        </button>
+                      </form>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </div>
       )}

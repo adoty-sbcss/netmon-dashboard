@@ -18,7 +18,7 @@ import {
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
-import { districts, schools } from "./app";
+import { districts, schools, users } from "./app";
 
 /** Canonical switch, deduped on chassis_id within a district. */
 export const entitiesSwitch = pgTable(
@@ -42,6 +42,14 @@ export const entitiesSwitch = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    // Operator purge: a REVERSIBLE exclusion that hides the device from the
+    // inventory/map and feeds the per-school SNMP exclude list pushed to
+    // sensors. Preserved across re-ingestion (the ingest upsert sets explicit
+    // columns only, never these), so a purged device stays purged.
+    excludedAt: timestamp("excluded_at", { withTimezone: true }),
+    excludedBy: integer("excluded_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [
     uniqueIndex("uq_switch_district_chassis").on(t.districtId, t.chassisId),
@@ -75,6 +83,12 @@ export const entitiesHost = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    // Operator purge — see entitiesSwitch.excludedAt. Reversible, survives
+    // re-ingestion.
+    excludedAt: timestamp("excluded_at", { withTimezone: true }),
+    excludedBy: integer("excluded_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [
     uniqueIndex("uq_host_district_mac").on(t.districtId, t.mac),

@@ -155,6 +155,13 @@
       "when": 1780488613683,
       "tag": "0021_flaky_randall",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1780498103787,
+      "tag": "0022_fluffy_molten_man",
+      "breakpoints": true
     }
   ]
 }

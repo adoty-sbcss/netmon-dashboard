@@ -9,10 +9,10 @@
  * push a community string to the sensor and unlock it.
  */
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, isNotNull } from "drizzle-orm";
 
 import { db } from "@/db";
-import { entitiesHost, entitiesSwitch, registryDevices } from "@/db/schema";
+import { entitiesHost, entitiesSwitch, registryDevices, schoolPolicy } from "@/db/schema";
 import { listReachabilityForSchool } from "@/db/queries";
 import { normalizeMac } from "@/lib/registry/types";
 
@@ -68,8 +68,14 @@ export async function getInventoryForSchool(
   schoolId: number,
 ): Promise<InventorySummary> {
   const [switches, hosts, registry, reach] = await Promise.all([
-    db.select().from(entitiesSwitch).where(eq(entitiesSwitch.schoolId, schoolId)),
-    db.select().from(entitiesHost).where(eq(entitiesHost.schoolId, schoolId)),
+    db
+      .select()
+      .from(entitiesSwitch)
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNull(entitiesSwitch.excludedAt))),
+    db
+      .select()
+      .from(entitiesHost)
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNull(entitiesHost.excludedAt))),
     db
       .select()
       .from(registryDevices)
@@ -229,4 +235,73 @@ export async function getInventoryForSchool(
     manual: rows.filter((r) => r.source === "manual").length,
     rows,
   };
+}
+
+export interface ExcludedRow {
+  key: string; // "sw:<id>" | "host:<id>"
+  name: string;
+  ip: string | null;
+  mac: string | null;
+  isSwitch: boolean;
+  excludedAt: Date | null;
+}
+
+/** Devices an operator has purged (excluded) at this school — for the restore view. */
+export async function listExcludedForSchool(schoolId: number): Promise<ExcludedRow[]> {
+  const [switches, hosts] = await Promise.all([
+    db
+      .select()
+      .from(entitiesSwitch)
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNotNull(entitiesSwitch.excludedAt))),
+    db
+      .select()
+      .from(entitiesHost)
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNotNull(entitiesHost.excludedAt))),
+  ]);
+  const rows: ExcludedRow[] = [
+    ...switches.map((s) => ({
+      key: `sw:${s.id}`,
+      name: s.systemName || s.mgmtIp || s.chassisId,
+      ip: s.mgmtIp,
+      mac: s.chassisId,
+      isSwitch: true,
+      excludedAt: s.excludedAt,
+    })),
+    ...hosts.map((h) => ({
+      key: `host:${h.id}`,
+      name: h.hostname || h.ip || h.mac,
+      ip: h.ip,
+      mac: h.mac,
+      isSwitch: false,
+      excludedAt: h.excludedAt,
+    })),
+  ];
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
+}
+
+/** Management IPs of every excluded device at the school — the SNMP no-poll list. */
+export async function excludedIpsForSchool(schoolId: number): Promise<string[]> {
+  const [switches, hosts] = await Promise.all([
+    db
+      .select({ ip: entitiesSwitch.mgmtIp })
+      .from(entitiesSwitch)
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNotNull(entitiesSwitch.excludedAt))),
+    db
+      .select({ ip: entitiesHost.ip })
+      .from(entitiesHost)
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNotNull(entitiesHost.excludedAt))),
+  ]);
+  const ips = new Set<string>();
+  for (const r of [...switches, ...hosts]) if (r.ip) ips.add(r.ip);
+  return [...ips];
+}
+
+/** School-level SNMP crawl master switch (defaults ON when no policy row exists). */
+export async function getSchoolSnmpEnabled(schoolId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ e: schoolPolicy.snmpEnabled })
+    .from(schoolPolicy)
+    .where(eq(schoolPolicy.schoolId, schoolId));
+  return row?.e ?? true;
 }

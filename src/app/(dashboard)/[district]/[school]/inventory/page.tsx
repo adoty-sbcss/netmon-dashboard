@@ -3,7 +3,12 @@ import { Boxes, Radio, Wifi, WifiOff } from "lucide-react";
 
 import { getDistrictBySlug, getSchoolBySlug, listReachabilityForSchool } from "@/db/queries";
 import { listNeighborsForSchool } from "@/db/district-queries";
-import { getInventoryForSchool } from "@/lib/inventory/queries";
+import {
+  getInventoryForSchool,
+  listExcludedForSchool,
+  getSchoolSnmpEnabled,
+  type ExcludedRow,
+} from "@/lib/inventory/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { titleizeSlug } from "@/lib/format";
 import { SchoolTabs } from "@/components/school-tabs";
@@ -54,6 +59,16 @@ export default async function DevicesPage({
     .filter((r) => r.snmp === "gap")
     .map((r) => ({ key: r.key, name: r.name, ip: r.ip, vendor: r.vendor }));
 
+  // Admin-only: the purge/restore surface + the school's SNMP-crawl switch.
+  let excluded: ExcludedRow[] = [];
+  let snmpCrawlEnabled = true;
+  if (isAdmin) {
+    [excluded, snmpCrawlEnabled] = await Promise.all([
+      listExcludedForSchool(school.id),
+      getSchoolSnmpEnabled(school.id),
+    ]);
+  }
+
   const initialTab = sp.tab === "links" ? "links" : "devices";
   const initialCategory =
     sp.type === "switch" || sp.type === "infra"
@@ -88,6 +103,8 @@ export default async function DevicesPage({
         schoolId={school.id}
         basePath={basePath}
         isAdmin={isAdmin}
+        excluded={excluded}
+        snmpCrawlEnabled={snmpCrawlEnabled}
         initialTab={initialTab}
         initialCategory={initialCategory}
         initialSource={initialSource}
