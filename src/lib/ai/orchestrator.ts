@@ -17,7 +17,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "../../db";
-import { aiAnalyses } from "../../db/schema/ai";
+import { aiAnalyses, type AiFinding } from "../../db/schema/ai";
+import { reconcileIssues } from "../issues/reconcile";
 import { buildAnalysisContext } from "./context";
 import { getAnalystInstructions } from "./instructions";
 import { activeProviders } from "./providers/registry";
@@ -121,6 +122,26 @@ export async function executeRun(runId: string, req: RunRequest): Promise<void> 
       }
     }),
   );
+
+  // Reconcile this run's findings into the persistent Issues tracker.
+  try {
+    const rows = await db
+      .select({ findings: aiAnalyses.findings, status: aiAnalyses.status })
+      .from(aiAnalyses)
+      .where(eq(aiAnalyses.runId, runId));
+    const ok = rows.filter((r) => r.status === "ok");
+    if (ok.length > 0) {
+      await reconcileIssues({
+        districtId: req.scope.districtId,
+        scopeType: req.scope.type,
+        scopeId: req.scope.id,
+        source: "ai",
+        findings: ok.flatMap((r) => (Array.isArray(r.findings) ? (r.findings as AiFinding[]) : [])),
+      });
+    }
+  } catch {
+    // non-fatal — the run already succeeded
+  }
 }
 
 /** Prepare + execute, fully awaited. For the daily cron Job. */

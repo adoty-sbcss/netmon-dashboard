@@ -15,6 +15,7 @@ import { sensors as sensorsTable } from "@/db/schema/app";
 import { getDistrictIperf, listIperfResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
+import { SensorReset } from "./sensor-reset";
 import { IperfPanel } from "./iperf-panel";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -287,6 +288,10 @@ export default async function SensorDetailPage({
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {isAdmin && (
+        <SensorReset sensorId={sensor.id} basePath={basePath} sensorSlug={sensor.slug} />
       )}
     </div>
   );

@@ -8,7 +8,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "../../db";
-import { aiAnalyses } from "../../db/schema/ai";
+import { aiAnalyses, type AiFinding } from "../../db/schema/ai";
+import { reconcileIssues } from "../issues/reconcile";
 import { activeProviders } from "./providers/registry";
 import { getAiSettings } from "./settings";
 import { estimateCost } from "./pricing";
@@ -95,4 +96,24 @@ export async function executeTopologyRun(
       }
     }),
   );
+
+  // Reconcile topology findings into the Issues tracker (school scope).
+  try {
+    const rows = await db
+      .select({ findings: aiAnalyses.findings, status: aiAnalyses.status })
+      .from(aiAnalyses)
+      .where(eq(aiAnalyses.runId, runId));
+    const ok = rows.filter((r) => r.status === "ok");
+    if (ok.length > 0) {
+      await reconcileIssues({
+        districtId: req.districtId,
+        scopeType: "school",
+        scopeId: req.schoolId,
+        source: "ai-topology",
+        findings: ok.flatMap((r) => (Array.isArray(r.findings) ? (r.findings as AiFinding[]) : [])),
+      });
+    }
+  } catch {
+    // non-fatal
+  }
 }

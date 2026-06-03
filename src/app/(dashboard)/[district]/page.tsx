@@ -15,6 +15,7 @@ import {
   listSchools,
 } from "@/db/queries";
 import { getLatestAiSummary } from "@/lib/ai/queries";
+import { countOpenIssuesForDistrict } from "@/lib/issues/queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { AiFindingsCard } from "@/components/ai-findings-card";
@@ -38,9 +39,10 @@ export default async function DistrictPage({
   const district = await getDistrictBySlug(districtSlug);
   if (!district) notFound();
 
-  const [schools, aiSummary] = await Promise.all([
+  const [schools, aiSummary, openIssues] = await Promise.all([
     listSchools(district.id),
     getLatestAiSummary(district.id, "district"),
+    countOpenIssuesForDistrict(district.id),
   ]);
 
   const totals = schools.reduce(
@@ -78,7 +80,7 @@ export default async function DistrictPage({
       />
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
-        <StatCard label="Schools" value={num(schools.length)} icon={School} />
+        <StatCard label="Schools" value={num(schools.length)} icon={School} href="#schools" />
         <StatCard
           label="Sensors"
           value={num(totals.sensors)}
@@ -92,11 +94,11 @@ export default async function DistrictPage({
           href={`/${district.slug}/hosts`}
         />
         <StatCard
-          label="Open findings"
-          value={num(totals.findings)}
+          label="Open issues"
+          value={num(openIssues)}
           icon={ShieldAlert}
-          tone={totals.findings > 0 ? "warning" : "success"}
-          href={`/${district.slug}/findings`}
+          tone={openIssues > 0 ? "warning" : "success"}
+          href={`/${district.slug}/issues`}
         />
       </div>
 
@@ -106,7 +108,7 @@ export default async function DistrictPage({
         title="AI health summary"
       />
 
-      <div>
+      <div id="schools" className="scroll-mt-20">
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Schools</h2>
         {schools.length === 0 ? (
           <Card>

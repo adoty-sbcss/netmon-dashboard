@@ -16,16 +16,16 @@ import {
   getSchoolBySlug,
   getSchoolStats,
   listSensorsForSchool,
-  listFindingsForSchool,
   getSchoolHealthTrend,
 } from "@/db/queries";
 import { getLatestAiSummary } from "@/lib/ai/queries";
+import { listIssuesForSchool } from "@/lib/issues/queries";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { AiFindingsCard } from "@/components/ai-findings-card";
 import { StatCard } from "@/components/stat-card";
-import { SeverityBadge } from "@/components/severity-badge";
+import { IssuesList } from "@/components/issues-list";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -49,10 +49,10 @@ export default async function SchoolPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [stats, sensors, findings, health, aiSummary] = await Promise.all([
+  const [stats, sensors, issues, health, aiSummary] = await Promise.all([
     getSchoolStats(school.id),
     listSensorsForSchool(school.id),
-    listFindingsForSchool(school.id),
+    listIssuesForSchool(school.id),
     getSchoolHealthTrend(school.id),
     getLatestAiSummary(district.id, "school", school.id),
   ]);
@@ -94,10 +94,11 @@ export default async function SchoolPage({
           }
         />
         <StatCard
-          label="Findings"
-          value={num(stats.findingCount)}
+          label="Open issues"
+          value={num(issues.length)}
           icon={ShieldAlert}
-          tone={stats.findingCount > 0 ? "warning" : "success"}
+          tone={issues.length > 0 ? "warning" : "success"}
+          href={`/${district.slug}/issues`}
         />
       </div>
 
@@ -110,36 +111,14 @@ export default async function SchoolPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Findings</CardTitle>
+          <CardTitle className="text-base">Open issues</CardTitle>
         </CardHeader>
         <CardContent>
-          {findings.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <ShieldAlert className="size-7 text-[var(--success)]" />
-              <p className="text-sm font-medium">No findings</p>
-              <p className="text-sm text-muted-foreground">
-                The most recent scans reported no issues at this school.
-              </p>
-            </div>
-          ) : (
-            <ul className="divide-y">
-              {findings.map((f) => (
-                <li key={f.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-                  <SeverityBadge severity={f.severity} />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">{f.title}</p>
-                    {f.detail && (
-                      <p className="text-sm text-muted-foreground">{f.detail}</p>
-                    )}
-                    <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                      {f.rule}
-                      {f.createdAt ? ` · ${relativeTime(f.createdAt)}` : ""}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+          <IssuesList
+            issues={issues}
+            basePath={`/${district.slug}/${school.slug}`}
+            isAdmin={false}
+          />
         </CardContent>
       </Card>
 

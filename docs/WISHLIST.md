@@ -1,5 +1,34 @@
 # NetMon — feature wishlist / deferred work
 
+## Bugs & fixes (reported)
+- **District page school links** — the "Schools" stat card and the per-school
+  cards on the district page don't link anywhere; they should go to
+  `/{district}/{school}`. (Quick fix.)
+- **Map lost drag-to-move + Save layout** — the old SVG map persisted manual node
+  positions (topology_positions + saveMapPositions). The new Cytoscape map
+  doesn't load/save positions, so dagre re-lays-out every visit. Re-wire: load
+  saved positions, allow node drag, add a Save button; saved positions override
+  the auto-layout.
+- **Sensor data reset / purge** — need a one-click "wipe all collected data for
+  this sensor, keep it enrolled" for the office-test → field-deploy workflow.
+  Partially exists already: Settings → Data management has a date-range scan
+  purge (`purgeScansAction`) and a delete-sensor (cascades all scans). To add: an
+  "all data" purge that keeps the sensor + its config/enrollment, surfaced on the
+  sensor detail page (not just buried in settings).
+
+## Findings section — decision needed
+Today `findings` is a flat, per-scan list (mostly AI-generated). Two paths:
+- **(Recommended) Turn it into a persistent "Issues" tracker** — one row per
+  distinct issue (keyed by rule + device/scope), not one-per-scan; state
+  open/acknowledged/resolved; auto-resolve when it stops recurring across N
+  scans; track first-seen / last-seen / recurrence / resolved-at for history.
+  This IS the "actionable alerting layer" keystone — the anti-fatigue, checked-
+  off-when-gone list the owner described.
+- **(Short-term) Consolidate findings into the AI-analysis tab** and drop the
+  standalone findings surfaces, then build the Issues tracker later.
+
+
+
 Running list so nothing gets lost while we focus on network mapping. Ordered
 roughly by value. Not committed scope — a parking lot to pull from.
 

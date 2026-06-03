@@ -22,9 +22,15 @@ import {
   schools,
   sensors,
   auditLog,
+  ingestedBundles,
 } from "@/db/schema/app";
 import { scanRuns } from "@/db/schema/netmon";
-import { topologySnapshots } from "@/db/schema/entities";
+import {
+  topologySnapshots,
+  topologyPositions,
+  entitiesSwitch,
+  entitiesHost,
+} from "@/db/schema/entities";
 import { getSessionUser } from "@/lib/auth/current-user";
 
 const DATA_PATH = "/settings/data";
@@ -205,5 +211,71 @@ export async function purgeScansAction(
   return {
     ok: true,
     message: `Purged ${deleted.length} scan${deleted.length === 1 ? "" : "s"} (and their captured data) from “${slug}”.`,
+  };
+}
+
+/**
+ * Reset a sensor: wipe ALL its collected data (every scan + the cascaded
+ * time-series, plus the discovered devices, topology and saved map positions for
+ * its school) while KEEPING the sensor enrolled with its config. For the
+ * office-bench-test → field-deploy workflow: prove it works, then start clean.
+ *
+ * NOTE: discovered devices/topology are school-scoped (not per-sensor), so this
+ * clears the whole school's discovered view — intended for a single-sensor test
+ * school. Manually-registered devices are NOT touched.
+ */
+export async function resetSensorDataAction(
+  _prev: DataActionState,
+  formData: FormData,
+): Promise<DataActionState> {
+  const user = await requireAdmin();
+  if (!user) return { error: "Not authorized." };
+
+  const sensorId = Number(formData.get("sensorId"));
+  const basePath = String(formData.get("basePath") ?? "");
+  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+
+  const [sensor] = await db
+    .select({ id: sensors.id, slug: sensors.slug, schoolId: sensors.schoolId })
+    .from(sensors)
+    .where(eq(sensors.id, sensorId));
+  if (!sensor) return { error: "That sensor no longer exists." };
+
+  let deletedScans = 0;
+  await db.transaction(async (tx) => {
+    const bundleRows = await tx
+      .select({ bundleId: scanRuns.bundleId })
+      .from(scanRuns)
+      .where(eq(scanRuns.sensorId, sensorId));
+    const bundleIds = [
+      ...new Set(bundleRows.map((b) => b.bundleId).filter((x): x is number => x != null)),
+    ];
+
+    const del = await tx
+      .delete(scanRuns)
+      .where(eq(scanRuns.sensorId, sensorId))
+      .returning({ id: scanRuns.id });
+    deletedScans = del.length;
+
+    if (bundleIds.length > 0) {
+      await tx.delete(ingestedBundles).where(inArray(ingestedBundles.id, bundleIds));
+    }
+    if (sensor.schoolId != null) {
+      const sid = sensor.schoolId;
+      await tx.delete(entitiesSwitch).where(eq(entitiesSwitch.schoolId, sid));
+      await tx.delete(entitiesHost).where(eq(entitiesHost.schoolId, sid));
+      await tx
+        .delete(topologySnapshots)
+        .where(and(eq(topologySnapshots.scopeType, "school"), eq(topologySnapshots.scopeId, sid)));
+      await tx.delete(topologyPositions).where(eq(topologyPositions.schoolId, sid));
+    }
+  });
+
+  await audit(user.email, "data_reset_sensor", { sensorId, slug: sensor.slug, deletedScans });
+  if (basePath) revalidatePath(basePath);
+  revalidatePath(DATA_PATH);
+  return {
+    ok: true,
+    message: `Reset “${sensor.slug}” — purged ${deletedScans} scan${deletedScans === 1 ? "" : "s"}, plus discovered devices, topology and saved map layout for its school. The sensor stays enrolled and keeps its config.`,
   };
 }
