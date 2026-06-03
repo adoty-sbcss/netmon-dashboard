@@ -195,6 +195,31 @@ export interface RawTopology {
   edges: TopoEdge[];
 }
 
+/** snmp_topology.json — the SNMP fabric crawl (chassis-keyed, multi-switch). */
+export interface RawSnmpTopoNode {
+  chassis_id?: string | null;
+  system_name?: string | null;
+  system_description?: string | null;
+  mgmt_ips?: string[] | null;
+  discovered_via_ip?: string | null;
+  source?: string | null;
+  capabilities?: string[] | null;
+}
+export interface RawSnmpTopoEdge {
+  local_chassis_id?: string | null;
+  local_port_id?: string | null;
+  local_port_desc?: string | null;
+  remote_chassis_id?: string | null;
+  remote_port_id?: string | null;
+  remote_port_desc?: string | null;
+  via?: string | null;
+  discovered_via_ip?: string | null;
+}
+export interface RawSnmpTopology {
+  nodes?: RawSnmpTopoNode[];
+  edges?: RawSnmpTopoEdge[];
+}
+
 export interface ScanData {
   meta: RawScanMeta;
   devices: DeviceRow[];
@@ -206,6 +231,7 @@ export interface ScanData {
   dns: RawDnsHealth;
   findings: RawFinding[];
   topology: RawTopology | null;
+  snmpTopology: RawSnmpTopology | null;
   reachability: RawReachability[];
   scanDirName: string;
 }
@@ -356,6 +382,18 @@ export function readBundleDir(dir: string): Bundle {
         dns: readJson<RawDnsHealth>(join(scanDir, "dns_health.json"), {}),
         findings: asList<RawFinding>(readJson(join(scanDir, "findings.json"), [])),
         topology: readJson<RawTopology | null>(join(scanDir, "topology.json"), null),
+        // SNMP fabric crawl (multi-switch). Ships as {nodes,edges}; empty when
+        // the crawl is off or found nothing. Falls back to the raw/ split files.
+        snmpTopology:
+          readJson<RawSnmpTopology | null>(join(scanDir, "snmp_topology.json"), null) ??
+          {
+            nodes: asList<RawSnmpTopoNode>(
+              readJson(join(raw, "snmp-topology-nodes.json"), []),
+            ),
+            edges: asList<RawSnmpTopoEdge>(
+              readJson(join(raw, "snmp-topology-edges.json"), []),
+            ),
+          },
         reachability: asList<RawReachability>(
           readJson(join(raw, "net-reachability.json"), []),
         ),

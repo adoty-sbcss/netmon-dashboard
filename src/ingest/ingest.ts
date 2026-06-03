@@ -71,8 +71,18 @@ const SNMP_KEEP_OID_NAMES = new Set([
   "dot1dTpFdbTable",
   "dot1dStpPortTable",
 ]);
-/** Cap applied only to non-priority bulk rows (ifTable, ipNetToMediaTable, …). */
-const SNMP_BULK_ROW_CAP = 500;
+/**
+ * Cap applied only to non-priority bulk rows (ifTable, ipNetToMediaTable,
+ * Q-BRIDGE FDB, …). Priority OIDs above are always kept in full. 0 = unlimited
+ * (ingest everything). Default is unlimited — override with INGEST_SNMP_BULK_CAP
+ * if Postgres growth ever needs reining in.
+ */
+const SNMP_BULK_ROW_CAP = (() => {
+  const raw = process.env.INGEST_SNMP_BULK_CAP;
+  if (raw == null || raw === "") return 0; // default: ingest everything
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+})();
 
 /** BRIDGE-MIB / IF-MIB OID prefixes used to derive a host's switch port. */
 const FDB_PORT_PREFIX = "1.3.6.1.2.1.17.4.3.1.2."; // dot1dTpFdbPort: suffix=MAC octets, val=bridgePort
@@ -285,6 +295,52 @@ function mergeTopoGraphs(existing: TopoGraph | null, incoming: TopoGraph): TopoG
     edges: [...edgeByKey.values()],
     sourceScanId: incoming.sourceScanId ?? null,
   };
+}
+
+/**
+ * Build a physical-graph contribution from the SNMP fabric crawl across ALL
+ * scans in the bundle. Switch nodes are keyed `switch:<chassis_id>` — the SAME
+ * scheme buildPhysicalGraph() uses for LLDP neighbors — so crawl-discovered
+ * switches DEDUP with (and enrich) the directly-attached ones when merged. This
+ * is what turns the local LLDP star into the full multi-switch fabric on the map.
+ */
+function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): TopoGraph {
+  const nodeById = new Map<string, TopoGraph["nodes"][number]>();
+  const edgeByKey = new Map<string, TopoGraph["edges"][number]>();
+  for (const scan of scans) {
+    const topo = scan.snmpTopology;
+    if (!topo) continue;
+    for (const n of topo.nodes ?? []) {
+      const chassis = str(n.chassis_id);
+      if (!chassis) continue;
+      const id = `switch:${chassis}`;
+      nodeById.set(id, {
+        id,
+        type: "switch",
+        label: str(n.system_name) ?? chassis,
+        description: str(n.system_description),
+        mgmt_ip: (n.mgmt_ips && str(n.mgmt_ips[0])) ?? null,
+        source: str(n.source) ?? "snmp",
+        capabilities: n.capabilities ?? null,
+      });
+    }
+    for (const e of topo.edges ?? []) {
+      const a = str(e.local_chassis_id);
+      const b = str(e.remote_chassis_id);
+      if (!a || !b) continue;
+      const source = `switch:${a}`;
+      const target = `switch:${b}`;
+      const kind = str(e.via) ?? "lldp";
+      edgeByKey.set(`${source}|${target}|${kind}`, {
+        source,
+        target,
+        kind,
+        local_port: str(e.local_port_id) ?? str(e.local_port_desc),
+        remote_port: str(e.remote_port_id) ?? str(e.remote_port_desc),
+      });
+    }
+  }
+  return { nodes: [...nodeById.values()], edges: [...edgeByKey.values()], sourceScanId };
 }
 
 function buildLogicalGraph(scan: ScanData, sourceScanId: number | null) {
@@ -598,7 +654,10 @@ export async function ingestBundle(
         if (SNMP_KEEP_OID_NAMES.has(str(p.oid_name) ?? "")) keptSnmp.push(p);
         else bulkSnmp.push(p);
       }
-      const snmpSlice = [...keptSnmp, ...bulkSnmp.slice(0, SNMP_BULK_ROW_CAP)];
+      const snmpSlice =
+        SNMP_BULK_ROW_CAP > 0
+          ? [...keptSnmp, ...bulkSnmp.slice(0, SNMP_BULK_ROW_CAP)]
+          : [...keptSnmp, ...bulkSnmp];
       const snmpRows = snmpSlice.map((p) => ({
         scanRunId,
         deviceIp: str(p.device_ip),
@@ -755,13 +814,61 @@ export async function ingestBundle(
       }
     }
 
+    // ---- canonical switches from the SNMP crawl (beyond directly-attached LLDP) ----
+    // The crawl reaches switches the sensor isn't physically next to, so this is
+    // where most of the fabric inventory comes from. Dedup on chassis_id; coalesce
+    // so a later sparse crawl never nulls a name/description we already have.
+    for (const scan of bundle.scans) {
+      for (const n of scan.snmpTopology?.nodes ?? []) {
+        const chassis = str(n.chassis_id);
+        if (!chassis) continue;
+        const seen = toDate(scan.meta.completed_at) ?? new Date();
+        await tx
+          .insert(entitiesSwitch)
+          .values({
+            districtId: district.id,
+            schoolId: school.id,
+            chassisId: chassis,
+            systemName: str(n.system_name),
+            systemDescription: str(n.system_description),
+            mgmtIp: (n.mgmt_ips && str(n.mgmt_ips[0])) ?? null,
+            capabilities: n.capabilities ?? null,
+            firstSeenAt: seen,
+            lastSeenAt: seen,
+          })
+          .onConflictDoUpdate({
+            target: [entitiesSwitch.districtId, entitiesSwitch.chassisId],
+            set: {
+              schoolId: school.id,
+              systemName: sql`coalesce(excluded.system_name, ${entitiesSwitch.systemName})`,
+              systemDescription: sql`coalesce(excluded.system_description, ${entitiesSwitch.systemDescription})`,
+              mgmtIp: sql`coalesce(excluded.mgmt_ip, ${entitiesSwitch.mgmtIp})`,
+              capabilities: sql`coalesce(excluded.capabilities, ${entitiesSwitch.capabilities})`,
+              lastSeenAt: seen,
+              updatedAt: new Date(),
+            },
+          });
+        if (!chassisSeen.has(chassis)) {
+          chassisSeen.add(chassis);
+          counts.entities_switch++;
+        }
+      }
+    }
+
     // ---- topology snapshots: MERGE this sensor's view into the school's map ----
     // (was: overwrite from the primary scan, so a 2nd sensor clobbered the 1st)
     const primary =
       bundle.scans.find((s) => toBool(s.meta.is_primary)) ?? bundle.scans[0];
     const srcScanId = toNum(primary.meta.id);
+    // Physical map = the local LLDP star (per-sensor) UNIONed with the SNMP
+    // fabric crawl (chassis-keyed, multi-switch). Fabric nodes win on dedup
+    // since they carry richer identity (system_description, mgmt_ip).
+    const physicalGraph = mergeTopoGraphs(
+      buildPhysicalGraph(primary.topology, srcScanId, sensor.id) as TopoGraph,
+      buildSnmpFabricGraph(bundle.scans, srcScanId),
+    );
     const snapshots = [
-      { kind: "physical", graph: buildPhysicalGraph(primary.topology, srcScanId, sensor.id) },
+      { kind: "physical", graph: physicalGraph },
       { kind: "logical", graph: buildLogicalGraph(primary, srcScanId) },
     ];
     for (const snap of snapshots) {
