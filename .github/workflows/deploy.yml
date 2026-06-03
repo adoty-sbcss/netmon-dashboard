@@ -9,6 +9,11 @@ on:
       - "docs/**"
       - "**/*.md"
       - "infra/**"
+  # Weekly rebuild so the container base image (node + OS packages) picks up
+  # security patches even when no code is pushed. Without this, the running
+  # image only gets refreshed on a code merge and can go stale for weeks.
+  schedule:
+    - cron: "0 11 * * 1" # Mondays 11:00 UTC (~3-4am PT)
   workflow_dispatch: {}
 
 permissions:
@@ -47,8 +52,14 @@ jobs:
             .
 
       - name: Roll Container App to the new image
+        # --revision-suffix forces a fresh revision on every run. On scheduled
+        # rebuilds the git SHA is unchanged, so without a unique suffix the
+        # image reference would be identical and Container Apps would NOT roll —
+        # the freshly-patched image would never deploy. run_number guarantees
+        # uniqueness across runs.
         run: |
           az containerapp update \
             --name "$CONTAINER_APP" \
             --resource-group "$RESOURCE_GROUP" \
-            --image "$ACR_NAME.azurecr.io/$IMAGE:${{ github.sha }}"
+            --image "$ACR_NAME.azurecr.io/$IMAGE:${{ github.sha }}" \
+            --revision-suffix "r${{ github.run_number }}"
