@@ -16,6 +16,7 @@ import { getDistrictIperf, listIperfResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
 import { SensorReset } from "./sensor-reset";
+import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -56,6 +57,17 @@ export default async function SensorDetailPage({
 
   const sensor = await getSensorDetail(school.id, sensorId);
   if (!sensor) notFound();
+
+  // Box self-health (CPU/RAM/disk/OS/uptime) from the last check-in. Ungated —
+  // visible to any viewer of the sensor, unlike the admin-only reported config.
+  const [health] = await db
+    .select({
+      metrics: sensorsTable.reportedHostMetrics,
+      metricsAt: sensorsTable.reportedMetricsAt,
+    })
+    .from(sensorsTable)
+    .where(eq(sensorsTable.id, sensor.id))
+    .limit(1);
 
   const user = await getSessionUser();
   const isAdmin = user?.role === "superadmin";
@@ -141,6 +153,13 @@ export default async function SensorDetailPage({
           </dl>
         </CardContent>
       </Card>
+
+      {/* Sensor self-health — CPU/RAM/disk/OS/uptime + heartbeat */}
+      <SensorHealthCard
+        metrics={health?.metrics ?? null}
+        metricsAt={health?.metricsAt ?? null}
+        lastCheckinAt={sensor.lastCheckinAt}
+      />
 
       {/* Reported (actual) config from the sensor's last check-in */}
       {isAdmin && reported && (

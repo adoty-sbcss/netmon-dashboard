@@ -104,6 +104,12 @@ export const sensors = pgTable(
     reportedSftpPort: integer("reported_sftp_port"),
     reportedSftpUser: text("reported_sftp_user"),
     reportedConfigAt: timestamp("reported_config_at", { withTimezone: true }),
+    // --- sensor self-health reported at check-in (the box's OWN vitals, not the
+    //     network it watches). Full snapshot kept as JSONB — { cpu, mem, disk,
+    //     os, uptimeSec, tempC } — rendered + thresholded on the sensor page.
+    //     See the collector's host_metrics.py.
+    reportedHostMetrics: jsonb("reported_host_metrics"),
+    reportedMetricsAt: timestamp("reported_metrics_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

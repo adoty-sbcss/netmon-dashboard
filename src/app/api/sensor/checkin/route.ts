@@ -36,6 +36,8 @@ export async function POST(req: NextRequest) {
       sftp_port?: number;
       sftp_user?: string;
     };
+    // The box's own self-health snapshot { cpu, mem, disk, os, uptimeSec, tempC }.
+    hostMetrics?: Record<string, unknown>;
   };
 
   const cc = body.currentConfig;
@@ -50,6 +52,9 @@ export async function POST(req: NextRequest) {
       ...(typeof body.localIp === "string" ? { localIp: body.localIp } : {}),
       ...(typeof body.interface === "string" ? { iface: body.interface } : {}),
       ...(typeof body.interfaceCidr === "string" ? { ifaceCidr: body.interfaceCidr } : {}),
+      ...(body.hostMetrics && typeof body.hostMetrics === "object"
+        ? { reportedHostMetrics: body.hostMetrics, reportedMetricsAt: sql`now()` }
+        : {}),
       ...(cc
         ? {
             reportedSnmpEnabled:

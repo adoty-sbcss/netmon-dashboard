@@ -162,6 +162,13 @@
       "when": 1780498103787,
       "tag": "0022_fluffy_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1780502044836,
+      "tag": "0023_tiresome_sentinel",
+      "breakpoints": true
     }
   ]
 }
