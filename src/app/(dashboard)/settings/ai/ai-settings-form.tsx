@@ -315,6 +315,9 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
             />
             <p className="text-xs text-muted-foreground">
               Default <code>0 2 * * *</code> = 02:00 UTC (≈ end of the school day, US Pacific).
+              The job wakes hourly and runs at the top of the next matching hour, so
+              on-the-hour schedules fire exactly. Each run covers every district plus
+              its schools (general + topology).
             </p>
           </div>
 

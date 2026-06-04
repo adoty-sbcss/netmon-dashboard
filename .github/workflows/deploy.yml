@@ -83,6 +83,16 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --image "$ACR_NAME.azurecr.io/$IMAGE-ingest:${{ github.sha }}"
 
+      - name: Point AI analysis Job at the new image
+        # Same reasoning as the ingest Job: w2-sbcss-netmon-ai runs the migrator
+        # image (full source + tsx), so without re-pointing it here the scheduled
+        # AI sweep would keep running stale code after every deploy.
+        run: |
+          az containerapp job update \
+            --name w2-sbcss-netmon-ai \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE-migrator:${{ github.sha }}"
+
       - name: Roll Container App to the new image
         # --revision-suffix forces a fresh revision on every run. On scheduled
         # rebuilds the git SHA is unchanged, so without a unique suffix the

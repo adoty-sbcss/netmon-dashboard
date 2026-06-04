@@ -93,6 +93,9 @@ param migratorImage string = '${acrName}.azurecr.io/netmon-dashboard-migrator:la
 param containerCpu string = '0.5'
 param containerMemory string = '1.0Gi'
 
+@description('Public origin the web app is served at. Pins BOTH the OIDC callback base AND the sensor enrollment snippet URL (the app reads APP_ORIGIN for both; see src/lib/auth/oidc.ts and the ingestion settings page). Set this to the bound custom domain so it is stable across environment rebuilds, e.g. https://netmon.sbcss.net. Empty string falls back to deriving the origin from the request host. NOTE: the OIDC client IDs/secrets are still applied via `az containerapp update` (see docs/DEPLOY.md); a full bicep redeploy reapplies APP_ORIGIN but you must re-add those auth env vars.')
+param appOrigin string = 'https://netmon.sbcss.net'
+
 // ---- Ingestion (SFTP sync) Job ----
 // The SFTP connection is now configured in-app (Settings → SFTP ingestion) and
 // stored ENCRYPTED in the DB, decrypted at run time with AUTH_SECRET. The Job
@@ -109,15 +112,20 @@ param ingestImage string = '${acrName}.azurecr.io/netmon-dashboard-ingest:latest
 param ingestCron string = '0 * * * *'
 
 // ---- AI analysis Job (docs/DESIGN.md §10) ----
-// Daily model-driven review per district. Reuses the migrator image (full source
-// + tsx) and overrides the command to `npm run ai:analyze`. No-ops cleanly while
-// no model key is set, so it's safe to leave enabled. The same model env is wired
-// into the web app so the on-demand "Run AI analysis" button works there too.
-@description('Provision the daily AI analysis cron Job. No-ops until a model key is set.')
+// Model-driven review written to ai_analyses. The Job WAKES on this fixed platform
+// cron (hourly) and then decides IN CODE whether the IN-APP schedule (Settings →
+// AI analysis, stored in ai_settings.schedule_cron) is due — the same "wake often,
+// gate in code" pattern as the ingest Job. So admins change the run time/cadence in
+// the UI WITHOUT a redeploy. A due sweep covers the district-wide analysis plus each
+// school's general + topology review. Reuses the migrator image (full source + tsx),
+// command `npm run ai:analyze`. No-ops cleanly while no model key is set, so it's
+// safe to leave enabled. The same model env is wired into the web app so the
+// on-demand "Run AI analysis" button works there too.
+@description('Provision the AI analysis cron Job. No-ops until a model key is set.')
 param enableAiJob bool = true
 
-@description('Cron (UTC) for the daily AI analysis run. Default 02:00 UTC (~end of school day, US Pacific).')
-param aiCron string = '0 2 * * *'
+@description('Cron (UTC) for how often the AI Job WAKES to check the in-app schedule. Hourly by default; the actual run time/cadence is set in Settings → AI analysis and honored in code.')
+param aiCron string = '0 * * * *'
 
 @description('Azure OpenAI endpoint, e.g. https://<resource>.openai.azure.com. Empty = GPT column stays "not configured".')
 param azureOpenAiEndpoint string = ''
@@ -402,6 +410,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'NODE_ENV', value: 'production' }
+            // Pins the OIDC callback base + the sensor enrollment snippet URL.
+            // Stable custom domain so sensors/IdP never change on env rebuilds.
+            { name: 'APP_ORIGIN', value: appOrigin }
           ], aiEnv)
         }
       ]
@@ -550,10 +561,12 @@ resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
     : [ kvDatabaseUrl ]
 }
 
-// ---- AI analysis Job (cron; per-district model review → ai_analyses) ----
-// Reuses the migrator image (full source + tsx) and overrides the command to run
-// `npm run ai:analyze`. Reads DATABASE_URL/AUTH_SECRET from Key Vault and the
-// model keys from the app-level aiSecrets. No-ops while no model key is present.
+// ---- AI analysis Job (hourly wake; honors in-app schedule → ai_analyses) ----
+// Wakes on aiCron (hourly) and runs `npm run ai:analyze`, which gates on the in-app
+// schedule (ai_settings.schedule_cron) and, when due, fans out district + per-school
+// general + per-school topology reviews. Reuses the migrator image (full source +
+// tsx). Reads DATABASE_URL/AUTH_SECRET from Key Vault and the model keys from the
+// app-level aiSecrets. No-ops while no model key is present.
 resource aiJob 'Microsoft.App/jobs@2024-03-01' = if (enableAiJob) {
   name: 'w2-sbcss-netmon-ai'
   location: location

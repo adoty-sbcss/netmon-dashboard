@@ -20,6 +20,8 @@ export interface TopologyRunRequest {
   schoolId: number;
   districtId: number;
   label: string;
+  /** 'manual' (the web button, default) | 'scheduled' (the cron Job). */
+  trigger?: "scheduled" | "manual";
   requestedBy?: number | null;
 }
 
@@ -38,7 +40,7 @@ export async function prepareTopologyRun(
       districtId: req.districtId,
       windowStart: now,
       windowEnd: now,
-      trigger: "manual" as const,
+      trigger: req.trigger ?? "manual",
       kind: "topology",
       providerId: provider.id,
       status: "running" as const,
@@ -116,4 +118,12 @@ export async function executeTopologyRun(
   } catch {
     // non-fatal
   }
+}
+
+/** Prepare + execute a topology run, fully awaited. For the daily cron Job
+ *  (mirrors orchestrator.runAnalysis). Returns the runId. */
+export async function runTopologyAnalysis(req: TopologyRunRequest): Promise<string> {
+  const { runId, providerIds } = await prepareTopologyRun(req);
+  if (providerIds.length > 0) await executeTopologyRun(runId, req);
+  return runId;
 }
