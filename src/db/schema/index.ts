@@ -9,3 +9,4 @@ export * from "./policy";
 export * from "./iperf";
 export * from "./registry";
 export * from "./issues";
+export * from "./chat";

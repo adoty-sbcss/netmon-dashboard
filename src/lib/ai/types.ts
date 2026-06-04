@@ -109,9 +109,22 @@ export interface AiProvider {
     cfg: ResolvedProviderConfig,
     opts: { maxOutputTokens: number; json?: boolean },
   ): Promise<CompletionResult>;
+  /** Multi-turn chat completion (system + an alternating user/assistant history).
+   *  Powers the in-app assistant (src/lib/ai/chat.ts). */
+  chat(
+    input: { system: string; messages: ChatMessage[] },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number },
+  ): Promise<CompletionResult>;
 }
 
-/** What every provider's `complete()` returns. */
+/** One conversational turn. */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** What every provider's `complete()` / `chat()` returns. */
 export interface CompletionResult {
   text: string;
   model: string;

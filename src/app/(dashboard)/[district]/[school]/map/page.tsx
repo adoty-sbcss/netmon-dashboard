@@ -54,7 +54,13 @@ export default async function MapPage({
         description={`${district.name} · physical topology (LLDP/CDP backbone + bridge-table device attachment)`}
       />
 
-      <CytoscapePhysicalMap graph={map.physical} basePath={basePath} status={status} />
+      <CytoscapePhysicalMap
+        graph={map.physical}
+        basePath={basePath}
+        status={status}
+        schoolId={school.id}
+        canSave={user.role === "superadmin"}
+      />
 
       <TopologyAiPanel
         districtSlug={district.slug}

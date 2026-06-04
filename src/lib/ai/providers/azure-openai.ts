@@ -11,6 +11,7 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  ChatMessage,
   CompletionResult,
   ResolvedProviderConfig,
 } from "../types";

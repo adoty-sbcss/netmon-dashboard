@@ -3,9 +3,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, Layers, Maximize2, Network, Table2 } from "lucide-react";
+import { Download, Layers, Maximize2, Network, RotateCcw, Save, Table2 } from "lucide-react";
 
 import type { MapGraph } from "@/db/queries";
+import { saveMapPositions } from "@/lib/admin/map-actions";
 import { Button } from "@/components/ui/button";
 import { iconUri } from "./device-icons";
 
@@ -169,10 +170,14 @@ export function CytoscapePhysicalMap({
   graph,
   basePath,
   status = {},
+  schoolId,
+  canSave = false,
 }: {
   graph: MapGraph;
   basePath: string;
   status?: Record<string, string>;
+  schoolId: number;
+  canSave?: boolean;
 }) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -180,6 +185,9 @@ export function CytoscapePhysicalMap({
   const [infraOnly, setInfraOnly] = useState(false);
   const [groupLeaves, setGroupLeaves] = useState(true);
   const [cw, setCw] = useState(800);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [hover, setHover] = useState<{ x: number; y: number; label: string; ip: string; type: string; model: string } | null>(null);
 
   const elements = useMemo(
@@ -230,16 +238,53 @@ export function CytoscapePhysicalMap({
         setHover(null);
         cy.elements().removeClass("dim");
       });
+
+      // Apply any saved manual positions ON TOP of the auto-layout: nodes you've
+      // placed snap back to where you left them; new/unplaced nodes keep their
+      // dagre spot (so the layout fills gaps but never stomps a manual arrangement).
+      const savedPos = (graph.positions ?? {}) as Record<string, { x: number; y: number }>;
+      let applied = 0;
+      cy.nodes().forEach((n: any) => {
+        const p = savedPos[n.id()];
+        if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+          n.position({ x: p.x, y: p.y });
+          applied++;
+        }
+      });
+      if (applied > 0) cy.fit(undefined, 30);
+      cy.on("dragfree", "node", () => setDirty(true));
+      setDirty(false);
     })();
     return () => {
       cancelled = true;
       ro?.disconnect();
       cy?.destroy();
     };
-  }, [elements, basePath, router]);
+  }, [elements, basePath, router, graph]);
 
   function fit() {
     cyRef.current?.fit(undefined, 30);
+  }
+  async function saveLayout() {
+    const cy = cyRef.current;
+    if (!cy) return;
+    setSaving(true);
+    const positions = cy
+      .nodes()
+      .map((n: any) => ({ nodeId: n.id(), x: n.position("x"), y: n.position("y") }));
+    const res = await saveMapPositions(schoolId, "physical", basePath, positions);
+    setSaving(false);
+    if (res.ok) {
+      setDirty(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    }
+  }
+  function autoLayout() {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.layout({ name: "dagre", rankDir: "TB", nodeSep: 22, rankSep: 64, fit: true, padding: 30 } as any).run();
+    setDirty(true); // let the operator save the re-laid-out arrangement to overwrite
   }
   function exportPng() {
     const cy = cyRef.current;
@@ -283,6 +328,24 @@ export function CytoscapePhysicalMap({
         <Button type="button" size="sm" variant="outline" onClick={exportCsv}>
           <Table2 className="size-4" /> CSV
         </Button>
+        {canSave && (
+          <>
+            <Button type="button" size="sm" variant="outline" onClick={autoLayout} title="Re-run the automatic layout">
+              <RotateCcw className="size-4" /> Auto-layout
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={dirty ? "default" : "outline"}
+              disabled={!dirty || saving}
+              onClick={saveLayout}
+              title="Save the current node arrangement for this school"
+            >
+              <Save className="size-4" />
+              {saving ? "Saving…" : saved ? "Saved" : dirty ? "Save layout" : "Layout saved"}
+            </Button>
+          </>
+        )}
         {hasStatus && (
           <div className="ml-auto flex flex-wrap gap-2.5">
             {STATUS_LEGEND.map((s) => (
@@ -321,9 +384,9 @@ export function CytoscapePhysicalMap({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {graph.nodes.length} nodes · {graph.edges.length} links · scroll to zoom, drag to pan, click a
-        device to open it. Leaf devices attach to their access switch port via the bridge table; toggle
-        grouping to expand them.
+        {graph.nodes.length} nodes · {graph.edges.length} links · scroll to zoom, drag the canvas to pan,
+        drag a device to reposition it, click to open it.{canSave ? " Save layout to keep your arrangement." : ""} Leaf
+        devices attach to their access switch port via the bridge table; toggle grouping to expand them.
       </p>
     </div>
   );
