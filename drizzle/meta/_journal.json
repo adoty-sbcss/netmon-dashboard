@@ -183,6 +183,13 @@
       "when": 1780574873166,
       "tag": "0025_greedy_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780610911407,
+      "tag": "0026_chat_assistant",
+      "breakpoints": true
     }
   ]
 }

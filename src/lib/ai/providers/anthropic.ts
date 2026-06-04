@@ -12,6 +12,7 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  ChatMessage,
   CompletionResult,
   ResolvedProviderConfig,
 } from "../types";
@@ -108,6 +109,35 @@ export const anthropicProvider: AiProvider = {
       max_tokens: opts.maxOutputTokens,
       system: msg.system,
       messages: [{ role: "user", content: msg.user }],
+    });
+    const text = message.content
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("");
+    return {
+      text,
+      model: message.model || model,
+      tokensIn: message.usage?.input_tokens ?? null,
+      tokensOut: message.usage?.output_tokens ?? null,
+    };
+  },
+
+  async chat(
+    input: { system: string; messages: ChatMessage[] },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number },
+  ): Promise<CompletionResult> {
+    if (!cfg.apiKey) throw new Error("Anthropic is not configured");
+    const model = cfg.model || DEFAULT_MODEL;
+    const client = new Anthropic({
+      apiKey: cfg.apiKey,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    const message = await client.messages.create({
+      model,
+      max_tokens: opts.maxOutputTokens,
+      system: input.system,
+      messages: input.messages.map((m) => ({ role: m.role, content: m.content })),
     });
     const text = message.content
       .map((b) => (b.type === "text" ? b.text : ""))

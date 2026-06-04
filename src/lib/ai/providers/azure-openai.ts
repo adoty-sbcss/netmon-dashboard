@@ -119,4 +119,36 @@ export const azureOpenAiProvider: AiProvider = {
       tokensOut: completion.usage?.completion_tokens ?? null,
     };
   },
+
+  async chat(
+    input: { system: string; messages: ChatMessage[] },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number },
+  ): Promise<CompletionResult> {
+    if (!cfg.endpoint || !cfg.apiKey || !cfg.model) {
+      throw new Error("Azure OpenAI is not configured");
+    }
+    const client = new AzureOpenAI({
+      endpoint: cfg.endpoint,
+      apiKey: cfg.apiKey,
+      apiVersion: cfg.apiVersion || "2024-10-21",
+      deployment: cfg.model,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    const completion = await client.chat.completions.create({
+      model: cfg.model,
+      max_completion_tokens: opts.maxOutputTokens,
+      messages: [
+        { role: "system", content: input.system },
+        ...input.messages.map((m) => ({ role: m.role, content: m.content })),
+      ],
+    });
+    return {
+      text: completion.choices[0]?.message?.content ?? "",
+      model: completion.model || cfg.model,
+      tokensIn: completion.usage?.prompt_tokens ?? null,
+      tokensOut: completion.usage?.completion_tokens ?? null,
+    };
+  },
 };
