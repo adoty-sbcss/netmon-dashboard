@@ -99,4 +99,22 @@ export interface AiProvider {
     cfg: ResolvedProviderConfig,
     opts: AnalyzeOptions,
   ): Promise<AiAnalysisResult>;
+  /**
+   * Generic single completion (system + user → text). Used by non-analysis AI
+   * features such as device-type adjudication, where the caller parses the text
+   * itself. `json` requests strict JSON output where the provider supports it.
+   */
+  complete(
+    msg: { system: string; user: string },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number; json?: boolean },
+  ): Promise<CompletionResult>;
+}
+
+/** What every provider's `complete()` returns. */
+export interface CompletionResult {
+  text: string;
+  model: string;
+  tokensIn: number | null;
+  tokensOut: number | null;
 }

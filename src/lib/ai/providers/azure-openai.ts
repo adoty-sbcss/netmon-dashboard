@@ -11,9 +11,12 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  CompletionResult,
   ResolvedProviderConfig,
 } from "../types";
 import { ANALYSIS_OUTPUT_SCHEMA, normalizeOutput } from "../output-schema";
+
+const MAX_RETRIES = Number(process.env.AI_MAX_RETRIES) || 4;
 
 export const azureOpenAiProvider: AiProvider = {
   id: "azure-openai",
@@ -46,7 +49,7 @@ export const azureOpenAiProvider: AiProvider = {
       deployment: cfg.model,
       // Azure 429s when the deployment's TPM is exceeded; the SDK backs off
       // honoring Retry-After. More retries = transient throttling self-heals.
-      maxRetries: Number(process.env.AI_MAX_RETRIES) || 4,
+      maxRetries: MAX_RETRIES,
       timeout: 60_000,
     });
 
@@ -80,6 +83,39 @@ export const azureOpenAiProvider: AiProvider = {
       tokensIn: completion.usage?.prompt_tokens ?? null,
       tokensOut: completion.usage?.completion_tokens ?? null,
       latencyMs,
+    };
+  },
+
+  async complete(
+    msg: { system: string; user: string },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number; json?: boolean },
+  ): Promise<CompletionResult> {
+    if (!cfg.endpoint || !cfg.apiKey || !cfg.model) {
+      throw new Error("Azure OpenAI is not configured");
+    }
+    const client = new AzureOpenAI({
+      endpoint: cfg.endpoint,
+      apiKey: cfg.apiKey,
+      apiVersion: cfg.apiVersion || "2024-10-21",
+      deployment: cfg.model,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    const completion = await client.chat.completions.create({
+      model: cfg.model,
+      max_completion_tokens: opts.maxOutputTokens,
+      messages: [
+        { role: "system", content: msg.system },
+        { role: "user", content: msg.user },
+      ],
+      ...(opts.json ? { response_format: { type: "json_object" as const } } : {}),
+    });
+    return {
+      text: completion.choices[0]?.message?.content ?? "",
+      model: completion.model || cfg.model,
+      tokensIn: completion.usage?.prompt_tokens ?? null,
+      tokensOut: completion.usage?.completion_tokens ?? null,
     };
   },
 };

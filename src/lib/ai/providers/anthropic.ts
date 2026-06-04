@@ -12,11 +12,13 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  CompletionResult,
   ResolvedProviderConfig,
 } from "../types";
 import { ANALYSIS_OUTPUT_SCHEMA, normalizeOutput } from "../output-schema";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
+const MAX_RETRIES = Number(process.env.AI_MAX_RETRIES) || 4;
 
 export const anthropicProvider: AiProvider = {
   id: "anthropic",
@@ -43,7 +45,7 @@ export const anthropicProvider: AiProvider = {
 
     const client = new Anthropic({
       apiKey: cfg.apiKey,
-      maxRetries: Number(process.env.AI_MAX_RETRIES) || 4,
+      maxRetries: MAX_RETRIES,
       timeout: 60_000,
     });
 
@@ -83,6 +85,38 @@ export const anthropicProvider: AiProvider = {
       tokensIn: message.usage?.input_tokens ?? null,
       tokensOut: message.usage?.output_tokens ?? null,
       latencyMs,
+    };
+  },
+
+  async complete(
+    msg: { system: string; user: string },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number; json?: boolean },
+  ): Promise<CompletionResult> {
+    if (!cfg.apiKey) throw new Error("Anthropic is not configured");
+    const model = cfg.model || DEFAULT_MODEL;
+    const client = new Anthropic({
+      apiKey: cfg.apiKey,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    // Anthropic has no JSON response mode; the prompt asks for JSON and the caller
+    // extracts it. (opts.json is accepted for a uniform signature.)
+    void opts.json;
+    const message = await client.messages.create({
+      model,
+      max_tokens: opts.maxOutputTokens,
+      system: msg.system,
+      messages: [{ role: "user", content: msg.user }],
+    });
+    const text = message.content
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("");
+    return {
+      text,
+      model: message.model || model,
+      tokensIn: message.usage?.input_tokens ?? null,
+      tokensOut: message.usage?.output_tokens ?? null,
     };
   },
 };

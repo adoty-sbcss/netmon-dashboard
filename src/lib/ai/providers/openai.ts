@@ -11,9 +11,12 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  CompletionResult,
   ResolvedProviderConfig,
 } from "../types";
 import { ANALYSIS_OUTPUT_SCHEMA, normalizeOutput } from "../output-schema";
+
+const MAX_RETRIES = Number(process.env.AI_MAX_RETRIES) || 4;
 
 export const openAiProvider: AiProvider = {
   id: "openai",
@@ -44,7 +47,7 @@ export const openAiProvider: AiProvider = {
       organization: cfg.organization || undefined,
       project: cfg.project || undefined,
       baseURL: cfg.baseURL || undefined,
-      maxRetries: Number(process.env.AI_MAX_RETRIES) || 4,
+      maxRetries: MAX_RETRIES,
       timeout: 60_000,
     });
 
@@ -78,6 +81,37 @@ export const openAiProvider: AiProvider = {
       tokensIn: completion.usage?.prompt_tokens ?? null,
       tokensOut: completion.usage?.completion_tokens ?? null,
       latencyMs,
+    };
+  },
+
+  async complete(
+    msg: { system: string; user: string },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number; json?: boolean },
+  ): Promise<CompletionResult> {
+    if (!cfg.apiKey || !cfg.model) throw new Error("OpenAI is not configured");
+    const client = new OpenAI({
+      apiKey: cfg.apiKey,
+      organization: cfg.organization || undefined,
+      project: cfg.project || undefined,
+      baseURL: cfg.baseURL || undefined,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    const completion = await client.chat.completions.create({
+      model: cfg.model,
+      max_completion_tokens: opts.maxOutputTokens,
+      messages: [
+        { role: "system", content: msg.system },
+        { role: "user", content: msg.user },
+      ],
+      ...(opts.json ? { response_format: { type: "json_object" as const } } : {}),
+    });
+    return {
+      text: completion.choices[0]?.message?.content ?? "",
+      model: completion.model || cfg.model,
+      tokensIn: completion.usage?.prompt_tokens ?? null,
+      tokensOut: completion.usage?.completion_tokens ?? null,
     };
   },
 };

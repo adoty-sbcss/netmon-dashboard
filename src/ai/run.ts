@@ -235,6 +235,40 @@ async function main() {
       `topology ok=${tally.topology.ok} failed=${tally.topology.failed} skipped=${tally.topology.skipped}; ` +
       `deferred=${tally.deferred}.`,
   );
+
+  // --- Device-type AI adjudication (the low-confidence classification tail) ---
+  // Only escalates ambiguous devices, caches by signalHash, and shares the same
+  // limiter as the sweep above. Set AI_CLASSIFY=0 to skip it.
+  if (process.env.AI_CLASSIFY !== "0") {
+    try {
+      const { adjudicateClassifications } = await import("@/lib/classify/adjudicate");
+      const { aiComplete } = await import("@/lib/ai/complete");
+      const { getAiUsageThisMonth } = await import("@/lib/ai/queries");
+
+      // Advisory monthly-cap gate (cost computed once; classification calls are
+      // tiny and aren't separately metered, so this is a coarse guard).
+      let withinBudget: () => boolean = () => true;
+      if (settings.monthlySpendCapUsd != null) {
+        const cap = settings.monthlySpendCapUsd;
+        const usage = await getAiUsageThisMonth();
+        const spent = usage.reduce((a, u) => a + u.costUsd, 0);
+        withinBudget = () => spent < cap;
+      }
+
+      const cl = await adjudicateClassifications({
+        callModel: (p) => aiComplete(p).then((r) => r.text),
+        withinBudget,
+        limit: Number(process.env.AI_CLASSIFY_LIMIT) || 200,
+      });
+      console.log(
+        `Classification: examined=${cl.examined} adjudicated=${cl.adjudicated} ` +
+          `cached=${cl.cached} skippedBudget=${cl.skippedBudget} failed=${cl.failed}.`,
+      );
+    } catch (err) {
+      console.error(`Classification adjudication skipped: ${(err as Error).message}`);
+    }
+  }
+
   process.exit(failed > 0 ? 1 : 0);
 }
 
