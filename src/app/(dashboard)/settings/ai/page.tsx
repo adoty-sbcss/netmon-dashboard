@@ -7,7 +7,11 @@ import {
   getAiSettings,
 } from "@/lib/ai/settings";
 import { ALL_PROVIDERS } from "@/lib/ai/providers/registry";
-import { getAiUsageThisMonth } from "@/lib/ai/queries";
+import {
+  getAiUsageThisMonth,
+  getRecentAiRuns,
+  getDailyAiUsage,
+} from "@/lib/ai/queries";
 import { PageHeader } from "@/components/page-header";
 import { AiSettingsForm } from "./ai-settings-form";
 
@@ -19,10 +23,12 @@ export default async function AiSettingsPage() {
   if (!user) redirect("/login");
   if (user.role !== "superadmin") redirect("/");
 
-  const [views, settings, usage] = await Promise.all([
+  const [views, settings, usage, recentRuns, dailyUsage] = await Promise.all([
     Promise.all(AI_PROVIDER_IDS.map((id) => getProviderSettingsView(id))),
     getAiSettings(),
     getAiUsageThisMonth(),
+    getRecentAiRuns(30),
+    getDailyAiUsage(14),
   ]);
 
   // Pair each provider's static metadata (label + which fields it needs) with
@@ -39,7 +45,13 @@ export default async function AiSettingsPage() {
         title="AI analysis"
         description="Configure the models that review network data, schedule the daily run, and track usage. API keys are encrypted at rest."
       />
-      <AiSettingsForm providers={providers} settings={settings} usage={usage} />
+      <AiSettingsForm
+        providers={providers}
+        settings={settings}
+        usage={usage}
+        recentRuns={recentRuns}
+        dailyUsage={dailyUsage}
+      />
     </div>
   );
 }

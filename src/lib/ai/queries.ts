@@ -7,6 +7,7 @@ import { and, count, desc, eq, gte, max, sql, sum } from "drizzle-orm";
 
 import { db } from "@/db";
 import { aiAnalyses, type AiFinding } from "@/db/schema/ai";
+import { districts, schools } from "@/db/schema/app";
 
 export interface AnalysisRow {
   id: number;
@@ -227,6 +228,123 @@ export async function getAiUsageThisMonth(): Promise<ProviderUsage[]> {
     failed: Number(r.failed ?? 0),
     tokensIn: Number(r.tokensIn ?? 0),
     tokensOut: Number(r.tokensOut ?? 0),
+    costUsd: Number(r.costUsd ?? 0),
+  }));
+}
+
+// ---- activity log + daily usage (the "what/when/where" view) ---------------
+
+export interface RecentAiRun {
+  id: number;
+  createdAt: Date;
+  completedAt: Date | null;
+  /** 'scheduled' | 'manual'. */
+  trigger: string;
+  /** 'general' | 'topology'. */
+  kind: string;
+  /** Human label of what was analyzed (district, or "District — School"). */
+  scopeLabel: string;
+  scopeType: string;
+  providerId: string;
+  model: string | null;
+  /** 'running' | 'ok' | 'failed'. */
+  status: string;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: number | null;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+/** The most recent analysis rows across all scopes — the activity feed. Each row
+ *  is one model call, labeled with what/when/where so a 429 (or any failure) is
+ *  visible alongside the run that caused it. */
+export async function getRecentAiRuns(limit = 30): Promise<RecentAiRun[]> {
+  const rows = await db
+    .select({
+      id: aiAnalyses.id,
+      createdAt: aiAnalyses.createdAt,
+      completedAt: aiAnalyses.completedAt,
+      trigger: aiAnalyses.trigger,
+      kind: aiAnalyses.kind,
+      scopeType: aiAnalyses.scopeType,
+      districtName: districts.name,
+      schoolName: schools.name,
+      providerId: aiAnalyses.providerId,
+      model: aiAnalyses.model,
+      status: aiAnalyses.status,
+      tokensIn: aiAnalyses.tokensIn,
+      tokensOut: aiAnalyses.tokensOut,
+      costUsd: aiAnalyses.costUsd,
+      latencyMs: aiAnalyses.latencyMs,
+      error: aiAnalyses.error,
+    })
+    .from(aiAnalyses)
+    .leftJoin(districts, eq(aiAnalyses.districtId, districts.id))
+    .leftJoin(
+      schools,
+      and(eq(aiAnalyses.scopeType, "school"), eq(aiAnalyses.scopeId, schools.id)),
+    )
+    .orderBy(desc(aiAnalyses.createdAt))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.createdAt,
+    completedAt: r.completedAt,
+    trigger: r.trigger,
+    kind: r.kind,
+    scopeType: r.scopeType,
+    scopeLabel:
+      r.scopeType === "school"
+        ? `${r.districtName ?? "?"} — ${r.schoolName ?? "(school)"}`
+        : r.districtName ?? "(district)",
+    providerId: r.providerId,
+    model: r.model,
+    status: r.status,
+    tokensIn: r.tokensIn,
+    tokensOut: r.tokensOut,
+    costUsd: r.costUsd,
+    latencyMs: r.latencyMs,
+    error: r.error,
+  }));
+}
+
+export interface DailyAiUsage {
+  /** YYYY-MM-DD (server timezone). */
+  day: string;
+  runs: number;
+  failed: number;
+  /** tokensIn + tokensOut. */
+  tokens: number;
+  costUsd: number;
+}
+
+/** Per-day rollup over the last `days` days — the usage timeline. Days with no
+ *  runs are omitted here; the UI fills the gaps so the axis stays continuous. */
+export async function getDailyAiUsage(days = 14): Promise<DailyAiUsage[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const dayExpr = sql<string>`to_char(${aiAnalyses.createdAt}, 'YYYY-MM-DD')`;
+
+  const rows = await db
+    .select({
+      day: dayExpr,
+      runs: count(),
+      failed: sum(sql<number>`case when ${aiAnalyses.status} = 'failed' then 1 else 0 end`),
+      tokensIn: sum(aiAnalyses.tokensIn),
+      tokensOut: sum(aiAnalyses.tokensOut),
+      costUsd: sum(aiAnalyses.costUsd),
+    })
+    .from(aiAnalyses)
+    .where(gte(aiAnalyses.createdAt, since))
+    .groupBy(dayExpr)
+    .orderBy(dayExpr);
+
+  return rows.map((r) => ({
+    day: r.day,
+    runs: Number(r.runs ?? 0),
+    failed: Number(r.failed ?? 0),
+    tokens: Number(r.tokensIn ?? 0) + Number(r.tokensOut ?? 0),
     costUsd: Number(r.costUsd ?? 0),
   }));
 }

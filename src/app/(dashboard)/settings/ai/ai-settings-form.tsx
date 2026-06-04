@@ -8,7 +8,10 @@ import {
   Sparkles,
   KeyRound,
   BarChart3,
+  Activity,
 } from "lucide-react";
+
+import { relativeTime } from "@/lib/format";
 
 import {
   saveProviderAction,
@@ -18,7 +21,7 @@ import {
 } from "@/lib/ai/actions";
 import type { AiProviderSettingsView, AiGlobalSettings } from "@/lib/ai/settings";
 import type { ProviderFieldSpec } from "@/lib/ai/types";
-import type { ProviderUsage } from "@/lib/ai/queries";
+import type { ProviderUsage, RecentAiRun, DailyAiUsage } from "@/lib/ai/queries";
 import {
   modelOptionsFor,
   AZURE_API_VERSIONS,
@@ -442,14 +445,136 @@ function UsageCard({
   );
 }
 
+function fmtTokens(n: number | null): string {
+  if (n == null) return "—";
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+function ActivityCard({
+  runs,
+  daily,
+}: {
+  runs: RecentAiRun[];
+  daily: DailyAiUsage[];
+}) {
+  // Fill the last 14 days so the timeline axis stays continuous even with gaps.
+  const DAYS = 14;
+  const byDay = new Map(daily.map((d) => [d.day, d]));
+  const today = new Date();
+  const series: DailyAiUsage[] = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const dt = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(
+      dt.getDate(),
+    ).padStart(2, "0")}`;
+    series.push(byDay.get(key) ?? { day: key, runs: 0, failed: 0, tokens: 0, costUsd: 0 });
+  }
+  const maxTokens = Math.max(1, ...series.map((d) => d.tokens));
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Activity className="size-4 text-primary" /> AI activity
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5 text-sm">
+        <div className="flex flex-col gap-1.5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Tokens / day · last 14 days
+          </p>
+          <div className="flex h-24 items-end gap-1">
+            {series.map((d) => {
+              const h = Math.round((d.tokens / maxTokens) * 100);
+              return (
+                <div
+                  key={d.day}
+                  className="flex flex-1 flex-col justify-end"
+                  title={`${d.day}: ${d.tokens.toLocaleString()} tokens · ${d.runs} run(s)${
+                    d.failed > 0 ? ` · ${d.failed} failed` : ""
+                  }`}
+                >
+                  <div
+                    className={`w-full rounded-t ${d.failed > 0 ? "bg-destructive/70" : "bg-primary/70"}`}
+                    style={{ height: `${d.tokens > 0 ? Math.max(4, h) : 0}%` }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>{series[0].day.slice(5)}</span>
+            <span>today</span>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Recent runs
+          </p>
+          {runs.length === 0 ? (
+            <p className="text-muted-foreground">No runs recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="text-muted-foreground">
+                  <tr>
+                    <th className="py-1 pr-3 font-medium">When</th>
+                    <th className="py-1 pr-3 font-medium">Trigger</th>
+                    <th className="py-1 pr-3 font-medium">Kind</th>
+                    <th className="py-1 pr-3 font-medium">Scope</th>
+                    <th className="py-1 pr-3 font-medium">Model</th>
+                    <th className="py-1 pr-3 font-medium">Tok in/out</th>
+                    <th className="py-1 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id} className="border-t align-top">
+                      <td className="whitespace-nowrap py-1.5 pr-3">{relativeTime(r.createdAt)}</td>
+                      <td className="py-1.5 pr-3">{r.trigger}</td>
+                      <td className="py-1.5 pr-3">{r.kind}</td>
+                      <td className="py-1.5 pr-3">{r.scopeLabel}</td>
+                      <td className="whitespace-nowrap py-1.5 pr-3">{r.model ?? r.providerId}</td>
+                      <td className="whitespace-nowrap py-1.5 pr-3 tabular-nums">
+                        {fmtTokens(r.tokensIn)}/{fmtTokens(r.tokensOut)}
+                      </td>
+                      <td className="py-1.5">
+                        {r.status === "ok" ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">ok</span>
+                        ) : r.status === "running" ? (
+                          <span className="text-muted-foreground">running…</span>
+                        ) : (
+                          <span className="text-destructive" title={r.error ?? ""}>
+                            {r.error?.includes("429") ? "rate-limited (429)" : "failed"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function AiSettingsForm({
   providers,
   settings,
   usage,
+  recentRuns,
+  dailyUsage,
 }: {
   providers: ProviderProp[];
   settings: AiGlobalSettings;
   usage: ProviderUsage[];
+  recentRuns: RecentAiRun[];
+  dailyUsage: DailyAiUsage[];
 }) {
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -458,7 +583,14 @@ export function AiSettingsForm({
           <ProviderCard key={p.id} provider={p} />
         ))}
       </div>
-      <GlobalCard settings={settings} />
+      {/* Remount GlobalCard whenever settings change (updatedAt bumps on every
+          save) so its checkbox state re-syncs to the persisted value instead of
+          shadowing it in stale local state. */}
+      <GlobalCard
+        key={String(settings.updatedAt ?? settings.scheduleEnabled)}
+        settings={settings}
+      />
+      <ActivityCard runs={recentRuns} daily={dailyUsage} />
       <UsageCard usage={usage} providers={providers} cap={settings.monthlySpendCapUsd} />
     </div>
   );
