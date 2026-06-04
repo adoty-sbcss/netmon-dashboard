@@ -1,0 +1,53 @@
+name: Refresh classification data (OUI)
+
+# Auto-updates the MAC-vendor (OUI) registry from IEEE + Wireshark + Nmap and
+# commits the regenerated JSON to main. The existing weekly "Build and deploy"
+# run (Mondays 11:00 UTC) checks out main HEAD and always rebuilds, so it bakes
+# the fresh data into the image automatically — no deploy logic or secrets here.
+# Runs Sundays so the commit lands before that Monday deploy.
+#
+# DHCP option-55 fingerprints are NOT refreshed here: the open ODbL source is the
+# FROZEN 2014 snapshot (it never changes upstream), so dhcp-fingerprints.json is a
+# small hand-curated seed instead. New-device DHCP coverage is handled by the AI
+# adjudicator, not by re-pulling stale data.
+
+on:
+  schedule:
+    - cron: "0 10 * * 0" # Sundays 10:00 UTC (a day before the Monday deploy)
+  workflow_dispatch: {} # manual "Run workflow" button for testing / on-demand
+
+permissions:
+  contents: write # commit the refreshed registry back to main
+
+# Don't pile up runs if one is slow; the newest wins.
+concurrency:
+  group: refresh-oui
+  cancel-in-progress: true
+
+jobs:
+  refresh-oui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Refresh OUI registry (IEEE + Wireshark + Nmap)
+        run: npm run oui:refresh
+
+      - name: Commit if the registry changed
+        run: |
+          if git diff --quiet -- src/lib/oui/oui-registry.json src/lib/oui/oui-registry-fine.json; then
+            echo "No OUI changes upstream — nothing to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/oui/oui-registry.json src/lib/oui/oui-registry-fine.json
+          git commit -m "chore(oui): auto-refresh MAC-vendor registry from IEEE/Wireshark/Nmap"
+          git push

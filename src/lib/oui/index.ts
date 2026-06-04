@@ -24,10 +24,12 @@ const OUI: Record<string, string> = REGISTRY as Record<string, string>;
 // MA-S/MA-M owner wins over the 24-bit block holder. Empty until `npm run oui:refresh`
 // populates it (IEEE MA-M/MA-S + Wireshark /28 /36 entries).
 const OUI_FINE: Record<string, string> = FINE as Record<string, string>;
-// DHCP option-55 (parameter request list) fingerprint → device type. Starter seed
-// in src/lib/oui/dhcp-fingerprints.json; `npm run dhcp:refresh` regenerates it from
-// the open (ODbL) legacy Fingerbank dhcp_fingerprints.conf. Keyed by the decimal
-// option codes joined with commas (order-sensitive — it IS the fingerprint).
+// DHCP option-55 (parameter request list) fingerprint → device type. A small,
+// HAND-CURATED seed (src/lib/oui/dhcp-fingerprints.json) of high-confidence,
+// common fingerprints — keyed by the decimal option codes joined with commas
+// (order-sensitive — it IS the fingerprint). The open ODbL source is a frozen
+// 2014 snapshot not worth auto-pulling; the AI adjudicator covers everything this
+// seed misses, so keep the seed conservative rather than broad-but-wrong.
 const DHCP_FP: Record<string, string> = DHCP_FP_JSON as Record<string, string>;
 const HEX6 = /^[0-9A-F]{6}$/;
 
@@ -139,7 +141,8 @@ export function classifyByDhcpVendor(vendorClass: string | null | undefined): De
 /**
  * DHCP option-55 (parameter request list) fingerprint → device type. Normalizes
  * the incoming list to decimal option codes joined by commas, then looks it up in
- * the DHCP_FP map. Returns null on no match (the map is seed-only until refreshed).
+ * the curated DHCP_FP seed. Returns null on no match (the AI adjudicator handles
+ * the long tail this small seed doesn't cover).
  */
 export function classifyByDhcpFingerprint(paramList: string | null | undefined): DeviceType | null {
   if (!paramList) return null;

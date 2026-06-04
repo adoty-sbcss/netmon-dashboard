@@ -110,7 +110,7 @@ filter / "needs review" queue.
 Prioritized build order (the high-leverage 5, then AI on top):
 1. **Merge Wireshark `manuf` + Nmap prefixes** into the OUI table — cheap win (DONE;
    `npm run oui:refresh` + longest-prefix lookup).
-2. **DHCP opt-55 fingerprint matcher**, seeded from open data — see decision below.
+2. **DHCP opt-55 fingerprint matcher** — small hand-curated seed; AI covers the tail.
 3. **mDNS/SSDP collection** — classifies the MAC-randomized mobile fleet OUI misses.
 4. **sysObjectID decode** (IANA PEN + LibreNMS defs) — turns SNMP into real models.
 5. **CPE/NVD mapping** — unlocks EOL + vuln correlation.
@@ -123,9 +123,9 @@ air-gapped) and a **paid offline SQLite DB** (contact-for-pricing). The only fre
 redistributable Fingerbank data is the legacy `dhcp_fingerprints.conf` **frozen at
 v6.8.2 / 2014** (ODbL 1.0 + DbCL 1.0 — usable in a gov internal tool; share-alike
 only triggers if you publicly redistribute a derivative DB). DECISION: build an
-**open offline stack** — our own opt-55/60 matcher seeded from the legacy ODbL file
-+ community signature lists, plus the merged OUI table + mDNS — and lean on the AI
-adjudicator to cover the ~12-year data gap. Keep Fingerbank's paid offline DB as a
+**open offline stack** — our own opt-55/60 matcher (a small hand-curated seed; the
+legacy ODbL file proved frozen + keyed by class-id, not worth auto-parsing), plus
+the merged OUI table + mDNS — and lean on the AI adjudicator to cover the data gap. Keep Fingerbank's paid offline DB as a
 documented fallback if accuracy proves insufficient. (Reimplement the approach —
 don't vendor GPL-2.0 Satori code into the dashboard.)
 

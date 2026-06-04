@@ -19,9 +19,10 @@ wishlist item "Device classification & fingerprinting (automatic, high-confidenc
   auto types and a "Needs review (N)" filter; `getInventoryForSchool` exposes
   `confidence` / `confirmed` / `needsReview` (registry match or `deviceTypeOverride`
   ⇒ confirmed, score hidden).
-- **DHCP opt-55 matcher** — `classifyByDhcpFingerprint` + `dhcp-fingerprints.json`
-  seed + `npm run dhcp:refresh` (regenerates from the open ODbL legacy file); wired
-  as a distinct `dhcp.opt55` candidate. This is the OUI-blind mobile-fleet win.
+- **DHCP opt-55 matcher** — `classifyByDhcpFingerprint` + a small hand-curated
+  `dhcp-fingerprints.json` seed (the open ODbL source is frozen 2014 + keyed by
+  class-id, not worth auto-parsing); wired as a distinct `dhcp.opt55` candidate.
+  The AI adjudicator covers the long tail. This is the OUI-blind mobile-fleet win.
 - **AI adjudicator (core)** — `src/lib/classify/adjudicate.ts`: evidence builder,
   strict prompt + JSON verdict parser, signalHash cache (reuses prior AI verdicts),
   budget gate, and DB writeback (`class_method='ai'`). The model call + budget check
