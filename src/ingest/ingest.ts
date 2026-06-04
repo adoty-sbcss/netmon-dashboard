@@ -50,7 +50,7 @@ import {
   type ScanData,
   type RawTopology,
 } from "./bundle";
-import { enrichHost } from "../lib/oui";
+import { classifyHost } from "../lib/classify";
 
 /**
  * SNMP curation. Raw SNMP is thousands of rows/scan (mostly ipNetToMediaTable +
@@ -785,7 +785,7 @@ export async function ingestBundle(
         // Enrich: fill manufacturer from the OUI registry when the bundle says
         // "unknown"/blank, and classify device type from SNMP + DHCP fingerprint
         // + hostname + vendor. Pure/offline.
-        const { vendor, deviceType } = enrichHost({
+        const cls = classifyHost({
           mac,
           vendor: str(d.vendor),
           hostname,
@@ -800,8 +800,12 @@ export async function ingestBundle(
             mac,
             ip: str(d.ip),
             hostname,
-            vendor,
-            deviceType,
+            vendor: cls.vendor,
+            deviceType: cls.deviceType,
+            classConfidence: cls.confidence,
+            classMethod: cls.method,
+            classSources: cls.sources,
+            classSignalHash: cls.signalHash,
             firstSeenAt: toDate(d.first_seen_at) ?? seen,
             lastSeenAt: seen,
           })
@@ -815,6 +819,12 @@ export async function ingestBundle(
               hostname: sql`coalesce(excluded.hostname, ${entitiesHost.hostname})`,
               vendor: sql`coalesce(excluded.vendor, ${entitiesHost.vendor})`,
               deviceType: sql`case when excluded.device_type is null or excluded.device_type = 'unknown' then coalesce(${entitiesHost.deviceType}, excluded.device_type) else excluded.device_type end`,
+              // Keep the scored fields in lockstep with whichever device_type wins
+              // above: adopt the new scores only when we adopt the new type.
+              classConfidence: sql`case when excluded.device_type is null or excluded.device_type = 'unknown' then ${entitiesHost.classConfidence} else excluded.class_confidence end`,
+              classMethod: sql`case when excluded.device_type is null or excluded.device_type = 'unknown' then ${entitiesHost.classMethod} else excluded.class_method end`,
+              classSources: sql`case when excluded.device_type is null or excluded.device_type = 'unknown' then ${entitiesHost.classSources} else excluded.class_sources end`,
+              classSignalHash: sql`case when excluded.device_type is null or excluded.device_type = 'unknown' then ${entitiesHost.classSignalHash} else excluded.class_signal_hash end`,
               lastSeenAt: seen,
               updatedAt: new Date(),
             },

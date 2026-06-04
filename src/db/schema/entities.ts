@@ -81,6 +81,15 @@ export const entitiesHost = pgTable(
      *  the auto `deviceType` everywhere the effective type is read, and the
      *  ingest upsert never touches it — so a manual class survives re-scans. */
     deviceTypeOverride: text("device_type_override"),
+    // Scored classification (src/lib/classify): confidence 0–1, method
+    // ('deterministic' | 'ai' | 'confirmed'), per-signal provenance, and a hash of
+    // the signal set (AI cache key + change detector). A set deviceTypeOverride is
+    // the human-confirmed truth and supersedes these at read time (effective
+    // confidence 1.0). Written by the ingest upsert + the enrich backfill.
+    classConfidence: doublePrecision("class_confidence"),
+    classMethod: text("class_method"),
+    classSources: jsonb("class_sources").notNull().default([]),
+    classSignalHash: text("class_signal_hash"),
     attributes: jsonb("attributes").notNull().default({}),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),

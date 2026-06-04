@@ -15,7 +15,9 @@
     "ingest": "tsx src/ingest/run.ts",
     "ingest:sync": "tsx src/ingest/sync.ts",
     "enrich": "tsx src/ingest/enrich.ts",
-    "ai:analyze": "tsx --conditions=react-server src/ai/run.ts"
+    "ai:analyze": "tsx --conditions=react-server src/ai/run.ts",
+    "oui:refresh": "tsx src/lib/oui/refresh-oui.ts",
+    "dhcp:refresh": "tsx src/lib/oui/refresh-dhcp-fingerprints.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

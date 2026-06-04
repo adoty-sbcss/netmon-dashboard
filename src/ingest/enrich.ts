@@ -15,7 +15,7 @@ import { desc, eq, isNotNull, or } from "drizzle-orm";
 import { db } from "../db";
 import { entitiesHost } from "../db/schema";
 import { dhcpObservations } from "../db/schema/netmon";
-import { enrichHost } from "../lib/oui";
+import { classifyHost } from "../lib/classify";
 
 interface Fp {
   hostname?: string | null;
@@ -65,6 +65,7 @@ async function main() {
       vendor: entitiesHost.vendor,
       hostname: entitiesHost.hostname,
       deviceType: entitiesHost.deviceType,
+      classConfidence: entitiesHost.classConfidence,
     })
     .from(entitiesHost);
 
@@ -72,17 +73,33 @@ async function main() {
   for (const r of rows) {
     const fp = dhcpFp.get(r.mac.toLowerCase());
     const hostname = r.hostname ?? fp?.hostname ?? null;
-    const { vendor, deviceType } = enrichHost({
+    const cls = classifyHost({
       mac: r.mac,
       vendor: r.vendor,
       hostname,
       dhcpVendorClass: fp?.vendorClass ?? null,
       dhcpParamList: fp?.paramList ?? null,
     });
-    if (vendor !== r.vendor || deviceType !== r.deviceType || hostname !== r.hostname) {
+    // Re-write when vendor/type/hostname changed OR the scored fields were never
+    // populated (rows ingested before the scored-classification columns existed).
+    if (
+      cls.vendor !== r.vendor ||
+      cls.deviceType !== r.deviceType ||
+      hostname !== r.hostname ||
+      r.classConfidence == null
+    ) {
       await db
         .update(entitiesHost)
-        .set({ vendor, deviceType, hostname, updatedAt: new Date() })
+        .set({
+          vendor: cls.vendor,
+          deviceType: cls.deviceType,
+          hostname,
+          classConfidence: cls.confidence,
+          classMethod: cls.method,
+          classSources: cls.sources,
+          classSignalHash: cls.signalHash,
+          updatedAt: new Date(),
+        })
         .where(eq(entitiesHost.id, r.id));
       changed++;
     }

@@ -10,6 +10,35 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { relativeTime } from "@/lib/format";
 
+function IssueActionButton({
+  action,
+  pending,
+  id,
+  basePath,
+  act,
+  label,
+  Icon,
+}: {
+  action: (formData: FormData) => void;
+  pending: boolean;
+  id: number;
+  basePath: string;
+  act: string;
+  label: string;
+  Icon: typeof Check;
+}) {
+  return (
+    <form action={action}>
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="action" value={act} />
+      <input type="hidden" name="basePath" value={basePath} />
+      <Button type="submit" size="sm" variant="outline" disabled={pending}>
+        <Icon className="size-3.5" /> {label}
+      </Button>
+    </form>
+  );
+}
+
 function IssueRowActions({
   id,
   status,
@@ -20,21 +49,15 @@ function IssueRowActions({
   basePath: string;
 }) {
   const [, action, pending] = useActionState<IssueActionState, FormData>(updateIssueAction, {});
-  const Btn = ({ act, label, Icon }: { act: string; label: string; Icon: typeof Check }) => (
-    <form action={action}>
-      <input type="hidden" name="id" value={id} />
-      <input type="hidden" name="action" value={act} />
-      <input type="hidden" name="basePath" value={basePath} />
-      <Button type="submit" size="sm" variant="outline" disabled={pending}>
-        <Icon className="size-3.5" /> {label}
-      </Button>
-    </form>
-  );
-  if (status === "resolved") return <Btn act="reopen" label="Reopen" Icon={RotateCcw} />;
+  const common = { action, pending, id, basePath };
+  if (status === "resolved")
+    return <IssueActionButton {...common} act="reopen" label="Reopen" Icon={RotateCcw} />;
   return (
     <div className="flex gap-2">
-      {status !== "acknowledged" && <Btn act="acknowledge" label="Ack" Icon={Check} />}
-      <Btn act="resolve" label="Resolve" Icon={CircleCheck} />
+      {status !== "acknowledged" && (
+        <IssueActionButton {...common} act="acknowledge" label="Ack" Icon={Check} />
+      )}
+      <IssueActionButton {...common} act="resolve" label="Resolve" Icon={CircleCheck} />
     </div>
   );
 }

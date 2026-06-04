@@ -20,6 +20,34 @@
   on the RG `W2-SBCSS-District-NetMon-Dashboard`), and combine with the AI token
   cost (`ai_analyses.cost_usd`) for a "total cost of the app" admin view.
 
+## Reporting & notifications (new ideas)
+- **Branded district report (PDF), tiered by depth** — generate an
+  SBCSS-branded PDF summarizing the collected network data for a district, to
+  hand to the district. Offer selectable report levels so a single page doesn't
+  have to do every job:
+    - *Summary (1 page)* — the executive one-pager: headline health, device/
+      inventory counts, EOL/EOS exposure, top issues. Skimmable in a minute.
+    - *Standard (few pages)* — adds topology summary, per-category breakdowns,
+      trends, and the notable findings/issues list.
+    - *Full (deep dive)* — the detailed technical report: per-device/per-segment
+      detail, full inventory + lifecycle, all findings.
+  Audience is a Director of Technology with a high-level, technically fluent
+  networking background — so keep every tier dense and signal-rich, not
+  dumbed-down; the tiers vary *scope/length*, not reading level. District-scoped,
+  built read-time from existing data (+ optional AI summary). PDFs stored locally
+  for now (filesystem/blob); email delivery comes next (see Email-out below).
+- **Scheduled report runs** — let an admin configure a report to auto-generate
+  on a cadence: daily / weekly / monthly, per district. Reuse the existing cron
+  infrastructure (cf. the daily AI cron); persist the schedule + last-run, write
+  the PDF to storage, and later hand it to the email-out delivery step.
+- **Email-out (alerts, reports, other)** — outbound email from the dashboard as
+  shared notification plumbing: deliver the scheduled report PDF, push alerts
+  from the Actionable alerting layer / Issues tracker (Act Now / Watch tiers),
+  and send other one-off notifications. Needs an SMTP / transactional-email
+  config in admin (provider creds, from-address, per-district recipient lists)
+  plus an opt-in / subscription model so it ties into alerting without causing
+  fatigue.
+
 ## Data we currently filter out at ingest (could bring in)
 The dashboard CURATES SNMP at ingest — raw is thousands of rows/scan and only a
 priority subset is mirrored (the bulk `ifTable` / `ipNetToMediaTable` are capped).
@@ -36,10 +64,78 @@ changes (no extra collection), high value:
 - **STP port roles** (`dot1dStpPortTable`) — show active vs blocked redundant links.
 - **sysObjectID → vendor/model decode** (static table) — cleaner identity + icons.
 
+## Device classification & fingerprinting (automatic, high-confidence)
+Goal: the system auto-determines the most accurate device **type / model / OS**
+per device with a **confidence score**, not one brittle guess. No single signal
+is authoritative (OUI is defeated by MAC randomization, DHCP alone is coarse,
+SNMP only covers managed gear), so **fuse many weak signals** and let **AI
+adjudicate only the hard cases**. Runs DASHBOARD-side at ingest (internet + AI
+connectors already live here); sensors stay air-gapped collect-and-bundle — they
+just gather richer signals.
+
+Pipeline:
+1. **Collect signals** (sensor; most already bundled): MAC/OUI, DHCP opt 55
+   + add **opt 60** (vendor class) + hostname, **mDNS/DNS-SD + SSDP/UPnP** service
+   types & model strings, SNMP sysDescr/sysObjectID/Entity-MIB, open ports +
+   service banners, HTTP Server header / title / **favicon hash**, TLS JA3/JARM.
+2. **Deterministic match** (dashboard; offline DBs refreshed from the internet):
+   - OUI: IEEE registry + merge **Wireshark `manuf`** + Nmap prefixes → vendor.
+   - DHCP: own opt-55/60 fingerprint matcher (today's `classifyByDhcp` + an opt-55
+     parameter-request-list matcher) seeded from OPEN data — see the Fingerbank
+     decision below; Fingerbank's paid offline DB is a fallback only.
+   - SNMP: **IANA PEN** + **LibreNMS/Observium sysObjectID** defs → vendor/model;
+     Entity-MIB → exact model/serial.
+   - mDNS/SSDP service types → role (printer / AppleTV / Chromecast / …).
+   - Active: Nmap service-probes + os-db, p0f (passive) where available.
+   - **CPE**: map vendor/product/version → NVD CPE (bridges to EOL + CVE later).
+3. **Fuse + score**: combine candidates into one verdict with a 0–1 confidence
+   (Fingerbank-style precedence/weighting + an agreement boost when independent
+   signals concur — e.g. DHCP "Chromebook" + OUI "Google" + mDNS `_googlecast`
+   ⇒ high-confidence ChromeOS). Keep **provenance**: which signals + which source.
+4. **AI adjudication — ONLY for low-confidence / conflicting devices**: hand the
+   assembled evidence (all signals + deterministic candidates) to the existing AI
+   connector to pick the best label, REQUIRED to cite which signals support it and
+   return its own confidence. Gate by the monthly AI spend cap. **Cache by a hash
+   of the signal-set** so identical fingerprints never re-call the model (most
+   devices are dupes) — this is what keeps cost sane at fleet scale.
+5. **Human-in-the-loop**: operator confirms/overrides on the device page; a
+   confirmation becomes a high-confidence pin that also short-circuits future
+   matches (same fingerprint ⇒ same verdict, no AI call).
+
+Persist `device_type / model / os / vendor / confidence / source(s) /
+last_classified`; auto-upgrade the verdict as better signals arrive or DBs
+refresh. Surface confidence + provenance in the UI, and make low-confidence a
+filter / "needs review" queue.
+
+Prioritized build order (the high-leverage 5, then AI on top):
+1. **Merge Wireshark `manuf` + Nmap prefixes** into the OUI table — cheap win (DONE;
+   `npm run oui:refresh` + longest-prefix lookup).
+2. **DHCP opt-55 fingerprint matcher**, seeded from open data — see decision below.
+3. **mDNS/SSDP collection** — classifies the MAC-randomized mobile fleet OUI misses.
+4. **sysObjectID decode** (IANA PEN + LibreNMS defs) — turns SNMP into real models.
+5. **CPE/NVD mapping** — unlocks EOL + vuln correlation.
+Then layer the **AI adjudicator + confirmation loop** over the scored output — it
+also COMPENSATES for the staleness of the free DHCP fingerprint data (below).
+
+Fingerbank decision (researched 2026): Fingerbank is now **Akamai-owned**; current
+data lives behind a **registration-gated cloud API** (needs connectivity — out for
+air-gapped) and a **paid offline SQLite DB** (contact-for-pricing). The only freely
+redistributable Fingerbank data is the legacy `dhcp_fingerprints.conf` **frozen at
+v6.8.2 / 2014** (ODbL 1.0 + DbCL 1.0 — usable in a gov internal tool; share-alike
+only triggers if you publicly redistribute a derivative DB). DECISION: build an
+**open offline stack** — our own opt-55/60 matcher seeded from the legacy ODbL file
++ community signature lists, plus the merged OUI table + mDNS — and lean on the AI
+adjudicator to cover the ~12-year data gap. Keep Fingerbank's paid offline DB as a
+documented fallback if accuracy proves insufficient. (Reimplement the approach —
+don't vendor GPL-2.0 Satori code into the dashboard.)
+
 ## Bugs & fixes (reported)
-- **District page school links** — the "Schools" stat card and the per-school
-  cards on the district page don't link anywhere; they should go to
-  `/{district}/{school}`. (Quick fix.)
+- **District page → schools list + clickable school cards** — clicking the
+  "Schools" stat card on the district page currently goes nowhere. It should lead
+  to (or reveal) the full list of schools associated with that district, rendered
+  as school cards, each clickable through to `/{district}/{school}`. (The
+  per-school cards already on the district page also don't link anywhere yet —
+  same fix.) Quick win.
 - **Map lost drag-to-move + Save layout** — the old SVG map persisted manual node
   positions (topology_positions + saveMapPositions). The new Cytoscape map
   doesn't load/save positions, so dagre re-lays-out every visit. Re-wire: load

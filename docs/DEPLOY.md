@@ -344,7 +344,60 @@ role (user/superadmin), and districts. They sign in with the Google/Microsoft bu
 
 ---
 
+## Custom domain + managed TLS (netmon.sbcss.net)
+
+The Container Apps default FQDN (`*.azurecontainerapps.io`) is **environment-specific** —
+it changes if the environment is rebuilt. Bind a stable custom domain so the sensors'
+`NETMON_DASHBOARD_URL` and the OIDC callbacks never have to change: if the app moves,
+you re-point one CNAME and nothing on the sensors or in the IdP changes.
+
+> Sensors reach this over the public internet, so all records go in the **public**
+> `sbcss.net` zone (not internal AD DNS).
+
+**1. Get the app FQDN + domain-verification ID:**
+```powershell
+$RG='W2-SBCSS-District-NetMon-Dashboard'; $APP='w2-sbcss-netmon-web'
+az containerapp show -g $RG -n $APP --query properties.configuration.ingress.fqdn -o tsv
+az containerapp show -g $RG -n $APP --query properties.customDomainVerificationId -o tsv
+```
+
+**2. Add DNS in the public `sbcss.net` zone** (subdomain → CNAME):
+```
+CNAME  netmon         → <FQDN from step 1>
+TXT    asuid.netmon   → <verification ID from step 1>
+```
+
+**3. Add + bind the hostname with a free, auto-renewing managed cert:**
+```powershell
+az containerapp hostname add  -g $RG -n $APP --hostname netmon.sbcss.net
+az containerapp hostname bind -g $RG -n $APP --hostname netmon.sbcss.net `
+  --environment W2-SBCSS-NetMon-CAE --validation-method CNAME
+```
+Both the old FQDN and `netmon.sbcss.net` now serve the app over TLS.
+
+**4. Register the new OIDC callbacks FIRST** (keep the old `<HOST>` ones during cutover) —
+in Entra *and* Google:
+```
+https://netmon.sbcss.net/api/auth/oidc/microsoft/callback
+https://netmon.sbcss.net/api/auth/oidc/google/callback
+```
+
+**5. Pin `APP_ORIGIN` to the new domain** (only after step 4, or OIDC login fails with a
+redirect_uri mismatch):
+```powershell
+az containerapp update -g $RG -n $APP --set-env-vars APP_ORIGIN=https://netmon.sbcss.net
+```
+`APP_ORIGIN` is the default in `infra/main.bicep`, so a future redeploy keeps it — but the
+OIDC client IDs/secrets are still CLI-applied (step "OIDC" above) and must be re-added after
+a full redeploy.
+
+**6. Sensors** — the in-app enrollment snippet (Settings → SFTP ingestion) now shows
+`netmon.sbcss.net` automatically, so new boxes are correct with no extra step. Existing
+boxes keep working on the old FQDN; migrate them at leisure with `sudo netmon-wizard
+dashboard`. Once all boxes are migrated, you may remove the old `<HOST>` OIDC callbacks.
+
+---
+
 ## Not yet wired (tracked, out of scope for this runbook)
 
 - **Azure Communication Services (Email)** — for break-glass MFA codes.
-- **Custom domain + managed TLS** on the Container App (stabilizes the URL).

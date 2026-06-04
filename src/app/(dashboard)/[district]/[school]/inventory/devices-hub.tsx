@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Ban, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Tags, Trash2, Upload, Waypoints, X } from "lucide-react";
 
-import type { InventoryRow, ExcludedRow } from "@/lib/inventory/queries";
+import { CLASSIFY_REVIEW_THRESHOLD, type InventoryRow, type ExcludedRow } from "@/lib/inventory/queries";
 import type { ReachabilitySummary } from "@/db/queries";
 import {
   syncRegistryToSensorAction,
@@ -75,6 +75,26 @@ function SnmpBadge({ status }: { status: InventoryRow["snmp"] }) {
   return <span className="text-xs text-muted-foreground">—</span>;
 }
 
+/** A discovered host's auto-classification that's weak enough to warrant a look. */
+function needsReview(r: InventoryRow): boolean {
+  return !r.confirmed && r.confidence != null && r.confidence < CLASSIFY_REVIEW_THRESHOLD;
+}
+
+/** Small confidence tag next to an auto-classified type (hidden once confirmed). */
+function ConfidenceTag({ row }: { row: InventoryRow }) {
+  if (row.confirmed || row.confidence == null) return null;
+  const pct = Math.round(row.confidence * 100);
+  const low = row.confidence < CLASSIFY_REVIEW_THRESHOLD;
+  return (
+    <span
+      className={"text-[10px] tabular-nums " + (low ? "text-[var(--warning)]" : "text-muted-foreground")}
+      title={low ? "Low-confidence auto-classification — may need a manual type" : "Auto-classification confidence"}
+    >
+      {pct}%
+    </span>
+  );
+}
+
 function hrefFor(r: InventoryRow, basePath: string): string | null {
   if (r.switchId) return `${basePath}/switch/${r.switchId}`;
   if (r.hostId) return `${basePath}/host/${r.hostId}`;
@@ -132,6 +152,7 @@ export function DevicesHub({
   const [category, setCategory] = useState<Category>(initialCategory);
   const [source, setSource] = useState<SourceFilter>(initialSource);
   const [snmp, setSnmp] = useState<SnmpFilter>("all");
+  const [review, setReview] = useState(false);
   const [q, setQ] = useState("");
   // Bulk selection (admin map-cleanup): keyed by InventoryRow.key.
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -147,13 +168,16 @@ export function DevicesHub({
       if (source === "manual" && r.source === "discovered") return false;
       if (snmp === "ok" && r.snmp !== "responding") return false;
       if (snmp === "gap" && r.snmp !== "gap") return false;
+      if (review && !needsReview(r)) return false;
       if (term) {
         const hay = `${r.name} ${r.ip ?? ""} ${r.mac ?? ""} ${r.vendor ?? ""} ${r.model ?? ""}`.toLowerCase();
         if (!hay.includes(term)) return false;
       }
       return true;
     });
-  }, [rows, category, source, snmp, q]);
+  }, [rows, category, source, snmp, review, q]);
+
+  const reviewCount = useMemo(() => rows.filter(needsReview).length, [rows]);
 
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.key)), [rows, selected]);
   const selectedItems = selectedRows.map((r) => ({ key: r.key, registryId: r.registryId }));
@@ -289,6 +313,19 @@ export function DevicesHub({
               <option value="ok">Answering SNMP</option>
               <option value="gap">SNMP gap</option>
             </select>
+            <button
+              type="button"
+              onClick={() => setReview((v) => !v)}
+              className={
+                "h-8 rounded-md border px-2.5 text-sm " +
+                (review
+                  ? "border-[var(--warning)]/50 bg-[var(--warning)]/10 text-[var(--warning)]"
+                  : "hover:bg-accent/50")
+              }
+              title="Low-confidence auto-classifications that may need a manual type"
+            >
+              Needs review{reviewCount ? ` (${reviewCount})` : ""}
+            </button>
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / IP / MAC / vendor" className="h-8 max-w-xs" />
             <span className="ml-auto text-xs text-muted-foreground">{filtered.length} of {rows.length}</span>
           </div>
@@ -395,7 +432,12 @@ export function DevicesHub({
                           {r.name}
                         </div>
                       </TableCell>
-                      <TableCell className="capitalize">{r.deviceType ?? "—"}</TableCell>
+                      <TableCell className="capitalize">
+                        <div className="flex items-center gap-1.5">
+                          <span>{r.deviceType ?? "—"}</span>
+                          <ConfidenceTag row={r} />
+                        </div>
+                      </TableCell>
                       <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{[r.vendor, r.model].filter(Boolean).join(" ") || "—"}</TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
                         {r.ip ?? "—"}{r.mac ? <div>{r.mac}</div> : null}

@@ -22,6 +22,10 @@ export interface InventoryRow {
   key: string;
   name: string;
   deviceType: string | null;
+  /** 0–1 confidence in the auto deviceType; null for manual/registry/switch. */
+  confidence: number | null;
+  /** Human-confirmed type (registry match or deviceTypeOverride) → trumps the score. */
+  confirmed: boolean;
   vendor: string | null;
   model: string | null;
   ip: string | null;
@@ -47,8 +51,13 @@ export interface InventorySummary {
   snmpGaps: number;
   discovered: number;
   manual: number;
+  /** Auto-classified rows below the confidence threshold that aren't human-confirmed. */
+  needsReview: number;
   rows: InventoryRow[];
 }
+
+/** Auto-classifications at or above this confidence are considered settled. */
+export const CLASSIFY_REVIEW_THRESHOLD = 0.75;
 
 const ONLINE_WINDOW_MS = 25 * 60 * 60 * 1000; // ~last day of hourly scans
 
@@ -144,6 +153,8 @@ export async function getInventoryForSchool(
       key: `sw:${sw.id}`,
       name: reg?.name || sw.systemName || sw.mgmtIp || sw.chassisId,
       deviceType: "switch",
+      confidence: reg ? 1 : null,
+      confirmed: Boolean(reg),
       vendor: reg?.vendor || attrStr(sw.attributes, "vendor"),
       model: reg?.model || attrStr(sw.attributes, "model"),
       ip,
@@ -170,6 +181,8 @@ export async function getInventoryForSchool(
     // Effective type: registry (manual record) > deviceTypeOverride (manual
     // reclassify on the discovered entity) > auto deviceType from ingest.
     const dtype = reg?.deviceType || h.deviceTypeOverride || h.deviceType;
+    const confirmed = Boolean(reg || h.deviceTypeOverride);
+    const confidence = confirmed ? 1 : (h.classConfidence ?? null);
     const expected = ["switch", "router", "ap", "firewall"].includes(dtype ?? "");
     const { snmp, reachable } = snmpStatus({ ip: h.ip, expected });
     const online = reachable ?? recent(h.lastSeenAt);
@@ -177,6 +190,8 @@ export async function getInventoryForSchool(
       key: `host:${h.id}`,
       name: reg?.name || h.hostname || h.ip || h.mac,
       deviceType: dtype ?? null,
+      confidence,
+      confirmed,
       vendor: reg?.vendor || h.vendor,
       model: reg?.model || attrStr(h.attributes, "model"),
       ip: h.ip,
@@ -205,6 +220,8 @@ export async function getInventoryForSchool(
       key: `reg:${r.id}`,
       name: r.name,
       deviceType: r.deviceType === "other" ? r.deviceTypeOther : r.deviceType,
+      confidence: 1,
+      confirmed: true,
       vendor: r.vendor,
       model: r.model,
       ip: r.ip,
@@ -235,6 +252,9 @@ export async function getInventoryForSchool(
     snmpGaps: rows.filter((r) => r.snmp === "gap").length,
     discovered: rows.filter((r) => r.source !== "manual").length,
     manual: rows.filter((r) => r.source === "manual").length,
+    needsReview: rows.filter(
+      (r) => !r.confirmed && r.confidence != null && r.confidence < CLASSIFY_REVIEW_THRESHOLD,
+    ).length,
     rows,
   };
 }
