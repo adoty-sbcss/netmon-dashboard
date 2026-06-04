@@ -1,10 +1,12 @@
 "use server";
 
 /**
- * Server actions for the in-app assistant (per-school, Phase 1). Every action
- * re-checks auth + district scope server-side and verifies conversation ownership
- * — the client-passed slugs/ids are never trusted. The model reads a snapshot of
- * the school's data (buildChatSystemPrompt) and answers grounded in it.
+ * Server actions for the global in-app assistant (M1). One rolling "session"
+ * conversation per user (scopeType 'global'); "Reset" starts a fresh one and the
+ * old transcript stays recorded. Every turn derives the CURRENT page's scope from
+ * the pathname, re-checks district access server-side, and only feeds the model
+ * data for a site the user is allowed to see. Client-passed paths/ids are never
+ * trusted.
  */
 import { and, asc, desc, eq } from "drizzle-orm";
 
@@ -15,36 +17,14 @@ import { getUserScope, scopeAllowsDistrict } from "@/lib/auth/scope";
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 
 import { aiChat, type ChatMsg } from "./chat";
-import { buildChatSystemPrompt } from "./chat-prompt";
-import type { ChatMessage } from "./types";
+import { buildAssistantSystemPrompt } from "./chat-prompt";
+import type { AnalysisScope, ChatMessage } from "./types";
 
-const MAX_HISTORY = 20; // turns sent back to the model
+const MAX_HISTORY = 24;
 const MAX_INPUT_CHARS = 4000;
 
-type SchoolCtx =
-  | { error: string }
-  | {
-      user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
-      district: { id: number; slug: string; name: string | null };
-      school: { id: number; slug: string; name: string | null };
-    };
-
-async function authedSchoolScope(
-  districtSlug: string,
-  schoolSlug: string,
-): Promise<SchoolCtx> {
-  const user = await getSessionUser();
-  if (!user) return { error: "Not authenticated." };
-  const district = await getDistrictBySlug(districtSlug);
-  if (!district) return { error: "District not found." };
-  const scope = await getUserScope(user);
-  if (!scopeAllowsDistrict(scope, district.id)) {
-    return { error: "Not authorized for this district." };
-  }
-  const school = await getSchoolBySlug(district.id, schoolSlug);
-  if (!school) return { error: "School not found." };
-  return { user, district, school };
-}
+// Top-level dashboard routes that are NOT district slugs.
+const RESERVED = new Set(["settings", "account", "admin", "login", "api"]);
 
 const toMsg = (m: {
   id: number;
@@ -58,22 +38,58 @@ const toMsg = (m: {
   createdAt: m.createdAt,
 });
 
-/** Load this user's existing conversation for the school (no creation). */
-export async function getSchoolChat(
-  districtSlug: string,
-  schoolSlug: string,
-): Promise<{ conversationId: number | null; messages: ChatMsg[]; error?: string }> {
-  const ctx = await authedSchoolScope(districtSlug, schoolSlug);
-  if ("error" in ctx) return { conversationId: null, messages: [], error: ctx.error };
+/** Derive the scope the user is viewing from a dashboard pathname, bounded by
+ *  their district access. Returns null (app-only) for non-site or unauthorized pages. */
+async function resolveScope(
+  user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>,
+  pathname: string,
+): Promise<AnalysisScope | null> {
+  const segs = (pathname || "").split("/").filter(Boolean);
+  if (segs.length === 0) return null;
+  const districtSlug = decodeURIComponent(segs[0]);
+  if (RESERVED.has(districtSlug)) return null;
+
+  const district = await getDistrictBySlug(districtSlug);
+  if (!district) return null;
+  const scope = await getUserScope(user);
+  if (!scopeAllowsDistrict(scope, district.id)) return null;
+
+  if (segs.length >= 2) {
+    const schoolSlug = decodeURIComponent(segs[1]);
+    const school = await getSchoolBySlug(district.id, schoolSlug);
+    if (school) {
+      return {
+        type: "school",
+        id: school.id,
+        districtId: district.id,
+        label: `${district.name || district.slug} — ${school.name || school.slug}`,
+      };
+    }
+  }
+  return {
+    type: "district",
+    id: district.id,
+    districtId: district.id,
+    label: district.name || district.slug,
+  };
+}
+
+/** Load the user's active (most recent) session conversation. */
+export async function getAssistantSession(): Promise<{
+  conversationId: number | null;
+  messages: ChatMsg[];
+  error?: string;
+}> {
+  const user = await getSessionUser();
+  if (!user) return { conversationId: null, messages: [], error: "Not authenticated." };
 
   const [conv] = await db
     .select()
     .from(chatConversations)
     .where(
       and(
-        eq(chatConversations.userId, ctx.user.id),
-        eq(chatConversations.scopeType, "school"),
-        eq(chatConversations.scopeId, ctx.school.id),
+        eq(chatConversations.userId, user.id),
+        eq(chatConversations.scopeType, "global"),
       ),
     )
     .orderBy(desc(chatConversations.updatedAt))
@@ -88,21 +104,19 @@ export async function getSchoolChat(
   return { conversationId: conv.id, messages: rows.map(toMsg) };
 }
 
-/** Send a user message; persist both turns; return the assistant reply. */
-export async function sendSchoolChat(
-  districtSlug: string,
-  schoolSlug: string,
+/** Send a message in the session; persist both turns; return the assistant reply.
+ *  `conversationId` null starts a new session (the "Reset" path). */
+export async function sendAssistantMessage(
+  pathname: string,
   conversationId: number | null,
   text: string,
 ): Promise<{ conversationId: number; message: ChatMsg } | { error: string }> {
-  const ctx = await authedSchoolScope(districtSlug, schoolSlug);
-  if ("error" in ctx) return { error: ctx.error };
-  const { user, district, school } = ctx;
+  const user = await getSessionUser();
+  if (!user) return { error: "Not authenticated." };
 
   const clean = text.trim().slice(0, MAX_INPUT_CHARS);
   if (!clean) return { error: "Empty message." };
 
-  // Resolve or create the conversation; verify ownership when an id is supplied.
   let convId = conversationId;
   if (convId != null) {
     const [conv] = await db
@@ -110,22 +124,15 @@ export async function sendSchoolChat(
       .from(chatConversations)
       .where(eq(chatConversations.id, convId))
       .limit(1);
-    if (
-      !conv ||
-      conv.userId !== user.id ||
-      conv.scopeType !== "school" ||
-      conv.scopeId !== school.id
-    ) {
-      return { error: "Conversation not found." };
-    }
+    if (!conv || conv.userId !== user.id) return { error: "Conversation not found." };
   } else {
     const [created] = await db
       .insert(chatConversations)
       .values({
         userId: user.id,
-        scopeType: "school",
-        scopeId: school.id,
-        districtId: district.id,
+        scopeType: "global",
+        scopeId: null,
+        districtId: null,
         title: clean.slice(0, 80),
       })
       .returning({ id: chatConversations.id });
@@ -136,13 +143,8 @@ export async function sendSchoolChat(
     .insert(chatMessages)
     .values({ conversationId: convId, role: "user", content: clean });
 
-  const label = `${district.name || district.slug} — ${school.name || school.slug}`;
-  const system = await buildChatSystemPrompt({
-    type: "school",
-    id: school.id,
-    districtId: district.id,
-    label,
-  });
+  const scope = await resolveScope(user, pathname);
+  const system = await buildAssistantSystemPrompt(scope);
 
   const history = await db
     .select()
@@ -165,7 +167,8 @@ export async function sendSchoolChat(
     tokensIn = r.tokensIn;
     tokensOut = r.tokensOut;
   } catch (err) {
-    assistantText = `Sorry — I couldn't answer that right now (${(err as Error).message}).`;
+    // Surface the real reason (e.g. rate limit / not configured) to the user.
+    return { error: `Assistant couldn't respond: ${(err as Error).message}` };
   }
 
   const [saved] = await db
@@ -179,9 +182,11 @@ export async function sendSchoolChat(
       tokensOut,
     })
     .returning({ id: chatMessages.id, createdAt: chatMessages.createdAt });
+
+  // Stamp the latest page context on the conversation (for the superadmin viewer).
   await db
     .update(chatConversations)
-    .set({ updatedAt: new Date() })
+    .set({ updatedAt: new Date(), districtId: scope?.districtId ?? null })
     .where(eq(chatConversations.id, convId));
 
   return {

@@ -22,7 +22,6 @@ import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { AiFindingsCard } from "@/components/ai-findings-card";
-import { SchoolChatPanel } from "@/components/ai-chat/school-chat-panel";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -97,12 +96,6 @@ export default async function SchoolPage({
       <AiFindingsCard
         summary={aiSummary}
         href={`/${district.slug}/${school.slug}/ai`}
-      />
-
-      <SchoolChatPanel
-        districtSlug={district.slug}
-        schoolSlug={school.slug}
-        schoolLabel={school.name || titleizeSlug(school.slug)}
       />
 
       {/* Activity metrics — deeper telemetry */}

@@ -21,13 +21,15 @@ export const chatConversations = pgTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    /** 'district' | 'school' — what the chat is about. */
+    /** 'global' (a per-user session) | 'district' | 'school'. */
     scopeType: text("scope_type").notNull(),
-    scopeId: integer("scope_id").notNull(),
-    /** Always set (the school's district for school scope) for auth filtering. */
-    districtId: integer("district_id")
-      .notNull()
-      .references(() => districts.id, { onDelete: "cascade" }),
+    /** Null for a global session not tied to a single site. */
+    scopeId: integer("scope_id"),
+    /** The district for school/district scope; null for a global session. Stamped
+     *  with the last page context for the superadmin viewer + auth filtering. */
+    districtId: integer("district_id").references(() => districts.id, {
+      onDelete: "cascade",
+    }),
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
