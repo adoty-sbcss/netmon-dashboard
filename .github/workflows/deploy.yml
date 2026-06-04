@@ -25,6 +25,7 @@ env:
   ACR_NAME: w2sbcssnetmondashacr
   IMAGE: netmon-dashboard
   CONTAINER_APP: w2-sbcss-netmon-web
+  MIGRATE_JOB: w2-sbcss-netmon-migrate
 
 jobs:
   deploy:
@@ -92,6 +93,36 @@ jobs:
             --name w2-sbcss-netmon-ai \
             --resource-group "$RESOURCE_GROUP" \
             --image "$ACR_NAME.azurecr.io/$IMAGE-migrator:${{ github.sha }}"
+
+      - name: Apply DB migrations (in-VNet job) before rolling
+        # Migrations run INSIDE the VNet (private Postgres has no public endpoint),
+        # so they go through the migrate Job, not this runner. Point it at the
+        # freshly-built migrator image, run it, and WAIT — failing the deploy (so
+        # the app does NOT roll onto a schema it expects but doesn't have) if it
+        # errors. Makes schema changes automatic + ordered before the new code
+        # serves. Idempotent: a no-op when no migration is pending.
+        run: |
+          set -euo pipefail
+          az containerapp job update \
+            --name "$MIGRATE_JOB" --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE-migrator:${{ github.sha }}"
+          az containerapp job start --name "$MIGRATE_JOB" --resource-group "$RESOURCE_GROUP" -o none
+          sleep 8
+          exec_name=$(az containerapp job execution list \
+            --name "$MIGRATE_JOB" --resource-group "$RESOURCE_GROUP" \
+            --query "sort_by([].{name:name,start:properties.startTime}, &start) | [-1].name" -o tsv)
+          echo "Migration execution: $exec_name"
+          for i in $(seq 1 90); do
+            status=$(az containerapp job execution show \
+              --name "$MIGRATE_JOB" --resource-group "$RESOURCE_GROUP" \
+              --job-execution-name "$exec_name" --query "properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "[$i] migration status: $status"
+            if [ "$status" = "Succeeded" ]; then echo "Migrations applied."; exit 0; fi
+            if [ "$status" = "Failed" ]; then echo "::error::Migration failed — not rolling the app."; exit 1; fi
+            sleep 10
+          done
+          echo "::error::Migration did not finish in time — not rolling the app."
+          exit 1
 
       - name: Roll Container App to the new image
         # --revision-suffix forces a fresh revision on every run. On scheduled
