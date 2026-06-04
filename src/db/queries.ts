@@ -1687,6 +1687,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     db
       .select({
         id: entitiesSwitch.id,
+        chassisId: entitiesSwitch.chassisId,
         systemName: entitiesSwitch.systemName,
         systemDescription: entitiesSwitch.systemDescription,
         mgmtIp: entitiesSwitch.mgmtIp,
@@ -1723,6 +1724,11 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
   const excludedIps = new Set<string>();
   for (const s of switchRows) if (s.excludedAt && s.mgmtIp) excludedIps.add(s.mgmtIp);
   for (const h of hostRows) if (h.excludedAt && h.ip) excludedIps.add(h.ip);
+  // Crawled switch/AP nodes are keyed `switch:<chassis>` and carry their address
+  // as mgmt_ip, not ip — so match excluded ones by chassis too, or purges that
+  // touch a fabric-discovered device would never clear from the map.
+  const excludedChassis = new Set<string>();
+  for (const s of switchRows) if (s.excludedAt && s.chassisId) excludedChassis.add(s.chassisId);
   const liveSwitches = switchRows.filter((s) => !s.excludedAt);
   const liveHosts = hostRows.filter((h) => !h.excludedAt);
   const switchByIp = new Map(liveSwitches.filter((s) => s.mgmtIp).map((s) => [s.mgmtIp!, s]));
@@ -1771,12 +1777,24 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     });
   }
 
+  // A stored snapshot node that belongs to a purged/excluded entity — matched by
+  // ip, by mgmt_ip (fabric switches/APs), or by chassis (the `switch:<chassis>` id).
+  function isExcludedRawNode(n: RawNode): boolean {
+    if (n.ip && excludedIps.has(n.ip)) return true;
+    const mgmt = (n as { mgmt_ip?: unknown }).mgmt_ip;
+    if (typeof mgmt === "string" && excludedIps.has(mgmt)) return true;
+    const id = typeof n.id === "string" ? n.id : "";
+    return id.startsWith("switch:") && excludedChassis.has(id.slice("switch:".length));
+  }
+
   function build(kind: "physical" | "logical"): MapGraph {
     const row = snapRows.find((r) => r.kind === kind);
     const g = (row?.graph ?? {}) as { nodes?: RawNode[]; edges?: TopoEdge[] };
-    // Prune Cisco IP phones the SNMP crawl recorded as switches: they linger in
-    // the union-merged snapshot forever, so filter them out at read time.
-    const rawNodes = (Array.isArray(g.nodes) ? g.nodes : []).filter((n) => !isIpPhoneMapNode(n));
+    // Prune, at read time, IP phones crawled as switches AND any purged/excluded
+    // device — both linger forever in the union-merged snapshot otherwise.
+    const rawNodes = (Array.isArray(g.nodes) ? g.nodes : []).filter(
+      (n) => !isIpPhoneMapNode(n) && !isExcludedRawNode(n),
+    );
     return {
       nodes: enrich(kind, rawNodes),
       edges: Array.isArray(g.edges) ? g.edges : [],
