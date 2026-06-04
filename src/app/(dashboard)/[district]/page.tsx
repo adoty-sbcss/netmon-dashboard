@@ -15,7 +15,6 @@ import {
   listSchools,
 } from "@/db/queries";
 import { getLatestAiSummary } from "@/lib/ai/queries";
-import { countOpenIssuesForDistrict } from "@/lib/issues/queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { AiFindingsCard } from "@/components/ai-findings-card";
@@ -39,10 +38,9 @@ export default async function DistrictPage({
   const district = await getDistrictBySlug(districtSlug);
   if (!district) notFound();
 
-  const [schools, aiSummary, openIssues] = await Promise.all([
+  const [schools, aiSummary] = await Promise.all([
     listSchools(district.id),
     getLatestAiSummary(district.id, "district"),
-    countOpenIssuesForDistrict(district.id),
   ]);
 
   const totals = schools.reduce(
@@ -79,7 +77,7 @@ export default async function DistrictPage({
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
         <StatCard label="Schools" value={num(schools.length)} icon={School} href="#schools" />
         <StatCard
           label="Sensors"
@@ -92,13 +90,6 @@ export default async function DistrictPage({
           value={num(totals.hosts)}
           icon={Cpu}
           href={`/${district.slug}/hosts`}
-        />
-        <StatCard
-          label="Open issues"
-          value={num(openIssues)}
-          icon={ShieldAlert}
-          tone={openIssues > 0 ? "warning" : "success"}
-          href={`/${district.slug}/issues`}
         />
       </div>
 

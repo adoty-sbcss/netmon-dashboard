@@ -7,7 +7,6 @@ import {
   Network,
   Radio,
   RouteOff,
-  ShieldAlert,
   Waypoints,
 } from "lucide-react";
 
@@ -19,14 +18,12 @@ import {
   getSchoolHealthTrend,
 } from "@/db/queries";
 import { getLatestAiSummary } from "@/lib/ai/queries";
-import { listIssuesForSchool } from "@/lib/issues/queries";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { AiFindingsCard } from "@/components/ai-findings-card";
 import { SchoolChatPanel } from "@/components/ai-chat/school-chat-panel";
 import { StatCard } from "@/components/stat-card";
-import { IssuesList } from "@/components/issues-list";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -50,10 +47,9 @@ export default async function SchoolPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [stats, sensors, issues, health, aiSummary] = await Promise.all([
+  const [stats, sensors, health, aiSummary] = await Promise.all([
     getSchoolStats(school.id),
     listSensorsForSchool(school.id),
-    listIssuesForSchool(school.id),
     getSchoolHealthTrend(school.id),
     getLatestAiSummary(district.id, "school", school.id),
   ]);
@@ -70,7 +66,7 @@ export default async function SchoolPage({
       />
 
       {/* Primary metrics — the at-a-glance health of the site */}
-      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
         <StatCard
           label="Switches"
           value={num(stats.switchCount)}
@@ -94,13 +90,6 @@ export default async function SchoolPage({
               : undefined
           }
         />
-        <StatCard
-          label="Open issues"
-          value={num(issues.length)}
-          icon={ShieldAlert}
-          tone={issues.length > 0 ? "warning" : "success"}
-          href={`/${district.slug}/issues`}
-        />
       </div>
 
       {/* What needs attention first: AI health summary + rule-based findings,
@@ -115,19 +104,6 @@ export default async function SchoolPage({
         schoolSlug={school.slug}
         schoolLabel={school.name || titleizeSlug(school.slug)}
       />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Open issues</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <IssuesList
-            issues={issues}
-            basePath={`/${district.slug}/${school.slug}`}
-            isAdmin={false}
-          />
-        </CardContent>
-      </Card>
 
       {/* Activity metrics — deeper telemetry */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
