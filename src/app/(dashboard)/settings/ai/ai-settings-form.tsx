@@ -333,6 +333,11 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
               defaultValue={settings.maxOutputTokens}
               className="max-w-xs"
             />
+            <p className="text-xs text-muted-foreground">
+              Azure OpenAI reserves this against the deployment&apos;s per-minute
+              token (TPM) quota on every call, so smaller values trip 429s less.
+              ~2048 is plenty for these reports; raise it only if output looks cut off.
+            </p>
           </div>
 
           <div className={fieldCls}>

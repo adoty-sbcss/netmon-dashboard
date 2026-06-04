@@ -26,7 +26,10 @@ const SINGLETON_ID = 1;
 const DEFAULTS = {
   scheduleEnabled: true,
   scheduleCron: "0 2 * * *",
-  maxOutputTokens: 8192,
+  // Kept modest on purpose: Azure OpenAI reserves this against the deployment's
+  // TPM quota at admission, so a large value makes every call costlier to the
+  // rate limit. Raise it per-install in Settings → AI if reports get truncated.
+  maxOutputTokens: 2048,
   monthlySpendCapUsd: null as number | null,
 };
 

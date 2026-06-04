@@ -24,6 +24,7 @@ import { getAnalystInstructions } from "./instructions";
 import { activeProviders } from "./providers/registry";
 import { getAiSettings } from "./settings";
 import { estimateCost } from "./pricing";
+import { schedule, noteRateLimit, retryAfterSeconds } from "./limiter";
 import type { AnalysisScope, AnalysisWindow } from "./types";
 
 export interface RunRequest {
@@ -85,7 +86,7 @@ export async function executeRun(runId: string, req: RunRequest): Promise<void> 
   await Promise.all(
     active.map(async ({ provider, config }) => {
       try {
-        const result = await provider.analyze(input, config, opts);
+        const result = await schedule(() => provider.analyze(input, config, opts));
         await db
           .update(aiAnalyses)
           .set({
@@ -106,6 +107,10 @@ export async function executeRun(runId: string, req: RunRequest): Promise<void> 
             ),
           );
       } catch (err) {
+        // A sustained 429 trips a process-wide cooldown so the rest of the sweep
+        // paces back to the provider's Retry-After instead of hammering it.
+        const ra = retryAfterSeconds(err);
+        if (ra) noteRateLimit(ra);
         await db
           .update(aiAnalyses)
           .set({

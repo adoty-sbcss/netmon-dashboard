@@ -1,31 +1,32 @@
 /**
  * CLI / cron entry: run the AI analysis sweep.
  *
- *   npm run ai:analyze                          due districts + their schools
+ *   npm run ai:analyze                          due districts + changed schools
  *   npm run ai:analyze -- --district <slug>     just one district
- *   npm run ai:analyze -- --force               ignore the schedule gate, run now
+ *   npm run ai:analyze -- --force               ignore schedule + change gates
  *
  * Deployed as a Container Apps Job (see infra/main.bicep) that WAKES HOURLY. Each
  * wake it checks the IN-APP schedule (ai_settings.schedule_cron, edited at
  * /settings/ai) and only proceeds when that schedule is due — so admins change
- * the run time/cadence in the UI without a redeploy. The same "wake often, gate
- * in code" pattern as src/ingest/sync.ts.
+ * the run time/cadence in the UI without a redeploy.
  *
- * A due sweep covers, for every district:
- *   - the district-wide general (health) analysis,
- *   - each school's general analysis        (AI_SCHOOL_GENERAL=0 to skip),
- *   - each school's physical-topology review (AI_TOPOLOGY=0 to skip).
- * School passes run sequentially with a small throttle (AI_THROTTLE_MS) so we
- * spread token usage across the provider's per-minute limit and don't trip 429s.
+ * SCALING (built for hundreds of schools):
+ *   - INCREMENTAL: a scope is analyzed only when its data changed since the last
+ *     SUCCESSFUL run (school.lastScanAt > last ok analysis). Unchanged scopes are
+ *     skipped; 429'd scopes stay "due" and retry on a later wake.
+ *   - PER-RUN CAP (AI_MAX_SCHOOLS_PER_RUN, default 40): each execution processes
+ *     at most N schools, stalest first; the rest drain over subsequent hourly
+ *     wakes. Keeps any single run bounded in time and API volume.
+ *   - PACING: every model call goes through src/lib/ai/limiter.ts (concurrency
+ *     gate + adaptive Retry-After cooldown), so the sweep stays under the Azure
+ *     OpenAI TPM quota instead of bursting into 429s.
  *
- * With no provider keys set it no-ops cleanly. DATABASE_URL + model keys come from
- * .env locally and Key Vault in Azure. dotenv must load before anything touches
- * the DB.
+ * Coverage toggles: AI_SCHOOL_GENERAL=0 / AI_TOPOLOGY=0 skip those passes.
+ * With no provider keys set the whole thing no-ops cleanly.
  */
 import "dotenv/config";
 
 const ANALYSIS_WINDOW_MS = 24 * 60 * 60 * 1000;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function parseArgs(argv: string[]): { district: string | null; force: boolean } {
   let district: string | null = null;
@@ -42,7 +43,6 @@ function parseArgs(argv: string[]): { district: string | null; force: boolean } 
       force = true;
     }
   }
-  // Env escape hatch for the Container App job, where CLI flags are awkward.
   if (process.env.AI_FORCE === "1") force = true;
   return { district, force };
 }
@@ -61,6 +61,7 @@ async function main() {
   const { getAiSettings } = await import("@/lib/ai/settings");
   const { isScheduledRunDue } = await import("@/lib/ai/cron");
   const { listSchools } = await import("@/db/queries");
+  const { getLastSuccessfulAnalysisMap } = await import("@/lib/ai/queries");
 
   const settings = await getAiSettings();
   const now = new Date();
@@ -74,8 +75,6 @@ async function main() {
       );
       process.exit(0);
     }
-    // Honor the in-app cron. The Job wakes hourly; we decide if the user's
-    // schedule is due by comparing its last fire time to the last scheduled run.
     const [row] = await db
       .select({ last: max(aiAnalyses.createdAt) })
       .from(aiAnalyses)
@@ -90,7 +89,7 @@ async function main() {
     }
     console.log(`Scheduled run due (schedule "${settings.scheduleCron}", UTC).`);
   } else {
-    console.log("Forced run (schedule gate bypassed).");
+    console.log("Forced run (schedule + change gates bypassed).");
   }
 
   const active = await activeProviders();
@@ -100,10 +99,10 @@ async function main() {
   }
   console.log(`Active providers: ${active.map((a) => a.provider.id).join(", ")}`);
 
-  // --- Coverage knobs (default: full). Set to "0" in the Job env to trim. -----
+  // --- Coverage + scaling knobs ----------------------------------------------
   const doSchoolGeneral = process.env.AI_SCHOOL_GENERAL !== "0";
   const doTopology = process.env.AI_TOPOLOGY !== "0";
-  const throttleMs = Number(process.env.AI_THROTTLE_MS) || 1500;
+  const maxSchoolsPerRun = Math.max(1, Number(process.env.AI_MAX_SCHOOLS_PER_RUN) || 40);
 
   const window = { start: new Date(now.getTime() - ANALYSIS_WINDOW_MS), end: now };
 
@@ -119,79 +118,122 @@ async function main() {
   }
 
   const tally = {
-    district: { ok: 0, failed: 0 },
-    school: { ok: 0, failed: 0 },
-    topology: { ok: 0, failed: 0 },
+    district: { ok: 0, failed: 0, skipped: 0 },
+    school: { ok: 0, failed: 0, skipped: 0 },
+    topology: { ok: 0, failed: 0, skipped: 0 },
+    deferred: 0,
   };
+
+  // newer(a, b): true when scan time `a` is strictly after last-success `b`
+  // (or there's no prior success). `force` makes everything due.
+  const due = (lastScanAt: Date | null, lastOk: Date | undefined): boolean =>
+    force || !lastOk || (lastScanAt != null && lastScanAt.getTime() > lastOk.getTime());
 
   for (const d of districtRows) {
     const districtLabel = d.name || d.slug;
+    const lastOk = await getLastSuccessfulAnalysisMap(d.id);
 
-    // 1) District-wide general (health) analysis.
-    try {
-      const runId = await runAnalysis({
-        scope: { type: "district", id: d.id, districtId: d.id, label: districtLabel },
-        window,
-        trigger: "scheduled",
-        requestedBy: null,
-      });
-      console.log(`✓ district ${d.slug} → run ${runId}`);
-      tally.district.ok++;
-    } catch (err) {
-      console.error(`✗ district ${d.slug}: ${(err as Error).message}`);
-      tally.district.failed++;
+    // Only schools with scan data are analyzable.
+    const schools = (await listSchools(d.id)).filter((s) => s.lastScanAt != null);
+
+    // 1) District-wide general — run if any school changed since its last success.
+    const districtLastOk = lastOk.get(`district:${d.id}:general`);
+    const districtChanged = schools.some((s) => due(s.lastScanAt, districtLastOk));
+    if (districtChanged) {
+      try {
+        const runId = await runAnalysis({
+          scope: { type: "district", id: d.id, districtId: d.id, label: districtLabel },
+          window,
+          trigger: "scheduled",
+          requestedBy: null,
+        });
+        console.log(`✓ district ${d.slug} → run ${runId}`);
+        tally.district.ok++;
+      } catch (err) {
+        console.error(`✗ district ${d.slug}: ${(err as Error).message}`);
+        tally.district.failed++;
+      }
+    } else {
+      tally.district.skipped++;
     }
 
     if (!doSchoolGeneral && !doTopology) continue;
 
-    // 2) Per-school passes — only schools that have scan data (skip empty ones to
-    //    save spend). Sequential + throttled to spread load and avoid 429s.
-    const schools = (await listSchools(d.id)).filter((s) => s.lastScanAt != null);
-    for (const s of schools) {
-      const schoolLabel = `${districtLabel} — ${s.name || s.slug}`;
+    // 2) Per-school passes — pick only the scopes that changed, then cap how many
+    //    schools we touch this wake (stalest first), deferring the rest.
+    const candidates = schools
+      .map((s) => {
+        const gOk = lastOk.get(`school:${s.id}:general`);
+        const tOk = lastOk.get(`school:${s.id}:topology`);
+        const dueGen = doSchoolGeneral && due(s.lastScanAt, gOk);
+        const dueTopo = doTopology && due(s.lastScanAt, tOk);
+        // Stalest first: never-analyzed (0) before oldest-analyzed.
+        const staleness = Math.min(gOk?.getTime() ?? 0, tOk?.getTime() ?? 0);
+        return { s, dueGen, dueTopo, staleness };
+      })
+      .filter((c) => c.dueGen || c.dueTopo);
 
-      if (doSchoolGeneral) {
+    // Count the scopes we're NOT running because they're unchanged.
+    tally.school.skipped += schools.filter(
+      (s) => doSchoolGeneral && !due(s.lastScanAt, lastOk.get(`school:${s.id}:general`)),
+    ).length;
+    tally.topology.skipped += schools.filter(
+      (s) => doTopology && !due(s.lastScanAt, lastOk.get(`school:${s.id}:topology`)),
+    ).length;
+
+    candidates.sort((a, b) => a.staleness - b.staleness);
+    const toRun = candidates.slice(0, maxSchoolsPerRun);
+    const deferred = candidates.length - toRun.length;
+    if (deferred > 0) {
+      tally.deferred += deferred;
+      console.log(
+        `  district ${d.slug}: ${deferred} changed school(s) deferred to a later ` +
+          `wake (cap ${maxSchoolsPerRun}/run).`,
+      );
+    }
+
+    for (const c of toRun) {
+      const schoolLabel = `${districtLabel} — ${c.s.name || c.s.slug}`;
+      if (c.dueGen) {
         try {
           const runId = await runAnalysis({
-            scope: { type: "school", id: s.id, districtId: d.id, label: schoolLabel },
+            scope: { type: "school", id: c.s.id, districtId: d.id, label: schoolLabel },
             window,
             trigger: "scheduled",
             requestedBy: null,
           });
-          console.log(`  ✓ school ${s.slug} (general) → run ${runId}`);
+          console.log(`  ✓ school ${c.s.slug} (general) → run ${runId}`);
           tally.school.ok++;
         } catch (err) {
-          console.error(`  ✗ school ${s.slug} (general): ${(err as Error).message}`);
+          console.error(`  ✗ school ${c.s.slug} (general): ${(err as Error).message}`);
           tally.school.failed++;
         }
-        await sleep(throttleMs);
       }
-
-      if (doTopology) {
+      if (c.dueTopo) {
         try {
           const runId = await runTopologyAnalysis({
-            schoolId: s.id,
+            schoolId: c.s.id,
             districtId: d.id,
             label: schoolLabel,
             trigger: "scheduled",
             requestedBy: null,
           });
-          console.log(`  ✓ school ${s.slug} (topology) → run ${runId}`);
+          console.log(`  ✓ school ${c.s.slug} (topology) → run ${runId}`);
           tally.topology.ok++;
         } catch (err) {
-          console.error(`  ✗ school ${s.slug} (topology): ${(err as Error).message}`);
+          console.error(`  ✗ school ${c.s.slug} (topology): ${(err as Error).message}`);
           tally.topology.failed++;
         }
-        await sleep(throttleMs);
       }
     }
   }
 
   const failed = tally.district.failed + tally.school.failed + tally.topology.failed;
   console.log(
-    `Done. district ${tally.district.ok}/${tally.district.ok + tally.district.failed}, ` +
-      `school-general ${tally.school.ok}/${tally.school.ok + tally.school.failed}, ` +
-      `topology ${tally.topology.ok}/${tally.topology.ok + tally.topology.failed}.`,
+    `Done. district ok=${tally.district.ok} failed=${tally.district.failed} skipped=${tally.district.skipped}; ` +
+      `school-general ok=${tally.school.ok} failed=${tally.school.failed} skipped=${tally.school.skipped}; ` +
+      `topology ok=${tally.topology.ok} failed=${tally.topology.failed} skipped=${tally.topology.skipped}; ` +
+      `deferred=${tally.deferred}.`,
   );
   process.exit(failed > 0 ? 1 : 0);
 }

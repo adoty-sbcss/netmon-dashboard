@@ -3,7 +3,7 @@
  * per-model rows render as side-by-side comparison columns.
  */
 import "server-only";
-import { and, count, desc, eq, gte, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, gte, max, sql, sum } from "drizzle-orm";
 
 import { db } from "@/db";
 import { aiAnalyses, type AiFinding } from "@/db/schema/ai";
@@ -108,6 +108,34 @@ export function getLatestTopologyRun(
   schoolId: number,
 ): Promise<AnalysisRun | null> {
   return getLatestRunForDistrict(districtId, "school", schoolId, "topology");
+}
+
+/**
+ * Last SUCCESSFUL analysis time per (scopeType, scopeId, kind) for a district,
+ * keyed "scopeType:scopeId:kind". The scheduled sweep uses this to skip scopes
+ * whose data hasn't changed since they were last analyzed — the core of scaling
+ * to many schools. Failed/running rows are excluded, so a 429'd scope stays
+ * "due" and is retried on a later wake.
+ */
+export async function getLastSuccessfulAnalysisMap(
+  districtId: number,
+): Promise<Map<string, Date>> {
+  const rows = await db
+    .select({
+      scopeType: aiAnalyses.scopeType,
+      scopeId: aiAnalyses.scopeId,
+      kind: aiAnalyses.kind,
+      last: max(aiAnalyses.createdAt),
+    })
+    .from(aiAnalyses)
+    .where(and(eq(aiAnalyses.districtId, districtId), eq(aiAnalyses.status, "ok")))
+    .groupBy(aiAnalyses.scopeType, aiAnalyses.scopeId, aiAnalyses.kind);
+
+  const map = new Map<string, Date>();
+  for (const r of rows) {
+    if (r.last) map.set(`${r.scopeType}:${r.scopeId}:${r.kind}`, new Date(r.last));
+  }
+  return map;
 }
 
 // ---- latest-run summary for surfacing in Findings / overview --------------

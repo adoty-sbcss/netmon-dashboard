@@ -41,7 +41,11 @@ export const anthropicProvider: AiProvider = {
     if (!cfg.apiKey) throw new Error("Anthropic is not configured");
     const model = cfg.model || DEFAULT_MODEL;
 
-    const client = new Anthropic({ apiKey: cfg.apiKey });
+    const client = new Anthropic({
+      apiKey: cfg.apiKey,
+      maxRetries: Number(process.env.AI_MAX_RETRIES) || 4,
+      timeout: 60_000,
+    });
 
     const started = Date.now();
     const message = await client.messages.create({

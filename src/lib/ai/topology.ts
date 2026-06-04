@@ -13,6 +13,7 @@ import { reconcileIssues } from "../issues/reconcile";
 import { activeProviders } from "./providers/registry";
 import { getAiSettings } from "./settings";
 import { estimateCost } from "./pricing";
+import { schedule, noteRateLimit, retryAfterSeconds } from "./limiter";
 import { buildTopologyContext } from "./topology-context";
 import { getTopologyInstructions } from "./topology-instructions";
 
@@ -71,7 +72,7 @@ export async function executeTopologyRun(
   await Promise.all(
     active.map(async ({ provider, config }) => {
       try {
-        const result = await provider.analyze(input, config, opts);
+        const result = await schedule(() => provider.analyze(input, config, opts));
         await db
           .update(aiAnalyses)
           .set({
@@ -87,6 +88,8 @@ export async function executeTopologyRun(
           })
           .where(and(eq(aiAnalyses.runId, runId), eq(aiAnalyses.providerId, provider.id)));
       } catch (err) {
+        const ra = retryAfterSeconds(err);
+        if (ra) noteRateLimit(ra);
         await db
           .update(aiAnalyses)
           .set({

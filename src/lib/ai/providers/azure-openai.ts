@@ -44,6 +44,10 @@ export const azureOpenAiProvider: AiProvider = {
       apiKey: cfg.apiKey,
       apiVersion: cfg.apiVersion || "2024-10-21",
       deployment: cfg.model,
+      // Azure 429s when the deployment's TPM is exceeded; the SDK backs off
+      // honoring Retry-After. More retries = transient throttling self-heals.
+      maxRetries: Number(process.env.AI_MAX_RETRIES) || 4,
+      timeout: 60_000,
     });
 
     const started = Date.now();

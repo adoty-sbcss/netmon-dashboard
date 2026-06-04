@@ -44,6 +44,8 @@ export const openAiProvider: AiProvider = {
       organization: cfg.organization || undefined,
       project: cfg.project || undefined,
       baseURL: cfg.baseURL || undefined,
+      maxRetries: Number(process.env.AI_MAX_RETRIES) || 4,
+      timeout: 60_000,
     });
 
     const started = Date.now();
