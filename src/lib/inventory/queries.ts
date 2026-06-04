@@ -167,7 +167,9 @@ export async function getInventoryForSchool(
   for (const h of hosts) {
     const reg = matchRegistry(h.mac, h.ip);
     if (reg) usedRegistry.add(reg.id);
-    const dtype = reg?.deviceType || h.deviceType;
+    // Effective type: registry (manual record) > deviceTypeOverride (manual
+    // reclassify on the discovered entity) > auto deviceType from ingest.
+    const dtype = reg?.deviceType || h.deviceTypeOverride || h.deviceType;
     const expected = ["switch", "router", "ap", "firewall"].includes(dtype ?? "");
     const { snmp, reachable } = snmpStatus({ ip: h.ip, expected });
     const online = reachable ?? recent(h.lastSeenAt);

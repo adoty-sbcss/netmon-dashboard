@@ -169,6 +169,13 @@
       "when": 1780502044836,
       "tag": "0023_tiresome_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780571638204,
+      "tag": "0024_long_lenny_balinger",
+      "breakpoints": true
     }
   ]
 }

@@ -131,8 +131,20 @@ export function NetworkMap({
   );
   const graph = view === "physical" ? physical : logical;
 
+  // Map-cleanup type filter — hide whole device-types (e.g. computers / IoT) to
+  // declutter the map without deleting them. `graph` stays the full view (for
+  // layout + save); `vgraph` is what renders.
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
+  const allTypes = useMemo(() => [...new Set(graph.nodes.map((n) => n.type))], [graph]);
+  const vgraph = useMemo(() => {
+    if (hiddenTypes.size === 0) return graph;
+    const nodes = graph.nodes.filter((n) => !hiddenTypes.has(n.type));
+    const keep = new Set(nodes.map((n) => n.id));
+    return { ...graph, nodes, edges: graph.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
+  }, [graph, hiddenTypes]);
+
   const layout = useMemo(() => computeLayout(graph), [graph]);
-  const nodeById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
+  const nodeById = useMemo(() => new Map(vgraph.nodes.map((n) => [n.id, n])), [vgraph]);
 
   const [drag, setDrag] = useState<Record<string, XY>>({});
   const [dirty, setDirty] = useState(false);
@@ -250,15 +262,22 @@ export function NetworkMap({
     const focus = hover?.id ?? selected;
     if (!focus) return null;
     const s = new Set<string>([focus]);
-    for (const e of graph.edges) {
+    for (const e of vgraph.edges) {
       if (e.source === focus) s.add(e.target);
       if (e.target === focus) s.add(e.source);
     }
     return s;
-  }, [hover, selected, graph]);
+  }, [hover, selected, vgraph]);
 
   const hoverNode = hover ? nodeById.get(hover.id) : null;
-  const types = [...new Set(graph.nodes.map((n) => n.type))];
+  function toggleType(t: string) {
+    setHiddenTypes((s) => {
+      const n = new Set(s);
+      if (n.has(t)) n.delete(t);
+      else n.add(t);
+      return n;
+    });
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -309,13 +328,37 @@ export function NetworkMap({
             {pending ? "Saving…" : saved ? "Saved" : dirty ? "Save layout" : "Layout saved"}
           </Button>
         )}
-        <div className="ml-auto flex flex-wrap gap-2">
-          {types.map((t) => (
-            <span key={t} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="size-2.5 rounded-full" style={{ background: metaFor(t).color }} />
-              {metaFor(t).label}
-            </span>
-          ))}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {hiddenTypes.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHiddenTypes(new Set())}
+              className="text-xs text-primary hover:underline"
+            >
+              show all
+            </button>
+          )}
+          {allTypes.map((t) => {
+            const off = hiddenTypes.has(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => toggleType(t)}
+                title={off ? "Hidden — click to show on the map" : "Click to hide this type from the map"}
+                className={cn(
+                  "flex items-center gap-1.5 rounded px-1 text-xs hover:bg-accent",
+                  off ? "text-muted-foreground/50 line-through" : "text-muted-foreground",
+                )}
+              >
+                <span
+                  className="size-2.5 rounded-full"
+                  style={{ background: metaFor(t).color, opacity: off ? 0.3 : 1 }}
+                />
+                {metaFor(t).label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -339,7 +382,7 @@ export function NetworkMap({
               onPointerLeave={onUp}
             >
               {/* edges */}
-              {graph.edges.map((e, i) => {
+              {vgraph.edges.map((e, i) => {
                 const a = posOf(e.source);
                 const b = posOf(e.target);
                 if (!nodeById.has(e.source) || !nodeById.has(e.target)) return null;
@@ -359,7 +402,7 @@ export function NetworkMap({
                 );
               })}
               {/* nodes */}
-              {graph.nodes.map((n) => {
+              {vgraph.nodes.map((n) => {
                 const p = posOf(n.id);
                 const m = metaFor(n.type);
                 const Icon = m.icon;
@@ -445,7 +488,8 @@ export function NetworkMap({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {graph.nodes.length} nodes · {graph.edges.length} links
+        {vgraph.nodes.length} nodes · {vgraph.edges.length} links
+        {hiddenTypes.size > 0 && ` · ${graph.nodes.length - vgraph.nodes.length} hidden`}
         {graph.generatedAt && ` · snapshot ${new Date(graph.generatedAt).toLocaleString()}`}
         {" · "}scroll to zoom, drag the canvas to pan, drag a node to reposition
         {canSave ? ", then Save layout." : "."}

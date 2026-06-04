@@ -1707,6 +1707,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
         systemDescription: entitiesSwitch.systemDescription,
         mgmtIp: entitiesSwitch.mgmtIp,
         capabilities: entitiesSwitch.capabilities,
+        excludedAt: entitiesSwitch.excludedAt,
       })
       .from(entitiesSwitch)
       .where(eq(entitiesSwitch.schoolId, schoolId)),
@@ -1717,6 +1718,8 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
         mac: entitiesHost.mac,
         hostname: entitiesHost.hostname,
         deviceType: entitiesHost.deviceType,
+        deviceTypeOverride: entitiesHost.deviceTypeOverride,
+        excludedAt: entitiesHost.excludedAt,
       })
       .from(entitiesHost)
       .where(eq(entitiesHost.schoolId, schoolId)),
@@ -1731,8 +1734,15 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
       .where(eq(topologyPositions.schoolId, schoolId)),
   ]);
 
-  const switchByIp = new Map(switchRows.filter((s) => s.mgmtIp).map((s) => [s.mgmtIp!, s]));
-  const hostByIp = new Map(hostRows.filter((h) => h.ip).map((h) => [h.ip!, h]));
+  // Excluded (purged) entities must NOT appear on the map. Collect their IPs to
+  // prune from the stored snapshot graph, and key enrichment off live ones only.
+  const excludedIps = new Set<string>();
+  for (const s of switchRows) if (s.excludedAt && s.mgmtIp) excludedIps.add(s.mgmtIp);
+  for (const h of hostRows) if (h.excludedAt && h.ip) excludedIps.add(h.ip);
+  const liveSwitches = switchRows.filter((s) => !s.excludedAt);
+  const liveHosts = hostRows.filter((h) => !h.excludedAt);
+  const switchByIp = new Map(liveSwitches.filter((s) => s.mgmtIp).map((s) => [s.mgmtIp!, s]));
+  const hostByIp = new Map(liveHosts.filter((h) => h.ip).map((h) => [h.ip!, h]));
   const posByKind = new Map<string, Record<string, { x: number; y: number }>>();
   for (const p of posRows) {
     const rec = posByKind.get(p.kind) ?? {};
@@ -1759,7 +1769,8 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
       if (host) {
         return {
           id: n.id,
-          type: baseType === "gateway" ? "router" : baseType,
+          // Manual reclassify (deviceTypeOverride) wins, so cleanup retags the map.
+          type: host.deviceTypeOverride || (baseType === "gateway" ? "router" : baseType),
           label: host.hostname || n.label || n.ip || n.id,
           ip: n.ip ?? null,
           entityId: host.id,
@@ -1796,7 +1807,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     const switchNodeByIp = new Map<string, string>();
     for (const n of physical.nodes) if (n.ip) switchNodeByIp.set(n.ip, n.id);
     const hostByMac = new Map(
-      hostRows.filter((h) => h.mac).map((h) => [h.mac!.toLowerCase(), h]),
+      liveHosts.filter((h) => h.mac).map((h) => [h.mac!.toLowerCase(), h]),
     );
     const present = new Set(physical.nodes.map((n) => n.id));
     for (const [mac, att] of fdb) {
@@ -1808,7 +1819,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
       if (!present.has(hostNodeId)) {
         physical.nodes.push({
           id: hostNodeId,
-          type: host.deviceType || "host",
+          type: host.deviceTypeOverride || host.deviceType || "host",
           label: host.hostname || host.ip || mac,
           ip: host.ip,
           model: att.port ? `on ${att.port}` : null,
@@ -1821,7 +1832,14 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     }
   }
 
-  return { physical, logical };
+  // Prune any excluded-device nodes that were baked into the stored snapshot,
+  // plus edges that referenced them — so purging actually clears the map.
+  function prune(g: MapGraph): MapGraph {
+    const nodes = g.nodes.filter((n) => !(n.ip && excludedIps.has(n.ip)));
+    const keep = new Set(nodes.map((n) => n.id));
+    return { ...g, nodes, edges: g.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
+  }
+  return { physical: prune(physical), logical: prune(logical) };
 }
 
 // ---- admin: managed entity tree (rename / delete / purge) -----------------

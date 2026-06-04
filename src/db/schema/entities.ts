@@ -77,6 +77,10 @@ export const entitiesHost = pgTable(
      *  'storage' | 'iot' | 'vm' | 'unknown'. Derived from OUI vendor + hostname
      *  + SNMP at ingest (see src/lib/oui). */
     deviceType: text("device_type"),
+    /** Operator's MANUAL classification (bulk reclassify). When set it wins over
+     *  the auto `deviceType` everywhere the effective type is read, and the
+     *  ingest upsert never touches it — so a manual class survives re-scans. */
+    deviceTypeOverride: text("device_type_override"),
     attributes: jsonb("attributes").notNull().default({}),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),

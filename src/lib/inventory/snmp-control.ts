@@ -189,6 +189,162 @@ export async function purgeAllDiscoveredAction(
   };
 }
 
+/** Valid effective device types for manual reclassify (mirrors entities_host). */
+const DEVICE_TYPES = new Set([
+  "switch", "router", "ap", "firewall", "printer", "phone", "camera",
+  "computer", "server", "mobile", "storage", "iot", "vm", "unknown",
+]);
+
+/** Bulk-purge (reversibly exclude) the SELECTED devices. items = JSON array of
+ *  { key: "sw:N"|"host:N"|"reg:N", registryId?: number }. */
+export async function bulkPurgeDevicesAction(
+  _prev: InventoryActionState,
+  formData: FormData,
+): Promise<InventoryActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const schoolId = Number(formData.get("schoolId"));
+  const basePath = String(formData.get("basePath") ?? "");
+  if (!Number.isInteger(schoolId)) return { error: "Invalid school." };
+
+  let items: { key?: string; registryId?: number | null }[] = [];
+  try {
+    items = JSON.parse(String(formData.get("items") ?? "[]"));
+  } catch {
+    return { error: "Bad selection." };
+  }
+  if (!Array.isArray(items) || items.length === 0) return { error: "Nothing selected." };
+
+  const swIds: number[] = [];
+  const hostIds: number[] = [];
+  const regIds = new Set<number>();
+  for (const it of items) {
+    if (typeof it?.key !== "string") continue;
+    if (it.key.startsWith("reg:")) {
+      const rid = Number(it.key.slice(4));
+      if (Number.isInteger(rid)) regIds.add(rid);
+      continue;
+    }
+    const parsed = parseKey(it.key);
+    if (!parsed) continue;
+    if (parsed.kind === "sw") swIds.push(parsed.id);
+    else hostIds.push(parsed.id);
+    if (Number.isInteger(it.registryId) && (it.registryId as number) > 0)
+      regIds.add(it.registryId as number);
+  }
+  if (swIds.length === 0 && hostIds.length === 0 && regIds.size === 0)
+    return { error: "Nothing valid selected." };
+
+  const set = { excludedAt: new Date(), excludedBy: admin.id };
+  await db.transaction(async (tx) => {
+    if (swIds.length) await tx.update(entitiesSwitch).set(set).where(inArray(entitiesSwitch.id, swIds));
+    if (hostIds.length) await tx.update(entitiesHost).set(set).where(inArray(entitiesHost.id, hostIds));
+    if (regIds.size)
+      await tx
+        .update(registryDevices)
+        .set({ status: "retired", retiredReason: "purged from inventory", retiredAt: new Date(), updatedBy: admin.id })
+        .where(inArray(registryDevices.id, [...regIds]));
+  });
+
+  await pushSnmpExclude(schoolId, admin.id);
+  const n = swIds.length + hostIds.length + regIds.size;
+  await db.insert(auditLog).values({
+    actorType: "user", actor: admin.email, action: "devices_bulk_purged",
+    detail: { schoolId, count: n },
+  });
+  revalidatePath(`${basePath}/inventory`);
+  revalidatePath(`${basePath}/map`);
+  return {
+    ok: true,
+    message: `Purged ${n} device(s) — hidden from the inventory + map; sensors stop SNMP-polling them on the next check-in. Restore any from the Excluded tab.`,
+  };
+}
+
+/** Bulk-reclassify SELECTED discovered hosts. Sets a sticky manual override on
+ *  entities_host that wins over the auto type and survives re-scans. hostIds =
+ *  JSON array of entities_host ids; deviceType = one of DEVICE_TYPES. */
+export async function bulkReclassifyDevicesAction(
+  _prev: InventoryActionState,
+  formData: FormData,
+): Promise<InventoryActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const schoolId = Number(formData.get("schoolId"));
+  const basePath = String(formData.get("basePath") ?? "");
+  const deviceType = String(formData.get("deviceType") ?? "");
+  if (!Number.isInteger(schoolId)) return { error: "Invalid school." };
+  if (!DEVICE_TYPES.has(deviceType)) return { error: "Pick a device type." };
+
+  let hostIds: number[] = [];
+  try {
+    hostIds = (JSON.parse(String(formData.get("hostIds") ?? "[]")) as unknown[])
+      .map(Number)
+      .filter((n) => Number.isInteger(n));
+  } catch {
+    return { error: "Bad selection." };
+  }
+  if (hostIds.length === 0)
+    return {
+      error:
+        "Reclassify applies to discovered hosts — none were selected. (Switches and manual records keep their own type.)",
+    };
+
+  await db
+    .update(entitiesHost)
+    .set({ deviceTypeOverride: deviceType })
+    .where(inArray(entitiesHost.id, hostIds));
+
+  await db.insert(auditLog).values({
+    actorType: "user", actor: admin.email, action: "devices_bulk_reclassified",
+    detail: { schoolId, count: hostIds.length, deviceType },
+  });
+  revalidatePath(`${basePath}/inventory`);
+  revalidatePath(`${basePath}/map`);
+  return {
+    ok: true,
+    message: `Reclassified ${hostIds.length} device(s) as “${deviceType}” — sticks across future scans.`,
+  };
+}
+
+/** Bulk-restore (un-exclude) SELECTED purged devices. keys = JSON array. */
+export async function bulkRestoreDevicesAction(
+  _prev: InventoryActionState,
+  formData: FormData,
+): Promise<InventoryActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const schoolId = Number(formData.get("schoolId"));
+  const basePath = String(formData.get("basePath") ?? "");
+  if (!Number.isInteger(schoolId)) return { error: "Invalid school." };
+  let keys: string[] = [];
+  try {
+    keys = (JSON.parse(String(formData.get("keys") ?? "[]")) as unknown[]).map(String);
+  } catch {
+    return { error: "Bad selection." };
+  }
+  const swIds: number[] = [];
+  const hostIds: number[] = [];
+  for (const k of keys) {
+    const parsed = parseKey(k);
+    if (!parsed) continue;
+    if (parsed.kind === "sw") swIds.push(parsed.id);
+    else hostIds.push(parsed.id);
+  }
+  if (swIds.length === 0 && hostIds.length === 0) return { error: "Nothing selected." };
+  const set = { excludedAt: null, excludedBy: null };
+  if (swIds.length) await db.update(entitiesSwitch).set(set).where(inArray(entitiesSwitch.id, swIds));
+  if (hostIds.length) await db.update(entitiesHost).set(set).where(inArray(entitiesHost.id, hostIds));
+  await pushSnmpExclude(schoolId, admin.id);
+  const n = swIds.length + hostIds.length;
+  await db.insert(auditLog).values({
+    actorType: "user", actor: admin.email, action: "devices_bulk_restored",
+    detail: { schoolId, count: n },
+  });
+  revalidatePath(`${basePath}/inventory`);
+  revalidatePath(`${basePath}/map`);
+  return { ok: true, message: `Restored ${n} device(s).` };
+}
+
 /** Turn the SNMP crawl on/off for the whole school (fans out to every sensor). */
 export async function setSchoolSnmpAction(
   _prev: InventoryActionState,

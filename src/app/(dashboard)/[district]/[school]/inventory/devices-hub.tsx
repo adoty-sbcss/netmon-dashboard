@@ -3,7 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Ban, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Trash2, Upload, Waypoints } from "lucide-react";
+import { Ban, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Tags, Trash2, Upload, Waypoints, X } from "lucide-react";
 
 import type { InventoryRow, ExcludedRow } from "@/lib/inventory/queries";
 import type { ReachabilitySummary } from "@/db/queries";
@@ -16,6 +16,8 @@ import {
   purgeAllDiscoveredAction,
   purgeDeviceAction,
   restoreDeviceAction,
+  bulkPurgeDevicesAction,
+  bulkReclassifyDevicesAction,
 } from "@/lib/inventory/snmp-control";
 import { ReachabilityTable } from "../switches/reachability-table";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +51,10 @@ type SourceFilter = "all" | "discovered" | "manual";
 type SnmpFilter = "all" | "ok" | "gap";
 
 const INFRA = new Set(["switch", "router", "ap", "firewall"]);
+const DEVICE_TYPE_OPTIONS = [
+  "switch", "router", "ap", "firewall", "printer", "phone", "camera",
+  "computer", "server", "mobile", "storage", "iot", "vm", "unknown",
+];
 const selectCls =
   "h-8 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[2px] focus-visible:ring-ring/50";
 
@@ -115,10 +121,21 @@ export function DevicesHub({
     purgeAllDiscoveredAction,
     {},
   );
+  const [bulkPurgeState, bulkPurgeAction, bulkPurging] = useActionState<InventoryActionState, FormData>(
+    bulkPurgeDevicesAction,
+    {},
+  );
+  const [reclassState, reclassAction, reclassifying] = useActionState<InventoryActionState, FormData>(
+    bulkReclassifyDevicesAction,
+    {},
+  );
   const [category, setCategory] = useState<Category>(initialCategory);
   const [source, setSource] = useState<SourceFilter>(initialSource);
   const [snmp, setSnmp] = useState<SnmpFilter>("all");
   const [q, setQ] = useState("");
+  // Bulk selection (admin map-cleanup): keyed by InventoryRow.key.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [reclassType, setReclassType] = useState("unknown");
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -137,6 +154,27 @@ export function DevicesHub({
       return true;
     });
   }, [rows, category, source, snmp, q]);
+
+  const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.key)), [rows, selected]);
+  const selectedItems = selectedRows.map((r) => ({ key: r.key, registryId: r.registryId }));
+  const selectedHostIds = selectedRows.filter((r) => r.hostId != null).map((r) => r.hostId);
+  const allVisibleSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.key));
+  function toggle(key: string) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  }
+  function toggleAllVisible() {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (allVisibleSelected) filtered.forEach((r) => n.delete(r.key));
+      else filtered.forEach((r) => n.add(r.key));
+      return n;
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -215,8 +253,8 @@ export function DevicesHub({
       </div>
 
       {(() => {
-        const err = purgeAllState.error || snmpState.error || syncState.error;
-        const msg = purgeAllState.message || snmpState.message || syncState.message;
+        const err = purgeAllState.error || snmpState.error || syncState.error || bulkPurgeState.error || reclassState.error;
+        const msg = purgeAllState.message || snmpState.message || syncState.message || bulkPurgeState.message || reclassState.message;
         if (!err && !msg) return null;
         return (
           <p className={err ? "text-sm text-destructive" : "text-sm text-emerald-600 dark:text-emerald-400"}>
@@ -255,10 +293,71 @@ export function DevicesHub({
             <span className="ml-auto text-xs text-muted-foreground">{filtered.length} of {rows.length}</span>
           </div>
 
+          {/* Bulk actions (admin) — appear when devices are selected. Counted off
+              selectedRows so it auto-clears as purged rows leave the list. */}
+          {isAdmin && selectedRows.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 p-2">
+              <span className="text-sm font-medium">{selectedRows.length} selected</span>
+              <form action={reclassAction} className="flex items-center gap-1.5">
+                <input type="hidden" name="schoolId" value={schoolId} />
+                <input type="hidden" name="basePath" value={basePath} />
+                <input type="hidden" name="hostIds" value={JSON.stringify(selectedHostIds)} />
+                <select
+                  name="deviceType"
+                  value={reclassType}
+                  onChange={(e) => setReclassType(e.target.value)}
+                  className={selectCls}
+                  title="Reclassify the selected discovered hosts (sticky across scans)"
+                >
+                  {DEVICE_TYPE_OPTIONS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <Button type="submit" variant="outline" size="sm" disabled={reclassifying}>
+                  <Tags className="size-4" /> {reclassifying ? "Saving…" : "Reclassify"}
+                </Button>
+              </form>
+              <form action={bulkPurgeAction}>
+                <input type="hidden" name="schoolId" value={schoolId} />
+                <input type="hidden" name="basePath" value={basePath} />
+                <input type="hidden" name="items" value={JSON.stringify(selectedItems)} />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkPurging}
+                  onClick={(e) => {
+                    if (!confirm(`Delete ${selectedRows.length} selected device(s)? They'll be hidden from the inventory + map and sensors stop SNMP-polling them. Restore any from the Excluded tab.`)) e.preventDefault();
+                  }}
+                >
+                  <Trash2 className="size-4" /> {bulkPurging ? "Deleting…" : `Delete ${selectedRows.length}`}
+                </Button>
+              </form>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" /> Clear
+              </button>
+            </div>
+          )}
+
           <div className="overflow-x-auto rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow>
+                  {isAdmin && (
+                    <TableHead className="w-8">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleAllVisible}
+                        aria-label="Select all visible"
+                        className="size-4 rounded border-input accent-primary"
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Device</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead className="hidden lg:table-cell">Vendor / model</TableHead>
@@ -279,6 +378,17 @@ export function DevicesHub({
                       className={(r.snmp === "gap" ? "bg-[var(--warning)]/5 " : "") + (href ? "cursor-pointer hover:bg-accent/40" : "")}
                       onClick={() => href && router.push(href)}
                     >
+                      {isAdmin && (
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(r.key)}
+                            onChange={() => toggle(r.key)}
+                            aria-label={`Select ${r.name}`}
+                            className="size-4 rounded border-input accent-primary"
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         <div className="flex items-center gap-2 font-medium">
                           <span className={r.online ? "size-2 shrink-0 rounded-full bg-[var(--success)]" : "size-2 shrink-0 rounded-full bg-muted-foreground/40"} />

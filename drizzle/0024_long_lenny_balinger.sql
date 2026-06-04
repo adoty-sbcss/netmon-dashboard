@@ -1,0 +1,1 @@
+ALTER TABLE "entities_host" ADD COLUMN "device_type_override" text;
