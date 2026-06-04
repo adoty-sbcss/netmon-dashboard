@@ -46,6 +46,7 @@ import {
   sensorEnrollments,
 } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
+import { isIpPhoneMapNode } from "../lib/classify/device-hints";
 
 // ---- shared shapes --------------------------------------------------------
 
@@ -1790,8 +1791,11 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
   function build(kind: "physical" | "logical"): MapGraph {
     const row = snapRows.find((r) => r.kind === kind);
     const g = (row?.graph ?? {}) as { nodes?: RawNode[]; edges?: TopoEdge[] };
+    // Prune Cisco IP phones the SNMP crawl recorded as switches: they linger in
+    // the union-merged snapshot forever, so filter them out at read time.
+    const rawNodes = (Array.isArray(g.nodes) ? g.nodes : []).filter((n) => !isIpPhoneMapNode(n));
     return {
-      nodes: enrich(kind, Array.isArray(g.nodes) ? g.nodes : []),
+      nodes: enrich(kind, rawNodes),
       edges: Array.isArray(g.edges) ? g.edges : [],
       positions: posByKind.get(kind) ?? {},
       generatedAt: row?.generatedAt ?? null,

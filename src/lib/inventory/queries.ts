@@ -16,6 +16,7 @@ import { entitiesHost, entitiesSwitch, registryDevices, schoolPolicy } from "@/d
 import { listReachabilityForSchool } from "@/db/queries";
 import { normalizeMac } from "@/lib/registry/types";
 import { CLASSIFY_REVIEW_THRESHOLD } from "@/lib/classify/constants";
+import { isCiscoIpPhoneName } from "@/lib/classify/device-hints";
 
 export type SnmpStatus = "responding" | "gap" | "na" | "unknown";
 
@@ -144,6 +145,9 @@ export async function getInventoryForSchool(
 
   // --- Discovered switches ---------------------------------------------------
   for (const sw of switches) {
+    // Cisco IP phones (CDP "SEP<mac>") get crawled as switches — never list them
+    // as infrastructure; they belong with the phone endpoints, not the fabric.
+    if (isCiscoIpPhoneName(sw.systemName) || isCiscoIpPhoneName(sw.chassisId)) continue;
     const ip = sw.mgmtIp;
     const reg = matchRegistry(sw.chassisId, ip);
     if (reg) usedRegistry.add(reg.id);

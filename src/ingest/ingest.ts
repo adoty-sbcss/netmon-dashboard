@@ -51,6 +51,7 @@ import {
   type RawTopology,
 } from "./bundle";
 import { classifyHost } from "../lib/classify";
+import { isCiscoIpPhoneName, isIpPhoneMapNode, isIpPhoneTopoNode } from "../lib/classify/device-hints";
 
 /**
  * SNMP curation. Raw SNMP is thousands of rows/scan (mostly ipNetToMediaTable +
@@ -255,7 +256,7 @@ function buildPhysicalGraph(
   // which is what stitches the two stars into one connected graph.
   const remap = new Map<string, string>();
   const nodes = (topo.nodes ?? [])
-    .filter((n) => keepNode(n.type))
+    .filter((n) => keepNode(n.type) && !isIpPhoneMapNode(n))
     .map((n) => {
       if (n.type === "scanner") {
         const newId = `${n.id}#s${sensorId}`;
@@ -321,6 +322,7 @@ function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): T
     for (const n of topo.nodes ?? []) {
       const chassis = str(n.chassis_id);
       if (!chassis) continue;
+      if (isIpPhoneTopoNode(n)) continue; // Cisco IP phones crawl as fake switches
       const id = `switch:${chassis}`;
       nodeById.set(id, {
         id,
@@ -336,6 +338,7 @@ function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): T
       const a = str(e.local_chassis_id);
       const b = str(e.remote_chassis_id);
       if (!a || !b) continue;
+      if (isCiscoIpPhoneName(a) || isCiscoIpPhoneName(b)) continue; // drop phone edges
       const source = `switch:${a}`;
       const target = `switch:${b}`;
       const kind = str(e.via) ?? "lldp";
@@ -844,6 +847,7 @@ export async function ingestBundle(
       for (const n of scan.snmpTopology?.nodes ?? []) {
         const chassis = str(n.chassis_id);
         if (!chassis) continue;
+        if (isIpPhoneTopoNode(n)) continue; // don't list Cisco IP phones as switches
         const seen = toDate(scan.meta.completed_at) ?? new Date();
         await tx
           .insert(entitiesSwitch)
