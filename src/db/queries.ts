@@ -46,7 +46,7 @@ import {
   sensorEnrollments,
 } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
-import { isIpPhoneMapNode } from "../lib/classify/device-hints";
+import { isIpPhoneMapNode, refineInfraType } from "../lib/classify/device-hints";
 
 // ---- shared shapes --------------------------------------------------------
 
@@ -1608,23 +1608,6 @@ export interface MapGraph {
 export interface SchoolMap {
   physical: MapGraph;
   logical: MapGraph;
-}
-
-function refineInfraType(
-  base: string,
-  caps: string[] | null,
-  sysDescr: string | null,
-): string {
-  const c = (caps ?? []).map((s) => s.toLowerCase());
-  if (c.some((x) => x.includes("access-point") || x.includes("wlan"))) return "ap";
-  if (sysDescr && /access point|aironet|wireless lan|\bWAP\b/i.test(sysDescr)) return "ap";
-  if (sysDescr && /firewall|fortigate|palo alto|\bASA\b|sonicwall/i.test(sysDescr)) return "firewall";
-  if (c.includes("telephone")) return "phone";
-  if (c.includes("router") && !c.includes("bridge")) return "router";
-  if (sysDescr && /\brouter\b|\bISR\b|\bASR\b|RouterOS/i.test(sysDescr)) return "router";
-  if (base === "gateway") return "router";
-  if (base === "scanner") return "scanner";
-  return "switch";
 }
 
 /**

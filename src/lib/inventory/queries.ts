@@ -16,7 +16,7 @@ import { entitiesHost, entitiesSwitch, registryDevices, schoolPolicy } from "@/d
 import { listReachabilityForSchool } from "@/db/queries";
 import { normalizeMac } from "@/lib/registry/types";
 import { CLASSIFY_REVIEW_THRESHOLD } from "@/lib/classify/constants";
-import { isCiscoIpPhoneName } from "@/lib/classify/device-hints";
+import { isCiscoIpPhoneName, refineInfraType } from "@/lib/classify/device-hints";
 
 export type SnmpStatus = "responding" | "gap" | "na" | "unknown";
 
@@ -153,10 +153,13 @@ export async function getInventoryForSchool(
     if (reg) usedRegistry.add(reg.id);
     const { snmp, reachable } = snmpStatus({ ip, expected: true });
     const online = reachable ?? recent(sw.lastSeenAt);
+    // Crawled "switches" are often APs / routers / firewalls — promote them from
+    // capabilities + system description so the inventory matches the map.
+    const swType = reg?.deviceType || refineInfraType("switch", sw.capabilities, sw.systemDescription);
     rows.push({
       key: `sw:${sw.id}`,
       name: reg?.name || sw.systemName || sw.mgmtIp || sw.chassisId,
-      deviceType: "switch",
+      deviceType: swType,
       confidence: reg ? 1 : null,
       confirmed: Boolean(reg),
       vendor: reg?.vendor || attrStr(sw.attributes, "vendor"),

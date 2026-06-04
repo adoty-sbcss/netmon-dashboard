@@ -40,3 +40,36 @@ export function isIpPhoneMapNode(n: { id?: unknown; label?: unknown }): boolean 
   const chassis = id.startsWith("switch:") ? id.slice("switch:".length) : id;
   return isCiscoIpPhoneName(chassis) || isCiscoIpPhoneName(asStr(n.label));
 }
+
+/**
+ * Refine a crawled "switch" node into its real infra role from LLDP/CDP
+ * capabilities + the SNMP system description. APs, routers, firewalls and phones
+ * all get swept into the discovered-switch table by the fabric crawl, so this
+ * promotes them to the right type for the inventory AND the map.
+ *
+ * AP detection is keyed on AP-SPECIFIC tokens (Instant/IAP, `AP-<model>`,
+ * `ArubaOS (…)`, Meraki MR, UAP, etc.) so Aruba/HPE SWITCHES (ArubaOS-CX,
+ * ProCurve, JL…) are NOT mislabeled as APs.
+ */
+export function refineInfraType(
+  base: string,
+  caps: string[] | null,
+  sysDescr: string | null,
+): string {
+  const c = (caps ?? []).map((s) => s.toLowerCase());
+  if (c.some((x) => x.includes("access-point") || x.includes("wlan") || x === "ap")) return "ap";
+  if (
+    sysDescr &&
+    /access point|aironet|wireless lan|\bWAP\b|instant ?ap|\bIAP\b|\bAP-\d{2,}|aruba\w*\s+ap\b|arubaos\s*\(|meraki\s*mr|\bMR\d{2,}\b|\bUAP\b|aerohive|engenius|cambium/i.test(
+      sysDescr,
+    )
+  )
+    return "ap";
+  if (sysDescr && /firewall|fortigate|palo alto|\bASA\b|sonicwall/i.test(sysDescr)) return "firewall";
+  if (c.includes("telephone")) return "phone";
+  if (c.includes("router") && !c.includes("bridge")) return "router";
+  if (sysDescr && /\brouter\b|\bISR\b|\bASR\b|RouterOS/i.test(sysDescr)) return "router";
+  if (base === "gateway") return "router";
+  if (base === "scanner") return "scanner";
+  return "switch";
+}
