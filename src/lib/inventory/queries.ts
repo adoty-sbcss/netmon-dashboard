@@ -15,6 +15,7 @@ import { db } from "@/db";
 import { entitiesHost, entitiesSwitch, registryDevices, schoolPolicy } from "@/db/schema";
 import { listReachabilityForSchool } from "@/db/queries";
 import { normalizeMac } from "@/lib/registry/types";
+import { CLASSIFY_REVIEW_THRESHOLD } from "@/lib/classify/constants";
 
 export type SnmpStatus = "responding" | "gap" | "na" | "unknown";
 
@@ -56,8 +57,7 @@ export interface InventorySummary {
   rows: InventoryRow[];
 }
 
-/** Auto-classifications at or above this confidence are considered settled. */
-export const CLASSIFY_REVIEW_THRESHOLD = 0.75;
+export { CLASSIFY_REVIEW_THRESHOLD };
 
 const ONLINE_WINDOW_MS = 25 * 60 * 60 * 1000; // ~last day of hourly scans
 

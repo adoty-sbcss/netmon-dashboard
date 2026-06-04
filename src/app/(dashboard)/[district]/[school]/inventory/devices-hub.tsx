@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Ban, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Tags, Trash2, Upload, Waypoints, X } from "lucide-react";
 
-import { CLASSIFY_REVIEW_THRESHOLD, type InventoryRow, type ExcludedRow } from "@/lib/inventory/queries";
+import type { InventoryRow, ExcludedRow } from "@/lib/inventory/queries";
+import { CLASSIFY_REVIEW_THRESHOLD } from "@/lib/classify/constants";
 import type { ReachabilitySummary } from "@/db/queries";
 import {
   syncRegistryToSensorAction,
