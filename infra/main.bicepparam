@@ -13,6 +13,11 @@ using './main.bicep'
 param postgresAdminPassword = readEnvironmentVariable('PG_ADMIN_PASSWORD')
 param authSecret = readEnvironmentVariable('AUTH_SECRET')
 
+// RBAC grants are created once. On a RE-APPLY (e.g. to add a job) they already
+// exist, so set ASSIGN_ROLES=false to SKIP recreating them — otherwise the deploy
+// fails with "RoleAssignmentExists". Leave default (true) for a from-scratch deploy.
+param assignRoles = bool(readEnvironmentVariable('ASSIGN_ROLES', 'true'))
+
 // Postgres is private (VNet-integrated) — there is no firewall to open, so no
 // client-IP parameter. The migrate/seed Job runs inside the VNet to reach it.
 
