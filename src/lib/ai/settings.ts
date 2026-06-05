@@ -11,7 +11,7 @@
  * Relative imports + no `server-only` so this also loads under tsx in the AI cron
  * Job, exactly like src/lib/ingest/settings.ts.
  */
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "../../db";
 import { aiProviderSettings, aiSettings } from "../../db/schema/ai";
@@ -33,6 +33,8 @@ const DEFAULTS = {
   monthlySpendCapUsd: null as number | null,
   /** Editable persona/behavior for the in-app assistant; null = built-in default. */
   assistantInstructions: null as string | null,
+  /** Display name for the assistant; null = "NetMon Assistant". */
+  assistantName: null as string | null,
 };
 
 // ---- env fallback ---------------------------------------------------------
@@ -160,6 +162,7 @@ export interface AiGlobalSettings {
   maxOutputTokens: number;
   monthlySpendCapUsd: number | null;
   assistantInstructions: string | null;
+  assistantName: string | null;
   updatedAt: Date | null;
 }
 
@@ -176,6 +179,7 @@ export async function getAiSettings(): Promise<AiGlobalSettings> {
     maxOutputTokens: row.maxOutputTokens,
     monthlySpendCapUsd: row.monthlySpendCapUsd,
     assistantInstructions: row.assistantInstructions,
+    assistantName: row.assistantName,
     updatedAt: row.updatedAt,
   };
 }
@@ -245,6 +249,7 @@ export async function saveAiSettings(
       maxOutputTokens: merged.maxOutputTokens,
       monthlySpendCapUsd: merged.monthlySpendCapUsd,
       assistantInstructions: merged.assistantInstructions,
+      assistantName: merged.assistantName,
       updatedBy: updatedBy ?? null,
       updatedAt: new Date(),
     })
@@ -256,8 +261,83 @@ export async function saveAiSettings(
         maxOutputTokens: merged.maxOutputTokens,
         monthlySpendCapUsd: merged.monthlySpendCapUsd,
         assistantInstructions: merged.assistantInstructions,
+        assistantName: merged.assistantName,
         updatedBy: updatedBy ?? null,
         updatedAt: new Date(),
       },
     });
+}
+
+// ---- assistant identity (name + avatar) -----------------------------------
+
+/** Name + whether a custom avatar is set — cheap (no base64 transfer). For the
+ *  layout to render the widget's identity. */
+export async function getAssistantIdentity(): Promise<{
+  name: string;
+  hasAvatar: boolean;
+}> {
+  const [row] = await db
+    .select({
+      name: aiSettings.assistantName,
+      hasAvatar: sql<boolean>`${aiSettings.assistantAvatarData} is not null`,
+    })
+    .from(aiSettings)
+    .where(eq(aiSettings.id, SINGLETON_ID))
+    .limit(1);
+  return {
+    name: (row?.name && row.name.trim()) || "NetMon Assistant",
+    hasAvatar: Boolean(row?.hasAvatar),
+  };
+}
+
+/** Raw avatar bytes for the serve route, or null. */
+export async function getAssistantAvatar(): Promise<{ mime: string; data: string } | null> {
+  const [row] = await db
+    .select({
+      mime: aiSettings.assistantAvatarMime,
+      data: aiSettings.assistantAvatarData,
+    })
+    .from(aiSettings)
+    .where(eq(aiSettings.id, SINGLETON_ID))
+    .limit(1);
+  if (!row?.mime || !row?.data) return null;
+  return { mime: row.mime, data: row.data };
+}
+
+/** Upsert the avatar (base64) onto the singleton. */
+export async function saveAssistantAvatar(
+  mime: string,
+  data: string,
+  updatedBy?: number | null,
+): Promise<void> {
+  await db
+    .insert(aiSettings)
+    .values({
+      id: SINGLETON_ID,
+      assistantAvatarMime: mime,
+      assistantAvatarData: data,
+      updatedBy: updatedBy ?? null,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: aiSettings.id,
+      set: {
+        assistantAvatarMime: mime,
+        assistantAvatarData: data,
+        updatedBy: updatedBy ?? null,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+export async function clearAssistantAvatar(updatedBy?: number | null): Promise<void> {
+  await db
+    .update(aiSettings)
+    .set({
+      assistantAvatarMime: null,
+      assistantAvatarData: null,
+      updatedBy: updatedBy ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(aiSettings.id, SINGLETON_ID));
 }

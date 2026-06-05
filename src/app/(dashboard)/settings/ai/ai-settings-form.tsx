@@ -17,6 +17,8 @@ import {
   saveProviderAction,
   testProviderAction,
   saveAiSettingsAction,
+  uploadAssistantAvatarAction,
+  clearAssistantAvatarAction,
   type AiSettingsActionState,
 } from "@/lib/ai/actions";
 import type { AiProviderSettingsView, AiGlobalSettings } from "@/lib/ai/settings";
@@ -285,6 +287,14 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
     saveAiSettingsAction,
     {},
   );
+  const [avatarState, uploadAvatar, uploadingAvatar] = useActionState<
+    AiSettingsActionState,
+    FormData
+  >(uploadAssistantAvatarAction, {});
+  const [clearAvatarState, clearAvatar, clearingAvatar] = useActionState<
+    AiSettingsActionState,
+    FormData
+  >(clearAssistantAvatarAction, {});
 
   return (
     <Card>
@@ -363,6 +373,20 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
           </div>
 
           <div className={fieldCls}>
+            <label htmlFor="assistantName" className={labelCls}>
+              Assistant name
+            </label>
+            <Input
+              id="assistantName"
+              name="assistantName"
+              defaultValue={settings.assistantName ?? ""}
+              placeholder="NetMon Assistant"
+              maxLength={80}
+              className="max-w-xs"
+            />
+          </div>
+
+          <div className={fieldCls}>
             <label htmlFor="assistantInstructions" className={labelCls}>
               Assistant instructions
             </label>
@@ -388,6 +412,42 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
             <Notice state={state} />
           </div>
         </form>
+
+        <div className="mt-4 flex flex-col gap-2 border-t pt-4">
+          <span className={labelCls}>Assistant picture</span>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/ai/avatar"
+              alt=""
+              className="size-12 rounded-lg border object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+              }}
+            />
+            <form action={uploadAvatar} className="flex items-center gap-2">
+              <input
+                type="file"
+                name="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                className="max-w-[12rem] text-xs file:mr-2 file:rounded file:border file:bg-muted file:px-2 file:py-1"
+              />
+              <Button type="submit" size="sm" variant="outline" disabled={uploadingAvatar}>
+                {uploadingAvatar ? "Uploading…" : "Upload"}
+              </Button>
+            </form>
+            <form action={clearAvatar}>
+              <Button type="submit" size="sm" variant="ghost" disabled={clearingAvatar}>
+                Remove
+              </Button>
+            </form>
+          </div>
+          <Notice state={avatarState} />
+          <Notice state={clearAvatarState} />
+          <p className="text-xs text-muted-foreground">
+            PNG/JPEG/WEBP/GIF/SVG, max 512 KB. Appears on the floating chat button.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );

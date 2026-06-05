@@ -21,6 +21,8 @@ import {
   resolveProviderConfig,
   saveProviderSettings,
   saveAiSettings,
+  saveAssistantAvatar,
+  clearAssistantAvatar,
 } from "./settings";
 import { getRun, type AnalysisRun } from "./queries";
 
@@ -280,6 +282,7 @@ export async function saveAiSettingsAction(
     return { error: "Monthly cap must be a non-negative number." };
   }
   const instr = String(formData.get("assistantInstructions") ?? "").trim();
+  const name = String(formData.get("assistantName") ?? "").trim();
 
   await saveAiSettings(
     {
@@ -289,10 +292,61 @@ export async function saveAiSettingsAction(
         Number.isFinite(maxTokens) && maxTokens >= 256 ? Math.floor(maxTokens) : 8192,
       monthlySpendCapUsd: cap,
       assistantInstructions: instr ? instr.slice(0, 8000) : null,
+      assistantName: name ? name.slice(0, 80) : null,
     },
     user.id,
   );
   await audit(user.email, "ai_settings_saved", {});
   revalidatePath(AI_SETTINGS_PATH);
   return { ok: true, message: "Settings saved." };
+}
+
+// ---- assistant avatar upload (base64 in DB, mirrors branding) --------------
+
+const AVATAR_MAX_BYTES = 512 * 1024; // 512 KB
+const AVATAR_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/svg+xml",
+  "image/gif",
+]);
+
+export async function uploadAssistantAvatarAction(
+  _prev: AiSettingsActionState,
+  formData: FormData,
+): Promise<AiSettingsActionState> {
+  const user = await requireSuperadmin();
+  if (!user) return { error: "Not authorized." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose an image first." };
+  if (file.size > AVATAR_MAX_BYTES) return { error: "Image too large (max 512 KB)." };
+  if (!AVATAR_TYPES.has(file.type)) {
+    return {
+      error: `Unsupported type${file.type ? ` (${file.type})` : ""}. Use PNG, JPEG, WEBP, GIF, or SVG.`,
+    };
+  }
+
+  const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
+  await saveAssistantAvatar(file.type, base64, user.id);
+  await audit(user.email, "ai_avatar_uploaded", { mime: file.type });
+  revalidatePath(AI_SETTINGS_PATH);
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Assistant picture updated." };
+}
+
+export async function clearAssistantAvatarAction(
+  _prev: AiSettingsActionState,
+  _formData: FormData,
+): Promise<AiSettingsActionState> {
+  void _prev;
+  void _formData;
+  const user = await requireSuperadmin();
+  if (!user) return { error: "Not authorized." };
+  await clearAssistantAvatar(user.id);
+  await audit(user.email, "ai_avatar_cleared", {});
+  revalidatePath(AI_SETTINGS_PATH);
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Assistant picture removed — using the default." };
 }

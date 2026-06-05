@@ -142,6 +142,12 @@ export const aiSettings = pgTable("ai_settings", {
    *  built-in default. App facts + anti-hallucination grounding are appended by
    *  the system and are not editable here. */
   assistantInstructions: text("assistant_instructions"),
+  /** Display name for the in-app assistant (null → "NetMon Assistant"). */
+  assistantName: text("assistant_name"),
+  /** Avatar stored inline as base64 + mime (mirrors branding_settings); both null
+   *  → the default sparkle icon. */
+  assistantAvatarMime: text("assistant_avatar_mime"),
+  assistantAvatarData: text("assistant_avatar_data"),
   updatedBy: integer("updated_by").references(() => users.id, {
     onDelete: "set null",
   }),

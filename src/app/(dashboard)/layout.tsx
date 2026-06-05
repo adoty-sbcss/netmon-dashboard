@@ -4,6 +4,7 @@ import { getNavTree } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope } from "@/lib/auth/scope";
 import { getBranding } from "@/lib/branding";
+import { getAssistantIdentity } from "@/lib/ai/settings";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AiAssistantWidget } from "@/components/ai-chat/assistant-widget";
 import { DynamicBreadcrumb } from "@/components/dynamic-breadcrumb";
@@ -34,6 +35,7 @@ export default async function DashboardLayout({
   const scope = await getUserScope(user);
   const tree = await getNavTree({ districtIds: scope.all ? null : scope.districtIds });
   const b = await getBranding();
+  const assistant = await getAssistantIdentity();
 
   return (
     <SidebarProvider>
@@ -61,7 +63,7 @@ export default async function DashboardLayout({
         <main className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
           {children}
         </main>
-        <AiAssistantWidget />
+        <AiAssistantWidget name={assistant.name} hasAvatar={assistant.hasAvatar} />
       </SidebarInset>
     </SidebarProvider>
   );

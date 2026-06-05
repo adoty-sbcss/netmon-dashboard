@@ -146,7 +146,9 @@ export async function sendAssistantMessage(
 
   const scope = await resolveScope(user, pathname);
   const settings = await getAiSettings();
-  const system = await buildAssistantSystemPrompt(scope, settings.assistantInstructions);
+  const name = settings.assistantName?.trim() || "NetMon Assistant";
+  const base = await buildAssistantSystemPrompt(scope, settings.assistantInstructions);
+  const system = `Your name is "${name}". Refer to yourself by this name.\n\n${base}`;
 
   const history = await db
     .select()

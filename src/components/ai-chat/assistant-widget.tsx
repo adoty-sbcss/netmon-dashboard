@@ -15,7 +15,13 @@ import { Button } from "@/components/ui/button";
  * stays recorded). Data answers are scoped to the page you're viewing + your
  * district access (enforced server-side).
  */
-export function AiAssistantWidget() {
+export function AiAssistantWidget({
+  name,
+  hasAvatar,
+}: {
+  name: string;
+  hasAvatar: boolean;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -81,10 +87,15 @@ export function AiAssistantWidget() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="Open NetMon Assistant"
-        className="fixed bottom-4 right-4 z-50 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+        aria-label={`Open ${name}`}
+        className="fixed bottom-4 right-4 z-50 flex size-14 items-center justify-center overflow-hidden rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
       >
-        <Sparkles className="size-6" />
+        {hasAvatar ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src="/ai/avatar" alt="" className="size-full object-cover" />
+        ) : (
+          <Sparkles className="size-6" />
+        )}
       </button>
     );
   }
@@ -92,8 +103,13 @@ export function AiAssistantWidget() {
   return (
     <div className="fixed bottom-4 right-4 z-50 flex h-[min(70vh,560px)] w-[min(92vw,400px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl">
       <div className="flex items-center gap-2 border-b px-3 py-2.5">
-        <Sparkles className="size-4 text-primary" />
-        <span className="text-sm font-semibold">NetMon Assistant</span>
+        {hasAvatar ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src="/ai/avatar" alt="" className="size-5 rounded object-cover" />
+        ) : (
+          <Sparkles className="size-4 text-primary" />
+        )}
+        <span className="text-sm font-semibold">{name}</span>
         <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
