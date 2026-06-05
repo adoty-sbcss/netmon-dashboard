@@ -776,32 +776,51 @@ export async function ingestBundle(
         }
       }
 
+      // The scan's gateway — a host matching this ip/mac is the L3 edge (router/fw).
+      const gwIp = str(scan.meta.gateway_ip);
+      const gwMac = str(scan.meta.gateway_mac)?.toLowerCase() ?? null;
+
       // ---- canonical hosts (dedup on mac within district) ----
       for (const d of scan.devices) {
         const mac = str(d.mac);
         if (!mac) continue; // need a MAC to dedup
         const seen = toDate(d.last_seen_at) ?? completedAt;
         const fp = dhcpFp.get(mac.toLowerCase());
+        const ip = str(d.ip);
         // Prefer the discovered hostname; fall back to the name the client
         // advertised over DHCP (option 12) when PTR/nmap gave us nothing.
         const hostname = str(d.hostname) ?? fp?.hostname ?? null;
+        // mDNS/SSDP service hint + raw service types (collector attaches these
+        // inline on the device — the strongest signal for chatty endpoints).
+        const extra = ((d.extra ?? {}) as unknown) as Record<string, unknown>;
+        const serviceHint = str(extra.service_hint);
+        const services = Array.isArray(extra.services) ? extra.services.map(String) : null;
+        const isGateway = (!!gwMac && mac.toLowerCase() === gwMac) || (!!gwIp && ip === gwIp);
         // Enrich: fill manufacturer from the OUI registry when the bundle says
-        // "unknown"/blank, and classify device type from SNMP + DHCP fingerprint
-        // + hostname + vendor. Pure/offline.
+        // "unknown"/blank, and classify device type from mDNS + SNMP + DHCP
+        // fingerprint + hostname + vendor + gateway. Pure/offline.
         const cls = classifyHost({
           mac,
           vendor: str(d.vendor),
           hostname,
           dhcpVendorClass: fp?.vendorClass ?? null,
           dhcpParamList: fp?.paramList ?? null,
+          serviceHint,
+          services,
+          isGateway,
         });
+        // Persist the service signal so the enrich backfill + AI adjudicator + UI
+        // can reuse it (merged into attributes, never clobbering an AI-set model).
+        const hostAttrs: Record<string, unknown> = { gateway: isGateway };
+        if (serviceHint) hostAttrs.service_hint = serviceHint;
+        if (services && services.length) hostAttrs.services = services;
         await tx
           .insert(entitiesHost)
           .values({
             districtId: district.id,
             schoolId: school.id,
             mac,
-            ip: str(d.ip),
+            ip,
             hostname,
             vendor: cls.vendor,
             deviceType: cls.deviceType,
@@ -809,6 +828,7 @@ export async function ingestBundle(
             classMethod: cls.method,
             classSources: cls.sources,
             classSignalHash: cls.signalHash,
+            attributes: hostAttrs,
             firstSeenAt: toDate(d.first_seen_at) ?? seen,
             lastSeenAt: seen,
           })
@@ -816,7 +836,10 @@ export async function ingestBundle(
             target: [entitiesHost.districtId, entitiesHost.mac],
             set: {
               schoolId: school.id,
-              ip: str(d.ip),
+              ip,
+              // Merge the fresh service signal into attributes (right side wins per
+              // key, so a new hint updates but an AI-set `model` is preserved).
+              attributes: sql`${entitiesHost.attributes} || ${JSON.stringify(hostAttrs)}::jsonb`,
               // Never downgrade a known hostname/type to null/unknown on a later
               // scan that happened to lack the data.
               hostname: sql`coalesce(excluded.hostname, ${entitiesHost.hostname})`,

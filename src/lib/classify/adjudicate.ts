@@ -55,6 +55,8 @@ interface Evidence {
   hostname: string | null;
   dhcpVendorClass: string | null;
   dhcpParamList: string | null;
+  serviceHint?: string | null;
+  services?: string[] | null;
   candidates: Candidate[];
 }
 
@@ -64,6 +66,8 @@ export function buildEvidence(e: Evidence): string {
   lines.push(`mac: ${e.mac}`);
   if (e.vendor) lines.push(`oui.vendor: ${e.vendor}`);
   if (e.hostname) lines.push(`hostname: ${e.hostname}`);
+  if (e.serviceHint) lines.push(`mdns.hint (advertised service class): ${e.serviceHint}`);
+  if (e.services?.length) lines.push(`mdns.services: ${e.services.join(", ")}`);
   if (e.dhcpVendorClass) lines.push(`dhcp.opt60 (vendor class): ${e.dhcpVendorClass}`);
   if (e.dhcpParamList) lines.push(`dhcp.opt55 (param request list): ${e.dhcpParamList}`);
   if (e.candidates.length) {
@@ -187,12 +191,15 @@ export async function adjudicateClassifications(opts: {
         continue;
       }
       const fp = dhcpFp.get(t.mac.toLowerCase());
+      const attrs0 = (t.attributes && typeof t.attributes === "object" ? t.attributes : {}) as Record<string, unknown>;
       const context = buildEvidence({
         mac: t.mac,
         vendor: t.vendor,
         hostname: t.hostname,
         dhcpVendorClass: fp?.vendorClass ?? null,
         dhcpParamList: fp?.paramList ?? null,
+        serviceHint: typeof attrs0.service_hint === "string" ? attrs0.service_hint : null,
+        services: Array.isArray(attrs0.services) ? attrs0.services.map(String) : null,
         candidates: (t.sources as Candidate[]) ?? [],
       });
       let verdict: AdjudicatorVerdict | null = null;

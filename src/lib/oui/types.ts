@@ -15,6 +15,8 @@ export type DeviceType =
   | "server"
   | "mobile"
   | "storage"
+  | "media"
+  | "display"
   | "iot"
   | "vm"
   | "randomized"
@@ -32,6 +34,8 @@ export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   server: "Server",
   mobile: "Mobile",
   storage: "Storage / NAS",
+  media: "Media / TV",
+  display: "Display / board",
   iot: "IoT",
   vm: "Virtual machine",
   randomized: "Randomized MAC",

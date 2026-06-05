@@ -51,6 +51,8 @@ export const REGISTRY_DEVICE_TYPES = [
   "phone",
   "computer",
   "storage",
+  "media",
+  "display",
   "iot",
   "other",
 ] as const;
@@ -66,6 +68,8 @@ export const REGISTRY_DEVICE_TYPE_LABELS: Record<RegistryDeviceType, string> = {
   phone: "IP phone",
   computer: "Computer",
   storage: "Storage / NAS",
+  media: "Media / TV",
+  display: "Display / board",
   iot: "IoT device",
   other: "Other",
 };

@@ -66,6 +66,7 @@ async function main() {
       hostname: entitiesHost.hostname,
       deviceType: entitiesHost.deviceType,
       classConfidence: entitiesHost.classConfidence,
+      attributes: entitiesHost.attributes,
     })
     .from(entitiesHost);
 
@@ -73,12 +74,20 @@ async function main() {
   for (const r of rows) {
     const fp = dhcpFp.get(r.mac.toLowerCase());
     const hostname = r.hostname ?? fp?.hostname ?? null;
+    // mDNS hint + gateway flag were persisted on attributes at ingest — reuse them
+    // so the backfill classifies with the same signals (no scan context here).
+    const attrs = (r.attributes && typeof r.attributes === "object" ? r.attributes : {}) as Record<string, unknown>;
+    const serviceHint = typeof attrs.service_hint === "string" ? attrs.service_hint : null;
+    const services = Array.isArray(attrs.services) ? attrs.services.map(String) : null;
     const cls = classifyHost({
       mac: r.mac,
       vendor: r.vendor,
       hostname,
       dhcpVendorClass: fp?.vendorClass ?? null,
       dhcpParamList: fp?.paramList ?? null,
+      serviceHint,
+      services,
+      isGateway: attrs.gateway === true,
     });
     // Re-write when vendor/type/hostname changed OR the scored fields were never
     // populated (rows ingested before the scored-classification columns existed).

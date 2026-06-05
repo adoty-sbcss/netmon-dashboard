@@ -20,8 +20,9 @@ import {
   classifyByDhcpFingerprint,
   classifyByDhcpVendor,
   classifyByHostname,
+  classifyByServiceHint,
   classifyBySnmpDescr,
-  classifyByVendorName,
+  classifyByVendorRole,
   isBlankVendor,
   isLocallyAdministered,
   lookupVendor,
@@ -55,6 +56,12 @@ export interface ClassifyInput {
   dhcpVendorClass?: string | null;
   /** DHCP option-55 parameter request list. Unused until the opt-55 matcher lands. */
   dhcpParamList?: string | null;
+  /** mDNS/SSDP coarse device hint (collector discovery/mdns_ssdp.py). */
+  serviceHint?: string | null;
+  /** Raw mDNS service types observed (e.g. ["_ipp._tcp.local"]). */
+  services?: string[] | null;
+  /** True when this device is the network's gateway (matched gateway ip/mac). */
+  isGateway?: boolean;
 }
 
 // Base confidence per signal (docs/device-classification.md §3). SNMP/LLDP come
@@ -62,10 +69,14 @@ export interface ClassifyInput {
 const WEIGHT = {
   snmp: 0.85,
   lldp: 0.8,
+  mdns: 0.85, // mDNS/SSDP service type — strong endpoint signal (docs §3)
+  gateway: 0.85, // device matched the scan's gateway ip/mac → it's the L3 edge
   dhcp: 0.7, // option-60 vendor class
   dhcpFp: 0.65, // option-55 fingerprint (seed data is stale ODbL — hedge slightly)
   hostname: 0.5,
-  oui: 0.4,
+  vendorStrong: 0.8, // single-purpose vendor (Hikvision→camera) — settles
+  vendorWeak: 0.5, // multi-product vendor (Aruba→ap?) — stays reviewable
+  oui: 0.4, // bare vendor name with no curated role rule
 } as const;
 
 const AGREE_BONUS = 0.06; // per extra independent signal that agrees
@@ -83,11 +94,15 @@ export function gatherCandidates(input: ClassifyInput): Candidate[] {
 
   push(classifyBySnmpDescr(input.snmpSysDescr), WEIGHT.snmp, "snmp.sysDescr", "snmp");
   push(classifyBySnmpDescr(input.lldpDescr), WEIGHT.lldp, "lldp.sysDescr", "lldp");
+  if (input.isGateway) push("router", WEIGHT.gateway, "net.gateway", "net");
+  push(classifyByServiceHint(input.serviceHint, input.services), WEIGHT.mdns, "mdns.serviceType", "mdns");
   push(classifyByDhcpVendor(input.dhcpVendorClass), WEIGHT.dhcp, "dhcp.opt60", "dhcp");
   push(classifyByDhcpFingerprint(input.dhcpParamList), WEIGHT.dhcpFp, "dhcp.opt55", "dhcp");
   push(classifyByHostname(input.hostname), WEIGHT.hostname, "hostname", "hostname");
   const vendor = input.vendor ?? lookupVendor(input.mac);
-  push(classifyByVendorName(vendor), WEIGHT.oui, "oui.vendorName", "oui");
+  // Curated single-purpose vendors settle (0.8); multi-product vendors stay weak (0.5).
+  const role = classifyByVendorRole(vendor);
+  if (role) push(role.type, role.strong ? WEIGHT.vendorStrong : WEIGHT.vendorWeak, "oui.vendorName", "oui");
 
   return out;
 }
@@ -142,6 +157,9 @@ export function signalHashFor(input: ClassifyInput): string {
     lldp: norm(input.lldpDescr),
     dhcpVc: norm(input.dhcpVendorClass),
     dhcpPrl: norm(input.dhcpParamList),
+    svcHint: norm(input.serviceHint),
+    svcs: (input.services ?? []).map((s) => norm(s)).sort().join(","),
+    gw: input.isGateway ? "1" : "",
   });
   return createHash("sha256").update(canon).digest("hex");
 }

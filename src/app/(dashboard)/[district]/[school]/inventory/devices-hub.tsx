@@ -3,7 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Ban, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Tags, Trash2, Upload, Waypoints, X } from "lucide-react";
+import { Ban, ChevronDown, ChevronsUpDown, ChevronUp, Filter, KeyRound, Pencil, Plus, Radio, RotateCcw, ShieldCheck, ShieldOff, Tags, Trash2, Upload, Waypoints, X } from "lucide-react";
 
 import type { InventoryRow, ExcludedRow } from "@/lib/inventory/queries";
 import { CLASSIFY_REVIEW_THRESHOLD } from "@/lib/classify/constants";
@@ -32,6 +32,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export interface NeighborLink {
   id: number;
@@ -54,7 +61,7 @@ type SnmpFilter = "all" | "ok" | "gap";
 const INFRA = new Set(["switch", "router", "ap", "firewall"]);
 const DEVICE_TYPE_OPTIONS = [
   "switch", "router", "ap", "firewall", "printer", "phone", "camera",
-  "computer", "server", "mobile", "storage", "iot", "vm", "unknown",
+  "computer", "server", "mobile", "storage", "media", "display", "iot", "vm", "unknown",
 ];
 const selectCls =
   "h-8 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[2px] focus-visible:ring-ring/50";
@@ -95,6 +102,53 @@ function ConfidenceTag({ row }: { row: InventoryRow }) {
     </span>
   );
 }
+
+// --- Excel-style column sort + filter --------------------------------------
+type ColKey = "name" | "type" | "vendor" | "ip" | "location" | "status" | "snmp" | "source";
+type SortState = { col: ColKey; dir: "asc" | "desc" } | null;
+
+const SNMP_LABEL: Record<string, string> = { responding: "SNMP OK", gap: "No SNMP", na: "N/A", unknown: "Unknown" };
+const SOURCE_LABEL: Record<string, string> = { discovered: "Discovered", manual: "Manual", both: "Registered" };
+const SNMP_RANK: Record<string, number> = { responding: 0, gap: 1, unknown: 2, na: 3 };
+
+/** The displayed string for a column — also the value AutoFilter matches on. */
+function colValue(r: InventoryRow, col: ColKey): string {
+  switch (col) {
+    case "name": return r.name ?? "—";
+    case "type": return r.deviceType ?? "—";
+    case "vendor": return r.vendor ?? "—";
+    case "ip": return r.ip ?? "—";
+    case "location": return [r.building, r.room].filter(Boolean).join(" / ") || "—";
+    case "status": return r.online ? "Online" : "Offline";
+    case "snmp": return SNMP_LABEL[r.snmp] ?? r.snmp;
+    case "source": return SOURCE_LABEL[r.source] ?? r.source;
+  }
+}
+
+/** Pack a dotted-quad into a sortable integer; non-IPv4 sorts last. */
+function ipToNum(ip: string | null): number {
+  const parts = (ip ?? "").split(".");
+  if (parts.length !== 4) return Number.MAX_SAFE_INTEGER;
+  let n = 0;
+  for (const o of parts) {
+    const x = Number(o);
+    if (!Number.isInteger(x) || x < 0 || x > 255) return Number.MAX_SAFE_INTEGER;
+    n = n * 256 + x;
+  }
+  return n;
+}
+
+/** Comparable key per column (numeric where alpha order would be wrong). */
+function sortKey(r: InventoryRow, col: ColKey): number | string {
+  switch (col) {
+    case "ip": return ipToNum(r.ip);
+    case "status": return r.online ? 0 : 1;
+    case "snmp": return SNMP_RANK[r.snmp] ?? 9;
+    default: return colValue(r, col).toLowerCase();
+  }
+}
+
+const FILTERABLE: ColKey[] = ["type", "vendor", "ip", "location", "status", "snmp", "source"];
 
 function hrefFor(r: InventoryRow, basePath: string): string | null {
   if (r.switchId) return `${basePath}/switch/${r.switchId}`;
@@ -158,10 +212,116 @@ export function DevicesHub({
   // Bulk selection (admin map-cleanup): keyed by InventoryRow.key.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reclassType, setReclassType] = useState("unknown");
+  // Excel-style column sort + per-column value filters.
+  const [sort, setSort] = useState<SortState>(null);
+  const [colFilters, setColFilters] = useState<Partial<Record<ColKey, Set<string>>>>({});
+
+  // Distinct values per filterable column (for the AutoFilter dropdowns).
+  const distinct = useMemo(() => {
+    const m = {} as Record<ColKey, string[]>;
+    for (const col of FILTERABLE) {
+      m[col] = [...new Set(rows.map((r) => colValue(r, col)))].sort((a, b) =>
+        col === "ip" ? ipToNum(a) - ipToNum(b) : a.localeCompare(b),
+      );
+    }
+    return m;
+  }, [rows]);
+
+  function cycleSort(col: ColKey) {
+    setSort((s) => (s?.col !== col ? { col, dir: "asc" } : s.dir === "asc" ? { col, dir: "desc" } : null));
+  }
+  function toggleColValue(col: ColKey, v: string) {
+    setColFilters((prev) => {
+      const all = distinct[col];
+      const cur = prev[col] ? new Set(prev[col]) : new Set(all);
+      if (cur.has(v)) cur.delete(v);
+      else cur.add(v);
+      const next = { ...prev };
+      if (cur.size === all.length) delete next[col]; // all selected → no filter
+      else next[col] = cur;
+      return next;
+    });
+  }
+  function setAllCol(col: ColKey, on: boolean) {
+    setColFilters((prev) => {
+      const next = { ...prev };
+      if (on) delete next[col]; // "Select all" → drop the filter
+      else next[col] = new Set<string>(); // "Clear" → match nothing
+      return next;
+    });
+  }
+
+  /** A sortable (click) + optionally AutoFilter-able (funnel) column header. */
+  function renderHead(col: ColKey, label: string, className?: string, filterable = true) {
+    const dir = sort?.col === col ? sort.dir : null;
+    const fset = colFilters[col];
+    const hasFilter = !!fset; // present only while the column is narrowed
+    return (
+      <TableHead className={className}>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => cycleSort(col)}
+            className="inline-flex items-center gap-1 hover:text-foreground"
+            title={`Sort by ${label}`}
+          >
+            {label}
+            {dir === "asc" ? (
+              <ChevronUp className="size-3" />
+            ) : dir === "desc" ? (
+              <ChevronDown className="size-3" />
+            ) : (
+              <ChevronsUpDown className="size-3 opacity-40" />
+            )}
+          </button>
+          {filterable && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={"rounded p-0.5 " + (hasFilter ? "text-primary" : "opacity-40 hover:opacity-100")}
+                  title={`Filter ${label}`}
+                >
+                  <Filter className="size-3" fill={hasFilter ? "currentColor" : "none"} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-72 w-48 overflow-auto">
+                <div className="flex items-center justify-between px-2 py-1 text-xs">
+                  <button type="button" className="text-primary hover:underline" onClick={() => setAllCol(col, true)}>
+                    Select all
+                  </button>
+                  <button type="button" className="text-muted-foreground hover:underline" onClick={() => setAllCol(col, false)}>
+                    Clear
+                  </button>
+                </div>
+                <DropdownMenuSeparator />
+                {distinct[col]?.length ? (
+                  distinct[col].map((v) => (
+                    <DropdownMenuCheckboxItem
+                      key={v}
+                      checked={!fset || fset.has(v)}
+                      onCheckedChange={() => toggleColValue(col, v)}
+                      onSelect={(e) => e.preventDefault()}
+                      className="capitalize"
+                    >
+                      {v}
+                    </DropdownMenuCheckboxItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-1 text-xs text-muted-foreground">No values</div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      </TableHead>
+    );
+  }
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return rows.filter((r) => {
+    const colKeys = Object.keys(colFilters) as ColKey[];
+    const out = rows.filter((r) => {
       const isInfra = r.isSwitch || INFRA.has(r.deviceType ?? "");
       if (category === "infra" && !isInfra) return false;
       if (category === "endpoints" && isInfra) return false;
@@ -170,13 +330,32 @@ export function DevicesHub({
       if (snmp === "ok" && r.snmp !== "responding") return false;
       if (snmp === "gap" && r.snmp !== "gap") return false;
       if (review && !needsReview(r)) return false;
+      // Per-column AutoFilter: a column with a value-set keeps only matching rows
+      // (an empty set = "Clear" matches nothing).
+      for (const col of colKeys) {
+        const set = colFilters[col];
+        if (set && !set.has(colValue(r, col))) return false;
+      }
       if (term) {
         const hay = `${r.name} ${r.ip ?? ""} ${r.mac ?? ""} ${r.vendor ?? ""} ${r.model ?? ""}`.toLowerCase();
         if (!hay.includes(term)) return false;
       }
       return true;
     });
-  }, [rows, category, source, snmp, review, q]);
+    if (sort) {
+      const mul = sort.dir === "asc" ? 1 : -1;
+      out.sort((a, b) => {
+        const ka = sortKey(a, sort.col);
+        const kb = sortKey(b, sort.col);
+        const c =
+          typeof ka === "number" && typeof kb === "number"
+            ? ka - kb
+            : String(ka).localeCompare(String(kb));
+        return c * mul;
+      });
+    }
+    return out;
+  }, [rows, category, source, snmp, review, q, colFilters, sort]);
 
   const reviewCount = useMemo(() => rows.filter(needsReview).length, [rows]);
 
@@ -396,14 +575,14 @@ export function DevicesHub({
                       />
                     </TableHead>
                   )}
-                  <TableHead>Device</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="hidden lg:table-cell">Vendor / model</TableHead>
-                  <TableHead className="hidden md:table-cell">IP / MAC</TableHead>
-                  <TableHead className="hidden xl:table-cell">Location</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>SNMP</TableHead>
-                  <TableHead>Source</TableHead>
+                  {renderHead("name", "Device", undefined, false)}
+                  {renderHead("type", "Type")}
+                  {renderHead("vendor", "Vendor / model", "hidden lg:table-cell")}
+                  {renderHead("ip", "IP / MAC", "hidden md:table-cell")}
+                  {renderHead("location", "Location", "hidden xl:table-cell")}
+                  {renderHead("status", "Status")}
+                  {renderHead("snmp", "SNMP")}
+                  {renderHead("source", "Source")}
                   {isAdmin && <TableHead className="w-8" />}
                 </TableRow>
               </TableHeader>

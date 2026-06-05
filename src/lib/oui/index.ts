@@ -84,6 +84,8 @@ const HOSTNAME_RULES: { type: DeviceType; re: RegExp }[] = [
   { type: "printer", re: /print|laserjet|officejet|\bmfp\b|\bmfc\b|copier|kyocera|lexmark|ricoh|xerox|brother|canon|epson/i },
   { type: "phone", re: /\bvoip\b|\bsip\b|\bphone\b|polycom|yealink|grandstream|\bspa\d/i },
   { type: "camera", re: /\bcam\b|camera|axis|hikvision|dahua|avigilon|\bnvr\b|\bdvr\b/i },
+  { type: "display", re: /promethean|activpanel|smart ?board|clevertouch|viewboard|interactive ?panel|interactive ?display|\bIFP\b/i },
+  { type: "media", re: /chromecast|apple-?tv|\broku\b|fire-?tv|\bsonos\b|smart-?tv|\bvizio\b/i },
   { type: "ap", re: /\bap[-_ ]?\d|access[-_ ]?point|\bwap\b|aironet|meraki|aruba|unifi|\bwifi\b/i },
   { type: "switch", re: /\bsw[-_ ]?\d|switch|catalyst|\bcsw\b|\bdsw\b|\basw\b/i },
   { type: "router", re: /\brtr\b|router|gateway|\bgw[-_ ]?\d/i },
@@ -107,14 +109,26 @@ const SNMP_RULES: { type: DeviceType; re: RegExp }[] = [
 // Vendor-name rules only for categories a manufacturer reliably implies. Network
 // vendors (Cisco/HPE/Juniper) are intentionally omitted — vendor alone can't tell
 // a switch from a router from a phone; those defer to hostname/SNMP.
-const VENDOR_RULES: { type: DeviceType; re: RegExp }[] = [
-  { type: "camera", re: /\baxis\b|hikvision|dahua|hanwha|vivotek|bosch security|mobotix|geovision|uniview|amcrest|reolink|wyze|lorex|swann/i },
-  { type: "phone", re: /polycom|\bpoly\b|yealink|grandstream|\bmitel\b|aastra|\bsnom\b|sangoma|fanvil|audiocodes|cyberdata/i },
-  { type: "printer", re: /lexmark|kyocera|\bricoh\b|\bxerox\b|brother|\bcanon\b|\bepson\b|zebra|konica|\bsharp\b|toshiba tec|primera|\bdymo\b|\bsato\b|oki data|pantum|\bsindoh\b/i },
-  { type: "storage", re: /synology|\bqnap\b|netapp|\bdrobo\b|western digital|\bseagate\b|buffalo|terramaster/i },
-  { type: "firewall", re: /fortinet|palo alto|sonicwall|watchguard|\bsophos\b|check point|barracuda|\bzyxel\b.*(firewall|security)/i },
-  { type: "ap", re: /\baruba\b|ubiquiti|ruckus|aerohive|\bmist\b|cambium|edgecore|\bxirrus\b|open ?mesh/i },
-  { type: "vm", re: /vmware|\bqemu\b|virtualbox|\bxen\b|parallels|nutanix/i },
+//
+// `strong` marks single-purpose vendors whose product line reliably IS the role
+// (a Hikvision device is a camera) — the scored layer trusts these enough to
+// settle them. `strong:false` marks multi-product vendors (Aruba/Ubiquiti/Ruckus
+// also make switches & cameras), so an `ap` guess there stays low-confidence.
+const VENDOR_RULES: { type: DeviceType; re: RegExp; strong: boolean }[] = [
+  { type: "camera", strong: true, re: /\baxis\b|hikvision|dahua|hanwha|vivotek|bosch security|mobotix|geovision|uniview|amcrest|reolink|wyze|lorex|swann/i },
+  { type: "phone", strong: true, re: /polycom|\bpoly\b|yealink|grandstream|\bmitel\b|aastra|\bsnom\b|sangoma|fanvil|audiocodes|cyberdata/i },
+  { type: "printer", strong: true, re: /lexmark|kyocera|\bricoh\b|\bxerox\b|brother|\bcanon\b|\bepson\b|zebra|konica|\bsharp\b|toshiba tec|primera|\bdymo\b|\bsato\b|oki data|pantum|\bsindoh\b/i },
+  { type: "storage", strong: true, re: /synology|\bqnap\b|netapp|\bdrobo\b|western digital|\bseagate\b|buffalo|terramaster/i },
+  { type: "firewall", strong: true, re: /fortinet|palo alto|sonicwall|watchguard|\bsophos\b|check point|barracuda|\bzyxel\b.*(firewall|security)/i },
+  { type: "vm", strong: true, re: /vmware|\bqemu\b|virtualbox|\bxen\b|parallels|nutanix/i },
+  // Education interactive displays / boards — these makers are single-purpose.
+  // ViewSonic/BenQ are deliberately omitted here (broad monitor lines); their
+  // boards are caught by the ViewBoard/IFP hostname rule instead.
+  { type: "display", strong: true, re: /promethean|smarttech|smart ?technolog|clevertouch|newline interactive|boxlight|\bmimio\b|avocor/i },
+  // Streaming / media players. Roku & Sonos are single-purpose; smart-TV brands
+  // (Samsung/LG/Vizio) are NOT here — they're ambiguous and rely on the mDNS hint.
+  { type: "media", strong: true, re: /\broku\b|\bsonos\b/i },
+  { type: "ap", strong: false, re: /\baruba\b|ubiquiti|ruckus|aerohive|\bmist\b|cambium|edgecore|\bxirrus\b|open ?mesh/i },
 ];
 
 // DHCP option-60 (vendor class id) → device type. This is a strong passive
@@ -179,8 +193,64 @@ export function classifyByHostname(s: string | null | undefined): DeviceType | n
 
 /** Vendor-name keyword → type (only categories a manufacturer reliably implies). */
 export function classifyByVendorName(v: string | null | undefined): DeviceType | null {
+  return classifyByVendorRole(v)?.type ?? null;
+}
+
+/**
+ * Vendor-name → {type, strong}. `strong` is true for single-purpose vendors whose
+ * product line reliably IS the role; the scored layer (src/lib/classify) uses it to
+ * decide whether a vendor-only match is trustworthy enough to settle. Returns null
+ * when no curated rule matches.
+ */
+export function classifyByVendorRole(
+  v: string | null | undefined,
+): { type: DeviceType; strong: boolean } | null {
   if (!v || isBlankVendor(v)) return null;
-  for (const r of VENDOR_RULES) if (r.re.test(v)) return r.type;
+  for (const r of VENDOR_RULES) if (r.re.test(v)) return { type: r.type, strong: r.strong };
+  return null;
+}
+
+// mDNS (Bonjour) / SSDP (UPnP) coarse device_hint → type. The collector
+// (collector/discovery/mdns_ssdp.py:_HINTS) attaches this hint to chatty
+// service-advertising endpoints that OUI/ARP can't identify — the single strongest
+// signal for Apple TVs, Chromecasts, AirPrint printers, Sonos, Rokus, cameras.
+const SERVICE_HINT_MAP: Record<string, DeviceType> = {
+  printer: "printer",
+  camera: "camera",
+  chromecast: "media",
+  "cast-device": "media",
+  roku: "media",
+  sonos: "media",
+  "media-player": "media",
+  "apple-av": "media",
+  "media-server": "storage",
+  computer: "computer",
+  "apple-host": "computer",
+  gateway: "router",
+  // web-ui / apple-network are too generic to assign a type.
+};
+
+// Fallback: raw mDNS service-type substring → type, when no coarse hint is set.
+const SERVICE_TYPE_RULES: { type: DeviceType; re: RegExp }[] = [
+  { type: "printer", re: /_ipp\b|_ipps\b|_printer\b|_pdl-datastream/i },
+  { type: "media", re: /_googlecast|_airplay|_raop|_sonos|_spotify-connect/i },
+  { type: "camera", re: /_axis-video|_rtsp\b/i },
+  { type: "computer", re: /_workstation|_smb\b|_afpovertcp/i },
+];
+
+/** mDNS/SSDP service hint (+ raw service types) → device type. */
+export function classifyByServiceHint(
+  hint: string | null | undefined,
+  services?: string[] | null,
+): DeviceType | null {
+  if (hint) {
+    const t = SERVICE_HINT_MAP[hint.trim().toLowerCase()];
+    if (t) return t;
+  }
+  if (services && services.length) {
+    const joined = services.join(" ");
+    for (const r of SERVICE_TYPE_RULES) if (r.re.test(joined)) return r.type;
+  }
   return null;
 }
 
