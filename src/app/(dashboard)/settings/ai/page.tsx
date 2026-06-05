@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getSessionUser } from "@/lib/auth/current-user";
@@ -45,6 +46,12 @@ export default async function AiSettingsPage() {
         title="AI analysis"
         description="Configure the models that review network data, schedule the daily run, and track usage. API keys are encrypted at rest."
       />
+      <Link
+        href="/settings/ai/conversations"
+        className="w-fit text-sm text-primary hover:underline"
+      >
+        View assistant conversations →
+      </Link>
       <AiSettingsForm
         providers={providers}
         settings={settings}
