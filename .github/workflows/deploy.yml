@@ -94,6 +94,16 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --image "$ACR_NAME.azurecr.io/$IMAGE-migrator:${{ github.sha }}"
 
+      - name: Point enrich Job at the new image
+        # Nightly device re-classification job (migrator image). Guarded so the
+        # code deploy still succeeds before the job is provisioned via main.bicep.
+        run: |
+          az containerapp job update \
+            --name w2-sbcss-netmon-enrich \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE-migrator:${{ github.sha }}" \
+            || echo "enrich job not provisioned yet — apply infra/main.bicep to create it"
+
       - name: Apply DB migrations (in-VNet job) before rolling
         # Migrations run INSIDE the VNet (private Postgres has no public endpoint),
         # so they go through the migrate Job, not this runner. Point it at the

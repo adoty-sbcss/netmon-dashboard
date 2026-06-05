@@ -127,6 +127,13 @@ param enableAiJob bool = true
 @description('Cron (UTC) for how often the AI Job WAKES to check the in-app schedule. Hourly by default; the actual run time/cadence is set in Settings → AI analysis and honored in code.')
 param aiCron string = '0 * * * *'
 
+// ---- Enrichment Job (nightly device re-classification) ----
+@description('Provision the nightly enrichment Job — re-classifies existing devices with the current classifier so code changes (e.g. AP/Aruba rules) reach all existing rows. Free: local logic, no model calls.')
+param enableEnrichJob bool = true
+
+@description('Cron (UTC) for the nightly device-classification enrich pass. Default 08:00 UTC (~1 AM Pacific).')
+param enrichCron string = '0 8 * * *'
+
 @description('Azure OpenAI endpoint, e.g. https://<resource>.openai.azure.com. Empty = GPT column stays "not configured".')
 param azureOpenAiEndpoint string = ''
 
@@ -622,6 +629,75 @@ resource aiJob 'Microsoft.App/jobs@2024-03-01' = if (enableAiJob) {
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'NODE_ENV', value: 'production' }
           ], aiEnv)
+        }
+      ]
+    }
+  }
+  dependsOn: assignRoles
+    ? [ kvDatabaseUrl, acrPullAssignment, kvSecretsUserAssignment ]
+    : [ kvDatabaseUrl ]
+}
+
+// ---- Enrichment Job (nightly; re-classify entities_host with current rules) ----
+// Reuses the migrator image (full source + tsx); command override runs
+// `npm run enrich`. In-VNet for the private Postgres. Idempotent + cheap (local
+// OUI/classifier logic + DB writes, NO model calls), so safe to run nightly — it
+// propagates classifier code changes (e.g. AP/Aruba rules) onto existing rows.
+resource enrichJob 'Microsoft.App/jobs@2024-03-01' = if (enableEnrichJob) {
+  name: 'w2-sbcss-netmon-enrich'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerEnv.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 3600
+      replicaRetryLimit: 1
+      scheduleTriggerConfig: {
+        cronExpression: enrichCron
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: appIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'auth-secret'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
+          identity: appIdentity.id
+        }
+        {
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'enrich'
+          image: migratorImage
+          command: [ 'npm' ]
+          args: [ 'run', 'enrich' ]
+          resources: {
+            cpu: json(containerCpu)
+            memory: containerMemory
+          }
+          env: [
+            { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'NODE_ENV', value: 'production' }
+          ]
         }
       ]
     }
