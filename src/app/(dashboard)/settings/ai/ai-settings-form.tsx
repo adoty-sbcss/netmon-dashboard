@@ -362,6 +362,25 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
             </p>
           </div>
 
+          <div className={fieldCls}>
+            <label htmlFor="assistantInstructions" className={labelCls}>
+              Assistant instructions
+            </label>
+            <textarea
+              id="assistantInstructions"
+              name="assistantInstructions"
+              rows={5}
+              defaultValue={settings.assistantInstructions ?? ""}
+              placeholder="Leave blank for the built-in default. e.g. “You are NetMon Assistant, a senior network engineer helping K-12 district IT. Be concise and practical…”"
+              className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground">
+              The in-app chatbot&apos;s persona + behavior. Blank uses the built-in default.
+              The app-knowledge primer and anti-hallucination grounding are always applied and
+              can&apos;t be removed here.
+            </p>
+          </div>
+
           <div className="flex items-center gap-2">
             <Button type="submit" disabled={saving}>
               {saving ? "Saving…" : "Save settings"}

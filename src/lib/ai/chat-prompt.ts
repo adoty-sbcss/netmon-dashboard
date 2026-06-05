@@ -1,26 +1,37 @@
 /**
- * System-prompt assembly for the in-app assistant. Persona + an app primer (so it
- * can answer "how does NetMon work"), plus the CURRENT page's data snapshot when
- * the user is viewing a school/district they're allowed to see. Global pages (no
- * site in view) get app knowledge only — site data comes when they open a page.
+ * System-prompt assembly for the in-app assistant.
  *
- * M1 = page-scoped snapshot. M4 will swap the snapshot for district-scoped tools.
+ *   [ persona ]            ← editable in Settings → AI (superadmin); falls back to
+ *                            DEFAULT_PERSONA when blank.
+ *   [ grounding rules ]    ← ALWAYS appended, not editable (anti-hallucination).
+ *   [ app primer ]         ← ALWAYS appended (factual "how NetMon works").
+ *   [ data snapshot ]      ← the current page's scope, when a site is in view.
+ *
+ * M1/M2 = page-scoped snapshot + editable persona. M4 swaps the snapshot for
+ * district-scoped tools.
  */
 import "server-only";
 
 import { buildAnalysisContext } from "./context";
 import type { AnalysisScope } from "./types";
 
-const PERSONA = [
+/** The default persona — used when the admin hasn't set custom instructions. Also
+ *  the placeholder shown in the settings textarea (kept in sync there). */
+export const DEFAULT_PERSONA = [
   "You are NetMon Assistant, a senior network engineer helping K-12 school district IT staff.",
   "You are embedded in NetMon, a network discovery + health dashboard. Be concise, practical,",
-  "and specific. Use plain language a busy technician can act on.",
-  "GROUNDING RULES (important):",
-  "- State facts about a site ONLY from the DATA SNAPSHOT below. Say what each claim is based on.",
+  "and specific. Use plain language a busy technician can act on. It's fine to ask a clarifying",
+  "question or to tell the user which page to open for the data they want.",
+].join(" ");
+
+// Always enforced regardless of the editable persona, so custom instructions can
+// never turn off the anti-hallucination behavior.
+const GROUNDING = [
+  "## Grounding rules (always apply)",
+  "- State facts about a site ONLY from the DATA SNAPSHOT below; say what each claim is based on.",
   "- If the snapshot doesn't cover something, say so plainly — do NOT guess or fill gaps.",
   "- NEVER simply agree with a number or claim the user asserts unless the snapshot supports it;",
   "  if you can't verify it, say you can't see it in the current data.",
-  "- It's fine to ask a clarifying question or to tell the user which page to open for the data.",
 ].join("\n");
 
 const APP_PRIMER = [
@@ -38,12 +49,15 @@ const APP_PRIMER = [
 
 /**
  * Build the system prompt. `scope` is the school/district the user is currently
- * viewing (and is authorized for), or null when no site is in view.
+ * viewing (and authorized for), or null when no site is in view. `instructions`
+ * is the admin-edited persona (null/blank → DEFAULT_PERSONA).
  */
 export async function buildAssistantSystemPrompt(
   scope: AnalysisScope | null,
+  instructions?: string | null,
 ): Promise<string> {
-  const parts: string[] = [PERSONA, "", APP_PRIMER];
+  const persona = instructions && instructions.trim() ? instructions.trim() : DEFAULT_PERSONA;
+  const parts: string[] = [persona, "", GROUNDING, "", APP_PRIMER];
 
   if (scope) {
     const now = new Date();

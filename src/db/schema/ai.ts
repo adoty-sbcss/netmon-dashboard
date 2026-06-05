@@ -138,6 +138,10 @@ export const aiSettings = pgTable("ai_settings", {
   maxOutputTokens: integer("max_output_tokens").notNull().default(8192),
   /** Advisory monthly spend target (USD). Displayed against tracked usage; not enforced. */
   monthlySpendCapUsd: doublePrecision("monthly_spend_cap_usd"),
+  /** Editable persona/behavior for the in-app assistant (Settings → AI). Null =
+   *  built-in default. App facts + anti-hallucination grounding are appended by
+   *  the system and are not editable here. */
+  assistantInstructions: text("assistant_instructions"),
   updatedBy: integer("updated_by").references(() => users.id, {
     onDelete: "set null",
   }),

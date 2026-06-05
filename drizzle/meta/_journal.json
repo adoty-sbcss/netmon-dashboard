@@ -197,6 +197,13 @@
       "when": 1780615320755,
       "tag": "0027_assistant_global_session",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1780623763452,
+      "tag": "0028_assistant_instructions",
+      "breakpoints": true
     }
   ]
 }

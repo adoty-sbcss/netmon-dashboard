@@ -31,6 +31,8 @@ const DEFAULTS = {
   // rate limit. Raise it per-install in Settings → AI if reports get truncated.
   maxOutputTokens: 2048,
   monthlySpendCapUsd: null as number | null,
+  /** Editable persona/behavior for the in-app assistant; null = built-in default. */
+  assistantInstructions: null as string | null,
 };
 
 // ---- env fallback ---------------------------------------------------------
@@ -157,6 +159,7 @@ export interface AiGlobalSettings {
   scheduleCron: string;
   maxOutputTokens: number;
   monthlySpendCapUsd: number | null;
+  assistantInstructions: string | null;
   updatedAt: Date | null;
 }
 
@@ -172,6 +175,7 @@ export async function getAiSettings(): Promise<AiGlobalSettings> {
     scheduleCron: row.scheduleCron,
     maxOutputTokens: row.maxOutputTokens,
     monthlySpendCapUsd: row.monthlySpendCapUsd,
+    assistantInstructions: row.assistantInstructions,
     updatedAt: row.updatedAt,
   };
 }
@@ -240,6 +244,7 @@ export async function saveAiSettings(
       scheduleCron: merged.scheduleCron,
       maxOutputTokens: merged.maxOutputTokens,
       monthlySpendCapUsd: merged.monthlySpendCapUsd,
+      assistantInstructions: merged.assistantInstructions,
       updatedBy: updatedBy ?? null,
       updatedAt: new Date(),
     })
@@ -250,6 +255,7 @@ export async function saveAiSettings(
         scheduleCron: merged.scheduleCron,
         maxOutputTokens: merged.maxOutputTokens,
         monthlySpendCapUsd: merged.monthlySpendCapUsd,
+        assistantInstructions: merged.assistantInstructions,
         updatedBy: updatedBy ?? null,
         updatedAt: new Date(),
       },

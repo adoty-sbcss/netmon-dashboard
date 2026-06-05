@@ -18,6 +18,7 @@ import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 
 import { aiChat, type ChatMsg } from "./chat";
 import { buildAssistantSystemPrompt } from "./chat-prompt";
+import { getAiSettings } from "./settings";
 import type { AnalysisScope, ChatMessage } from "./types";
 
 const MAX_HISTORY = 24;
@@ -144,7 +145,8 @@ export async function sendAssistantMessage(
     .values({ conversationId: convId, role: "user", content: clean });
 
   const scope = await resolveScope(user, pathname);
-  const system = await buildAssistantSystemPrompt(scope);
+  const settings = await getAiSettings();
+  const system = await buildAssistantSystemPrompt(scope, settings.assistantInstructions);
 
   const history = await db
     .select()

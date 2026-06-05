@@ -279,6 +279,7 @@ export async function saveAiSettingsAction(
   if (capRaw !== "" && (Number.isNaN(cap as number) || (cap as number) < 0)) {
     return { error: "Monthly cap must be a non-negative number." };
   }
+  const instr = String(formData.get("assistantInstructions") ?? "").trim();
 
   await saveAiSettings(
     {
@@ -287,6 +288,7 @@ export async function saveAiSettingsAction(
       maxOutputTokens:
         Number.isFinite(maxTokens) && maxTokens >= 256 ? Math.floor(maxTokens) : 8192,
       monthlySpendCapUsd: cap,
+      assistantInstructions: instr ? instr.slice(0, 8000) : null,
     },
     user.id,
   );
