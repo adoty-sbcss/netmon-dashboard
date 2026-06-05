@@ -144,6 +144,8 @@ export const aiSettings = pgTable("ai_settings", {
   assistantInstructions: text("assistant_instructions"),
   /** Display name for the in-app assistant (null → "NetMon Assistant"). */
   assistantName: text("assistant_name"),
+  /** Opening greeting shown when a chat session is empty (null → built-in text). */
+  assistantGreeting: text("assistant_greeting"),
   /** Avatar stored inline as base64 + mime (mirrors branding_settings); both null
    *  → the default sparkle icon. */
   assistantAvatarMime: text("assistant_avatar_mime"),

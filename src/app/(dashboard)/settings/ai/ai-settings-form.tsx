@@ -287,14 +287,6 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
     saveAiSettingsAction,
     {},
   );
-  const [avatarState, uploadAvatar, uploadingAvatar] = useActionState<
-    AiSettingsActionState,
-    FormData
-  >(uploadAssistantAvatarAction, {});
-  const [clearAvatarState, clearAvatar, clearingAvatar] = useActionState<
-    AiSettingsActionState,
-    FormData
-  >(clearAssistantAvatarAction, {});
 
   return (
     <Card>
@@ -303,6 +295,7 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
       </CardHeader>
       <CardContent>
         <form action={action} className="flex flex-col gap-4">
+          <input type="hidden" name="section" value="schedule" />
           <label className="flex items-center gap-2.5">
             <input
               type="checkbox"
@@ -372,6 +365,43 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
             </p>
           </div>
 
+          <div className="flex items-center gap-2">
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save settings"}
+            </Button>
+            <Notice state={state} />
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AssistantCard({ settings }: { settings: AiGlobalSettings }) {
+  const [state, action, saving] = useActionState<AiSettingsActionState, FormData>(
+    saveAiSettingsAction,
+    {},
+  );
+  const [avatarState, uploadAvatar, uploadingAvatar] = useActionState<
+    AiSettingsActionState,
+    FormData
+  >(uploadAssistantAvatarAction, {});
+  const [clearAvatarState, clearAvatar, clearingAvatar] = useActionState<
+    AiSettingsActionState,
+    FormData
+  >(clearAssistantAvatarAction, {});
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Sparkles className="size-4 text-primary" /> Assistant (in-app chatbot)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form action={action} className="flex flex-col gap-4">
+          <input type="hidden" name="section" value="assistant" />
+
           <div className={fieldCls}>
             <label htmlFor="assistantName" className={labelCls}>
               Assistant name
@@ -384,6 +414,24 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
               maxLength={80}
               className="max-w-xs"
             />
+          </div>
+
+          <div className={fieldCls}>
+            <label htmlFor="assistantGreeting" className={labelCls}>
+              Greeting
+            </label>
+            <textarea
+              id="assistantGreeting"
+              name="assistantGreeting"
+              rows={3}
+              maxLength={500}
+              defaultValue={settings.assistantGreeting ?? ""}
+              placeholder="Shown when a chat is empty. e.g. “Hi! I'm the NetMon Assistant. Ask me about the network, a device, or how the dashboard works.”"
+              className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground">
+              The opening message users see before they ask anything. Blank uses the built-in text.
+            </p>
           </div>
 
           <div className={fieldCls}>
@@ -407,7 +455,7 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
 
           <div className="flex items-center gap-2">
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Save settings"}
+              {saving ? "Saving…" : "Save assistant"}
             </Button>
             <Notice state={state} />
           </div>
@@ -667,6 +715,10 @@ export function AiSettingsForm({
           shadowing it in stale local state. */}
       <GlobalCard
         key={String(settings.updatedAt ?? settings.scheduleEnabled)}
+        settings={settings}
+      />
+      <AssistantCard
+        key={"assistant-" + String(settings.updatedAt ?? "")}
         settings={settings}
       />
       <ActivityCard runs={recentRuns} daily={dailyUsage} />

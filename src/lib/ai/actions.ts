@@ -23,6 +23,7 @@ import {
   saveAiSettings,
   saveAssistantAvatar,
   clearAssistantAvatar,
+  type AiGlobalSettings,
 } from "./settings";
 import { getRun, type AnalysisRun } from "./queries";
 
@@ -275,28 +276,37 @@ export async function saveAiSettingsAction(
   const user = await requireSuperadmin();
   if (!user) return { error: "Not authorized." };
 
-  const maxTokens = Number(formData.get("maxOutputTokens"));
-  const capRaw = String(formData.get("monthlySpendCapUsd") ?? "").trim();
-  const cap = capRaw === "" ? null : Number(capRaw);
-  if (capRaw !== "" && (Number.isNaN(cap as number) || (cap as number) < 0)) {
-    return { error: "Monthly cap must be a non-negative number." };
-  }
-  const instr = String(formData.get("assistantInstructions") ?? "").trim();
-  const name = String(formData.get("assistantName") ?? "").trim();
+  // The page has two independent forms; each sends a `section` marker and only
+  // its own fields. We build a PARTIAL patch so saving one section never clobbers
+  // the other (saveAiSettings merges the patch over the persisted values).
+  const section = String(formData.get("section") ?? "");
+  const patch: Partial<Omit<AiGlobalSettings, "updatedAt">> = {};
 
-  await saveAiSettings(
-    {
-      scheduleEnabled: formData.get("scheduleEnabled") === "on",
-      scheduleCron: String(formData.get("scheduleCron") ?? "0 2 * * *").trim() || "0 2 * * *",
-      maxOutputTokens:
-        Number.isFinite(maxTokens) && maxTokens >= 256 ? Math.floor(maxTokens) : 8192,
-      monthlySpendCapUsd: cap,
-      assistantInstructions: instr ? instr.slice(0, 8000) : null,
-      assistantName: name ? name.slice(0, 80) : null,
-    },
-    user.id,
-  );
-  await audit(user.email, "ai_settings_saved", {});
+  if (section === "schedule" || section === "") {
+    const maxTokens = Number(formData.get("maxOutputTokens"));
+    const capRaw = String(formData.get("monthlySpendCapUsd") ?? "").trim();
+    const cap = capRaw === "" ? null : Number(capRaw);
+    if (capRaw !== "" && (Number.isNaN(cap as number) || (cap as number) < 0)) {
+      return { error: "Monthly cap must be a non-negative number." };
+    }
+    patch.scheduleEnabled = formData.get("scheduleEnabled") === "on";
+    patch.scheduleCron = String(formData.get("scheduleCron") ?? "0 2 * * *").trim() || "0 2 * * *";
+    patch.maxOutputTokens =
+      Number.isFinite(maxTokens) && maxTokens >= 256 ? Math.floor(maxTokens) : 8192;
+    patch.monthlySpendCapUsd = cap;
+  }
+
+  if (section === "assistant" || section === "") {
+    const instr = String(formData.get("assistantInstructions") ?? "").trim();
+    const name = String(formData.get("assistantName") ?? "").trim();
+    const greeting = String(formData.get("assistantGreeting") ?? "").trim();
+    patch.assistantInstructions = instr ? instr.slice(0, 8000) : null;
+    patch.assistantName = name ? name.slice(0, 80) : null;
+    patch.assistantGreeting = greeting ? greeting.slice(0, 500) : null;
+  }
+
+  await saveAiSettings(patch, user.id);
+  await audit(user.email, "ai_settings_saved", { section: section || "all" });
   revalidatePath(AI_SETTINGS_PATH);
   return { ok: true, message: "Settings saved." };
 }

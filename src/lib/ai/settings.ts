@@ -35,6 +35,8 @@ const DEFAULTS = {
   assistantInstructions: null as string | null,
   /** Display name for the assistant; null = "NetMon Assistant". */
   assistantName: null as string | null,
+  /** Opening greeting; null = built-in text. */
+  assistantGreeting: null as string | null,
 };
 
 // ---- env fallback ---------------------------------------------------------
@@ -163,6 +165,7 @@ export interface AiGlobalSettings {
   monthlySpendCapUsd: number | null;
   assistantInstructions: string | null;
   assistantName: string | null;
+  assistantGreeting: string | null;
   updatedAt: Date | null;
 }
 
@@ -180,6 +183,7 @@ export async function getAiSettings(): Promise<AiGlobalSettings> {
     monthlySpendCapUsd: row.monthlySpendCapUsd,
     assistantInstructions: row.assistantInstructions,
     assistantName: row.assistantName,
+    assistantGreeting: row.assistantGreeting,
     updatedAt: row.updatedAt,
   };
 }
@@ -250,6 +254,7 @@ export async function saveAiSettings(
       monthlySpendCapUsd: merged.monthlySpendCapUsd,
       assistantInstructions: merged.assistantInstructions,
       assistantName: merged.assistantName,
+      assistantGreeting: merged.assistantGreeting,
       updatedBy: updatedBy ?? null,
       updatedAt: new Date(),
     })
@@ -262,6 +267,7 @@ export async function saveAiSettings(
         monthlySpendCapUsd: merged.monthlySpendCapUsd,
         assistantInstructions: merged.assistantInstructions,
         assistantName: merged.assistantName,
+        assistantGreeting: merged.assistantGreeting,
         updatedBy: updatedBy ?? null,
         updatedAt: new Date(),
       },
@@ -274,11 +280,13 @@ export async function saveAiSettings(
  *  layout to render the widget's identity. */
 export async function getAssistantIdentity(): Promise<{
   name: string;
+  greeting: string | null;
   hasAvatar: boolean;
 }> {
   const [row] = await db
     .select({
       name: aiSettings.assistantName,
+      greeting: aiSettings.assistantGreeting,
       hasAvatar: sql<boolean>`${aiSettings.assistantAvatarData} is not null`,
     })
     .from(aiSettings)
@@ -286,6 +294,7 @@ export async function getAssistantIdentity(): Promise<{
     .limit(1);
   return {
     name: (row?.name && row.name.trim()) || "NetMon Assistant",
+    greeting: (row?.greeting && row.greeting.trim()) || null,
     hasAvatar: Boolean(row?.hasAvatar),
   };
 }

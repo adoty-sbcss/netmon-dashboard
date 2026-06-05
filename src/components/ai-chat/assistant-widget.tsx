@@ -17,9 +17,11 @@ import { Button } from "@/components/ui/button";
  */
 export function AiAssistantWidget({
   name,
+  greeting,
   hasAvatar,
 }: {
   name: string;
+  greeting: string | null;
   hasAvatar: boolean;
 }) {
   const pathname = usePathname();
@@ -136,10 +138,9 @@ export function AiAssistantWidget({
             <Loader2 className="size-4 animate-spin" /> Loading…
           </p>
         ) : messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Ask about the network, a device, or how the dashboard works. On a school or
-            district page I can see that site&apos;s latest scan data — within the
-            districts you have access to.
+          <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+            {greeting ||
+              "Ask about the network, a device, or how the dashboard works. On a school or district page I can see that site's latest scan data — within the districts you have access to."}
           </p>
         ) : (
           messages.map((m) => (
