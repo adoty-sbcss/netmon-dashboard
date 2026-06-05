@@ -13,12 +13,13 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { chatConversations, chatMessages } from "@/db/schema/chat";
 import { getSessionUser } from "@/lib/auth/current-user";
-import { getUserScope, scopeAllowsDistrict } from "@/lib/auth/scope";
+import { getUserScope, scopeAllowsDistrict, type UserScope } from "@/lib/auth/scope";
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 
-import { aiChat, type ChatMsg } from "./chat";
+import { aiChatWithTools, type ChatMsg } from "./chat";
 import { buildAssistantSystemPrompt } from "./chat-prompt";
 import { getAiSettings } from "./settings";
+import { ASSISTANT_TOOLS, buildToolExecutor, getAllowedSites } from "./chat-tools";
 import type { AnalysisScope, ChatMessage } from "./types";
 
 const MAX_HISTORY = 24;
@@ -42,8 +43,8 @@ const toMsg = (m: {
 /** Derive the scope the user is viewing from a dashboard pathname, bounded by
  *  their district access. Returns null (app-only) for non-site or unauthorized pages. */
 async function resolveScope(
-  user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>,
   pathname: string,
+  scope: UserScope,
 ): Promise<AnalysisScope | null> {
   const segs = (pathname || "").split("/").filter(Boolean);
   if (segs.length === 0) return null;
@@ -52,7 +53,6 @@ async function resolveScope(
 
   const district = await getDistrictBySlug(districtSlug);
   if (!district) return null;
-  const scope = await getUserScope(user);
   if (!scopeAllowsDistrict(scope, district.id)) return null;
 
   if (segs.length >= 2) {
@@ -144,10 +144,22 @@ export async function sendAssistantMessage(
     .insert(chatMessages)
     .values({ conversationId: convId, role: "user", content: clean });
 
-  const scope = await resolveScope(user, pathname);
+  const scope = await getUserScope(user);
+  const sites = await getAllowedSites(scope);
+  const pageScope = await resolveScope(pathname, scope);
+  const current = pageScope
+    ? {
+        schoolId: pageScope.type === "school" ? pageScope.id : null,
+        label: pageScope.label,
+      }
+    : null;
   const settings = await getAiSettings();
   const name = settings.assistantName?.trim() || "NetMon Assistant";
-  const base = await buildAssistantSystemPrompt(scope, settings.assistantInstructions);
+  const base = buildAssistantSystemPrompt({
+    instructions: settings.assistantInstructions,
+    sites,
+    current,
+  });
   const system = `Your name is "${name}". Refer to yourself by this name.\n\n${base}`;
 
   const history = await db
@@ -164,8 +176,12 @@ export async function sendAssistantMessage(
   let model: string | null = null;
   let tokensIn: number | null = null;
   let tokensOut: number | null = null;
+  const execute = buildToolExecutor(sites);
   try {
-    const r = await aiChat({ system, messages: recent }, { maxOutputTokens: 1024 });
+    const r = await aiChatWithTools(
+      { system, messages: recent, tools: ASSISTANT_TOOLS, execute },
+      { maxOutputTokens: 1024 },
+    );
     assistantText = r.text?.trim() || "(no response)";
     model = r.model;
     tokensIn = r.tokensIn;
@@ -190,7 +206,7 @@ export async function sendAssistantMessage(
   // Stamp the latest page context on the conversation (for the superadmin viewer).
   await db
     .update(chatConversations)
-    .set({ updatedAt: new Date(), districtId: scope?.districtId ?? null })
+    .set({ updatedAt: new Date(), districtId: pageScope?.districtId ?? null })
     .where(eq(chatConversations.id, convId));
 
   return {

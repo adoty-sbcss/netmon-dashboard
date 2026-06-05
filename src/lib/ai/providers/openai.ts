@@ -11,11 +11,14 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  AiToolDef,
+  AiToolExecutor,
   ChatMessage,
   CompletionResult,
   ResolvedProviderConfig,
 } from "../types";
 import { ANALYSIS_OUTPUT_SCHEMA, normalizeOutput } from "../output-schema";
+import { runOpenAiToolLoop } from "./openai-tool-loop";
 
 const MAX_RETRIES = Number(process.env.AI_MAX_RETRIES) || 4;
 
@@ -144,5 +147,28 @@ export const openAiProvider: AiProvider = {
       tokensIn: completion.usage?.prompt_tokens ?? null,
       tokensOut: completion.usage?.completion_tokens ?? null,
     };
+  },
+
+  async chatWithTools(
+    input: {
+      system: string;
+      messages: ChatMessage[];
+      tools: AiToolDef[];
+      execute: AiToolExecutor;
+      maxIterations?: number;
+    },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number },
+  ): Promise<CompletionResult> {
+    if (!cfg.apiKey || !cfg.model) throw new Error("OpenAI is not configured");
+    const client = new OpenAI({
+      apiKey: cfg.apiKey,
+      organization: cfg.organization || undefined,
+      project: cfg.project || undefined,
+      baseURL: cfg.baseURL || undefined,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    return runOpenAiToolLoop(client, cfg.model, input, opts.maxOutputTokens);
   },
 };

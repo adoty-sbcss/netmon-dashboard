@@ -116,6 +116,20 @@ export interface AiProvider {
     cfg: ResolvedProviderConfig,
     opts: { maxOutputTokens: number },
   ): Promise<CompletionResult>;
+  /** Agentic chat: the model may call the provided tools (executed via `execute`)
+   *  in a loop until it produces a final answer. Optional — providers without it
+   *  fall back to plain chat(). Powers the data-aware assistant (M4). */
+  chatWithTools?(
+    input: {
+      system: string;
+      messages: ChatMessage[];
+      tools: AiToolDef[];
+      execute: AiToolExecutor;
+      maxIterations?: number;
+    },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number },
+  ): Promise<CompletionResult>;
 }
 
 /** One conversational turn. */
@@ -123,6 +137,19 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+/** A tool the model may call. `parameters` is a JSON Schema for the arguments. */
+export interface AiToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/** Runs a tool call and returns its result as a string (typically JSON). */
+export type AiToolExecutor = (
+  name: string,
+  args: Record<string, unknown>,
+) => Promise<string>;
 
 /** What every provider's `complete()` / `chat()` returns. */
 export interface CompletionResult {

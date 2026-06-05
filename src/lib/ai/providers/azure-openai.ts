@@ -11,11 +11,14 @@ import type {
   AnalysisInput,
   AiAnalysisResult,
   AnalyzeOptions,
+  AiToolDef,
+  AiToolExecutor,
   ChatMessage,
   CompletionResult,
   ResolvedProviderConfig,
 } from "../types";
 import { ANALYSIS_OUTPUT_SCHEMA, normalizeOutput } from "../output-schema";
+import { runOpenAiToolLoop } from "./openai-tool-loop";
 
 const MAX_RETRIES = Number(process.env.AI_MAX_RETRIES) || 4;
 
@@ -150,5 +153,30 @@ export const azureOpenAiProvider: AiProvider = {
       tokensIn: completion.usage?.prompt_tokens ?? null,
       tokensOut: completion.usage?.completion_tokens ?? null,
     };
+  },
+
+  async chatWithTools(
+    input: {
+      system: string;
+      messages: ChatMessage[];
+      tools: AiToolDef[];
+      execute: AiToolExecutor;
+      maxIterations?: number;
+    },
+    cfg: ResolvedProviderConfig,
+    opts: { maxOutputTokens: number },
+  ): Promise<CompletionResult> {
+    if (!cfg.endpoint || !cfg.apiKey || !cfg.model) {
+      throw new Error("Azure OpenAI is not configured");
+    }
+    const client = new AzureOpenAI({
+      endpoint: cfg.endpoint,
+      apiKey: cfg.apiKey,
+      apiVersion: cfg.apiVersion || "2024-10-21",
+      deployment: cfg.model,
+      maxRetries: MAX_RETRIES,
+      timeout: 60_000,
+    });
+    return runOpenAiToolLoop(client, cfg.model, input, opts.maxOutputTokens);
   },
 };
