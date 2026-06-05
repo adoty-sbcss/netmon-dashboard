@@ -166,12 +166,11 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
         ]);
         const byType: Record<string, number> = {};
         for (const h of hosts) {
-          const t = h.deviceType ?? "unknown";
+          const t = (h.deviceType ?? "unknown").toLowerCase();
           byType[t] = (byType[t] ?? 0) + 1;
         }
         return JSON.stringify({
-          total_hosts: stats.hostCount,
-          switches: stats.switchCount,
+          total_devices: stats.hostCount,
           by_type: byType,
           last_scan: stats.lastScanAt,
         });
@@ -193,6 +192,7 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
             [h.hostname, h.vendor, h.mac, h.ip].some((f) => f?.toLowerCase().includes(text)),
           );
         }
+
         return JSON.stringify({
           matched: hosts.length,
           returned: Math.min(hosts.length, limit),
