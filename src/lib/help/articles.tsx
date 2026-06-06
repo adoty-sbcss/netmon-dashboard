@@ -46,12 +46,22 @@ const fixEnrollment: HelpArticle = {
       tone: "info",
       text: (
         <>
-          <strong>Symptom:</strong> the sensor&apos;s bundles are arriving (you see
-          it under a school) but its status is <em>not enrolled</em>, and it never
-          receives pushed config. That means the box can reach SFTP but isn&apos;t
-          completing the control-plane check-in.
+          <strong>Symptom:</strong> the sensor&apos;s scans are arriving (you see it
+          under a school) but on its detail page <strong>Last check-in</strong> reads
+          &ldquo;no check-in yet&rdquo; and <strong>Reported config</strong> reads
+          &ldquo;not yet reported.&rdquo; The box can reach SFTP but isn&apos;t
+          completing the control-plane check-in. Heads up: the{" "}
+          <strong>Enrollment</strong> badge can still say &ldquo;enrolled&rdquo; if a
+          token was once issued — what actually matters is whether the box has{" "}
+          <em>checked in</em>.
         </>
       ),
+    },
+    {
+      kind: "image",
+      src: "/help/sensor-offline.png",
+      alt: "Sensor detail page: Last check-in 'no check-in yet' and Reported config 'not yet reported'",
+      caption: "A sensor that isn't completing check-in — note “no check-in yet” and “not yet reported.”",
     },
     { kind: "h", text: "What you'll need" },
     {
@@ -205,13 +215,19 @@ const fixEnrollment: HelpArticle = {
     { kind: "h", text: "6. Verify in the dashboard" },
     {
       kind: "p",
-      text: <>Back in the dashboard open <strong>Sensors</strong> — the box now shows as enrolled with a recent check-in.</>,
+      text: (
+        <>
+          Open the sensor&apos;s page in the dashboard. <strong>Last check-in</strong>{" "}
+          now shows a recent time and <strong>Reported config</strong> is populated —
+          confirmation the box is talking to the control plane.
+        </>
+      ),
     },
     {
       kind: "image",
-      src: "/help/sensors-enrolled.png",
-      alt: "Sensors list showing the box marked enrolled with a recent check-in time",
-      caption: "Sensors → the box now shows “enrolled”",
+      src: "/help/sensor-enrolled.png",
+      alt: "Sensor detail page showing a recent check-in time and reported config populated",
+      caption: "After the fix: a recent check-in and reported config (a healthy sensor).",
     },
 
     { kind: "h", text: "Troubleshooting" },
