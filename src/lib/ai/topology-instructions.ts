@@ -27,6 +27,12 @@ Look specifically for:
 - SNMP BLIND SPOTS: switches that are reachable but not answering SNMP, so the map
   can't see what's behind them — call these out as the highest-leverage fix
   because they limit visibility everywhere downstream.
+- SENSOR COVERAGE GAPS: a sensor only collects Layer-2 (the actual endpoints) on its
+  OWN subnet. Subnets in 'sensorCoverage.blindSubnets' have devices but no sensor, so
+  the map shows their switch but not what's attached. When gaps exist, RECOMMEND WHERE
+  TO DEPLOY A SENSOR, naming the subnet + its serving switch, and rank by how many
+  devices it would make visible (deviceCount). Frame blind subnets as guesswork until
+  covered. If every observed subnet already has a sensor, say coverage is complete.
 - FLAT vs SEGMENTED: everything on one subnet/VLAN where segmentation (e.g. a
   separate VLAN for cameras/IoT) would reduce broadcast load and risk.
 - UNEXPECTED ATTACHMENT: infrastructure (a switch/AP) hanging off an access port,

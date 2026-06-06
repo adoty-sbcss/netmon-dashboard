@@ -7,6 +7,7 @@ import {
   getMapHiddenForSchool,
 } from "@/db/queries";
 import { getInventoryForSchool } from "@/lib/inventory/queries";
+import { getCoverageForSchool } from "@/lib/topology/coverage";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getLatestTopologyRun } from "@/lib/ai/queries";
 import { PageHeader } from "@/components/page-header";
@@ -31,11 +32,12 @@ export default async function MapPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [map, topoRun, inv, hidden] = await Promise.all([
+  const [map, topoRun, inv, hidden, coverage] = await Promise.all([
     getSchoolMap(school.id),
     getLatestTopologyRun(district.id, school.id),
     getInventoryForSchool(school.id),
     getMapHiddenForSchool(school.id),
+    getCoverageForSchool(school.id),
   ]);
   const basePath = `/${district.slug}/${school.slug}`;
 
@@ -63,6 +65,7 @@ export default async function MapPage({
         schoolId={school.id}
         canSave={user.role === "superadmin"}
         hidden={hidden}
+        coverage={coverage}
         aiPanel={
           <TopologyAiPanel
             districtSlug={district.slug}

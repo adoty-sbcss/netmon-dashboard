@@ -6,6 +6,7 @@
  */
 import { getSchoolMap, getMapHiddenKeys } from "@/db/queries";
 import { getInventoryForSchool } from "@/lib/inventory/queries";
+import { getCoverageForSchool } from "@/lib/topology/coverage";
 
 const INFRA = new Set(["switch", "router", "gateway", "ap", "firewall", "scanner"]);
 
@@ -13,10 +14,11 @@ export async function buildTopologyContext(
   schoolId: number,
   label: string,
 ): Promise<string> {
-  const [map, invAll, hidden] = await Promise.all([
+  const [map, invAll, hidden, coverage] = await Promise.all([
     getSchoolMap(schoolId),
     getInventoryForSchool(schoolId),
     getMapHiddenKeys(schoolId),
+    getCoverageForSchool(schoolId),
   ]);
   // Map-hidden devices are excluded from the map graph by getSchoolMap; drop them
   // from EVERYTHING the AI sees — the per-type counts, the SNMP-gap list, AND the
@@ -95,6 +97,17 @@ export async function buildTopologyContext(
       .filter((r) => r.snmp === "gap")
       .slice(0, 40)
       .map((r) => ({ name: r.name, ip: r.ip, vendor: r.vendor })),
+    // Sensor coverage: each sensor only collects Layer-2 (endpoints) on its OWN
+    // subnet. Subnets in `blindSubnets` have devices but no sensor — their switches
+    // show on the map but what's attached is uncollected. Use this to recommend
+    // WHERE to deploy sensors (rank by deviceCount).
+    sensorCoverage: {
+      sensors: coverage.sensorCount,
+      collectingSubnets: coverage.coveredSubnetCount,
+      observedSubnets: coverage.observedSubnetCount,
+      coveredCidrs: coverage.coveredCidrs,
+      blindSubnets: coverage.blindSubnets.slice(0, 15),
+    },
     coverageNote:
       `${leafTotal} leaf devices are attached to a switch port on the physical map ` +
       `via the bridge forwarding table. Devices behind switches that do NOT answer ` +

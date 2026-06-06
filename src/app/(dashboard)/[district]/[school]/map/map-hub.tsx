@@ -9,9 +9,10 @@
  */
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { EyeOff, RotateCcw } from "lucide-react";
+import { EyeOff, Radio, RadioTower, RotateCcw } from "lucide-react";
 
 import type { MapGraph, MapHiddenRow } from "@/db/queries";
+import type { CoverageSummary } from "@/lib/topology/coverage";
 import { setDeviceMapHidden } from "@/lib/admin/map-actions";
 import { CytoscapePhysicalMap } from "@/components/topology/cytoscape-physical-map";
 import { DeviceTypeBadge } from "@/components/device-type-badge";
@@ -36,6 +37,7 @@ export function MapHub({
   schoolId,
   canSave,
   hidden,
+  coverage,
   aiPanel,
 }: {
   graph: MapGraph;
@@ -44,6 +46,7 @@ export function MapHub({
   schoolId: number;
   canSave: boolean;
   hidden: MapHiddenRow[];
+  coverage: CoverageSummary;
   aiPanel: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>("map");
@@ -71,18 +74,67 @@ export function MapHub({
 
       {tab === "map" ? (
         <>
+          <CoverageBanner coverage={coverage} />
           <CytoscapePhysicalMap
             graph={graph}
             basePath={basePath}
             status={status}
             schoolId={schoolId}
             canSave={canSave}
+            coveredCidrs={coverage.coveredCidrs}
           />
           {aiPanel}
         </>
       ) : (
         <HiddenList rows={hidden} schoolId={schoolId} basePath={basePath} />
       )}
+    </div>
+  );
+}
+
+/** Plain-English "are we missing a sensor?" line for techs. */
+function CoverageBanner({ coverage }: { coverage: CoverageSummary }) {
+  const { observedSubnetCount, coveredSubnetCount, blindSubnets, sensorCount } = coverage;
+  if (observedSubnetCount === 0) return null;
+
+  const blindCount = blindSubnets.length;
+  const blindDevices = blindSubnets.reduce((a, b) => a + b.deviceCount, 0);
+  const top = blindSubnets[0];
+
+  if (blindCount === 0) {
+    return (
+      <div className="flex items-start gap-2 rounded-lg border border-[var(--success)]/30 bg-[var(--success)]/5 px-3 py-2 text-sm">
+        <Radio className="mt-0.5 size-4 shrink-0 text-[var(--success)]" />
+        <p>
+          <span className="font-medium">Full Layer-2 coverage.</span>{" "}
+          {sensorCount} sensor{sensorCount === 1 ? "" : "s"} collecting across all{" "}
+          {observedSubnetCount} observed subnet{observedSubnetCount === 1 ? "" : "s"}.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-3 py-2 text-sm">
+      <RadioTower className="mt-0.5 size-4 shrink-0 text-[var(--warning)]" />
+      <p>
+        Sensors collect Layer-2 on{" "}
+        <span className="font-medium">
+          {coveredSubnetCount} of {observedSubnetCount}
+        </span>{" "}
+        subnets. <span className="font-medium">{blindCount}</span> subnet
+        {blindCount === 1 ? "" : "s"} (~{blindDevices} device{blindDevices === 1 ? "" : "s"}) have no
+        sensor — their switches show on the map but not what&apos;s attached.
+        {top && (
+          <>
+            {" "}
+            Biggest gap: <span className="font-mono">{top.subnet}</span> (~{top.deviceCount} devices
+            {top.servingSwitch ? `, served by ${top.servingSwitch}` : ""}). Turn on{" "}
+            <span className="font-medium">Coverage</span> to see which devices, or run the AI
+            analysis below for sensor-placement recommendations.
+          </>
+        )}
+      </p>
     </div>
   );
 }

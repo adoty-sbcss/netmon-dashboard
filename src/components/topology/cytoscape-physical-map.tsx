@@ -3,10 +3,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Download, ExternalLink, EyeOff, Layers, Maximize2, Network, RotateCcw, Save, Table2 } from "lucide-react";
+import { Download, ExternalLink, EyeOff, Layers, Maximize2, Network, Radar, RotateCcw, Save, Table2 } from "lucide-react";
 
 import type { MapGraph } from "@/db/queries";
 import { saveMapPositions, setDeviceMapHidden } from "@/lib/admin/map-actions";
+import { ipInAnyCidr } from "@/lib/net";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { iconUri } from "./device-icons";
@@ -51,6 +52,7 @@ function buildElements(
   groupLeaves: boolean,
   status: Record<string, string>,
   hiddenTypes: Set<string>,
+  coveredCidrs: string[],
 ) {
   const keep = (t: string) => (infraOnly ? INFRA.has(t) : true) && !hiddenTypes.has(t);
   const nodes = graph.nodes.filter((n) => keep(n.type));
@@ -98,6 +100,10 @@ function buildElements(
     if (grouped.has(n.id)) continue;
     const s = styleFor(n.type);
     const key = n.entityId && n.entityKind ? `${n.entityKind}:${n.entityId}` : "";
+    // Coverage: a real device with an IP inside a sensor's subnet is collected
+    // ("covered"); reached only up the spine → "spine" (endpoints uncollected).
+    const coverage =
+      n.entityKind && n.ip ? (ipInAnyCidr(n.ip, coveredCidrs) ? "covered" : "spine") : "";
     els.push({
       data: {
         id: n.id,
@@ -115,6 +121,7 @@ function buildElements(
         shape: s.shape,
         icon: iconUri(n.type),
         status: status[key] ?? "",
+        coverage,
       },
     });
   }
@@ -170,6 +177,14 @@ const STYLESHEET: any[] = [
   { selector: 'edge[kind="wan"]', style: { "line-color": "#fbbf24", width: 2.5 } },
   { selector: "node:selected", style: { "border-color": "#6366f1", "border-width": 4 } },
   { selector: ".dim", style: { opacity: 0.2 } },
+  // Coverage overlay (applied as classes only while the Coverage toggle is on).
+  { selector: "node.cov-covered", style: { "background-color": "#10b981", "border-color": "#10b981", "border-width": 3 } },
+  { selector: "node.cov-spine", style: { "background-color": "#f59e0b", "border-color": "#f59e0b", "border-width": 3 } },
+];
+
+const COVERAGE_LEGEND: { cls: string; label: string; color: string }[] = [
+  { cls: "covered", label: "Sensor on this L2 (full visibility)", color: "#10b981" },
+  { cls: "spine", label: "No sensor — endpoints not collected", color: "#f59e0b" },
 ];
 
 const STATUS_LEGEND: { key: string; label: string; color: string }[] = [
@@ -213,18 +228,21 @@ export function CytoscapePhysicalMap({
   status = {},
   schoolId,
   canSave = false,
+  coveredCidrs = [],
 }: {
   graph: MapGraph;
   basePath: string;
   status?: Record<string, string>;
   schoolId: number;
   canSave?: boolean;
+  coveredCidrs?: string[];
 }) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<any>(null);
   const [infraOnly, setInfraOnly] = useState(false);
   const [groupLeaves, setGroupLeaves] = useState(true);
+  const [coverageOn, setCoverageOn] = useState(false);
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
   const [cw, setCw] = useState(800);
   const [dirty, setDirty] = useState(false);
@@ -242,8 +260,8 @@ export function CytoscapePhysicalMap({
   }, [graph]);
 
   const elements = useMemo(
-    () => buildElements(graph, infraOnly, groupLeaves, status, hiddenTypes),
-    [graph, infraOnly, groupLeaves, status, hiddenTypes],
+    () => buildElements(graph, infraOnly, groupLeaves, status, hiddenTypes, coveredCidrs),
+    [graph, infraOnly, groupLeaves, status, hiddenTypes, coveredCidrs],
   );
 
   function toggleType(t: string) {
@@ -355,6 +373,24 @@ export function CytoscapePhysicalMap({
     };
   }, [elements, basePath, router, graph]);
 
+  // Coverage overlay: recolor nodes by coverage (green = sensor on this L2, amber =
+  // spine-only) only while the toggle is on. Applied as classes so it doesn't rebuild
+  // the graph or disturb manual positions. Re-runs after a rebuild (elements dep).
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.nodes().forEach((n: any) => {
+        n.removeClass("cov-covered cov-spine");
+        if (coverageOn) {
+          const c = n.data("coverage");
+          if (c === "covered") n.addClass("cov-covered");
+          else if (c === "spine") n.addClass("cov-spine");
+        }
+      });
+    });
+  }, [coverageOn, elements]);
+
   function fit() {
     cyRef.current?.fit(undefined, 30);
   }
@@ -412,6 +448,15 @@ export function CytoscapePhysicalMap({
         <Button type="button" size="sm" variant={infraOnly ? "default" : "outline"} onClick={() => setInfraOnly((v) => !v)}>
           <Network className="size-4" /> Infrastructure only
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={coverageOn ? "default" : "outline"}
+          onClick={() => setCoverageOn((v) => !v)}
+          title="Color devices by sensor coverage: green = a sensor collects this subnet, amber = spine-only (endpoints not collected)"
+        >
+          <Radar className="size-4" /> Coverage
+        </Button>
         <Button type="button" size="sm" variant="outline" onClick={fit}>
           <Maximize2 className="size-4" /> Fit
         </Button>
@@ -439,15 +484,26 @@ export function CytoscapePhysicalMap({
             </Button>
           </>
         )}
-        {hasStatus && (
+        {coverageOn ? (
           <div className="ml-auto flex flex-wrap gap-2.5">
-            {STATUS_LEGEND.map((s) => (
-              <span key={s.key} className="flex items-center gap-1 text-xs text-muted-foreground">
-                <span className="size-2.5 rounded-full" style={{ boxShadow: `0 0 0 2px ${s.color}` }} />
+            {COVERAGE_LEGEND.map((s) => (
+              <span key={s.cls} className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="size-2.5 rounded-full" style={{ background: s.color }} />
                 {s.label}
               </span>
             ))}
           </div>
+        ) : (
+          hasStatus && (
+            <div className="ml-auto flex flex-wrap gap-2.5">
+              {STATUS_LEGEND.map((s) => (
+                <span key={s.key} className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <span className="size-2.5 rounded-full" style={{ boxShadow: `0 0 0 2px ${s.color}` }} />
+                  {s.label}
+                </span>
+              ))}
+            </div>
+          )
         )}
       </div>
 

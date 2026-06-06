@@ -16,6 +16,7 @@ import {
   listFindingsForSchool,
   listScanSnapshotsForSchool,
 } from "@/db/queries";
+import { ipInCidr } from "@/lib/net";
 import type { AiToolDef, AiToolExecutor } from "./types";
 
 export interface AllowedSite {
@@ -116,29 +117,6 @@ export const ASSISTANT_TOOLS: AiToolDef[] = [
     },
   },
 ];
-
-function ipToInt(ip: string): number | null {
-  const parts = ip.split(".");
-  if (parts.length !== 4) return null;
-  let n = 0;
-  for (const p of parts) {
-    const o = Number(p);
-    if (!Number.isInteger(o) || o < 0 || o > 255) return null;
-    n = (n << 8) | o;
-  }
-  return n >>> 0;
-}
-
-function ipInCidr(ip: string, cidr: string): boolean {
-  const [range, bitsStr] = cidr.split("/");
-  const bits = Number(bitsStr);
-  if (!Number.isFinite(bits) || bits < 0 || bits > 32) return false;
-  const a = ipToInt(ip);
-  const b = ipToInt(range);
-  if (a == null || b == null) return false;
-  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-  return (a & mask) === (b & mask);
-}
 
 /** Build the executor bound to the user's allowed sites. */
 export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
