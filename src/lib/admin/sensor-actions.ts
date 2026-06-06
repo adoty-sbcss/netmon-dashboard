@@ -110,6 +110,29 @@ export async function saveSensorConfigAction(
     return { error: "Scan interval must be at least 60 seconds." };
   }
 
+  // Topology crawl scope + tuning push. Always present (the form renders it);
+  // scope/enabled go through every save, numerics only when a value is typed
+  // (blank = leave the box's current value, since _apply_config skips falsy).
+  const topo: Record<string, unknown> = {};
+  if (formData.has("topoManage")) {
+    const scope = String(formData.get("topoScope") ?? "full").trim().toLowerCase();
+    topo.snmp_topology_scope = scope === "spine" ? "spine" : "full";
+    topo.snmp_topology_enabled = formData.get("topoEnabled") === "on";
+    const intHours = String(formData.get("topoIntervalHours") ?? "").trim();
+    if (intHours) {
+      const h = Number(intHours);
+      if (Number.isFinite(h) && h >= 0) topo.snmp_topology_interval = Math.floor(h * 3600);
+    }
+    const posInt = (name: string, key: string) => {
+      const raw = String(formData.get(name) ?? "").trim();
+      if (!raw) return;
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 1) topo[key] = Math.floor(n);
+    };
+    posInt("topoMaxNodes", "snmp_topology_max_nodes");
+    posInt("topoFanoutCap", "snmp_topology_fanout_cap");
+  }
+
   // Optional SFTP upload destination push.
   const sftp: Record<string, unknown> = {};
   if (formData.has("sftpManage")) {
@@ -127,6 +150,7 @@ export async function saveSensorConfigAction(
     snmp_enabled: snmpEnabled,
     snmp_communities: snmpCommunities,
     ...(rescanInterval != null ? { rescan_interval: rescanInterval } : {}),
+    ...topo,
     ...sftp,
   };
 
