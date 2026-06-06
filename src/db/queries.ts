@@ -7,7 +7,7 @@
  * than correlated subqueries: simpler to read and the dataset is small.
  */
 import "server-only";
-import { and, count, desc, eq, gte, inArray, lte, max, min, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lte, max, min, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./index";
@@ -1595,6 +1595,11 @@ export interface MapNode {
   label: string;
   ip?: string | null;
   model?: string | null;
+  vendor?: string | null;
+  /** Firmware / OS string (best-effort: SNMP sysDescr for infra, classified OS for hosts). */
+  firmware?: string | null;
+  /** Access switch port for an FDB-attached leaf (e.g. "Gi1/0/12"). */
+  port?: string | null;
   entityId?: number | null;
   entityKind?: "switch" | "host" | null;
   hostCount?: number | null;
@@ -1608,6 +1613,27 @@ export interface MapGraph {
 export interface SchoolMap {
   physical: MapGraph;
   logical: MapGraph;
+}
+
+/** Read a string field off a jsonb `attributes` blob (null if absent/non-string). */
+function mapAttrStr(attributes: unknown, key: string): string | null {
+  if (attributes && typeof attributes === "object") {
+    const v = (attributes as Record<string, unknown>)[key];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
+/** Host OS string from the AI classification stash (attributes.classification.os). */
+function hostOs(attributes: unknown): string | null {
+  if (attributes && typeof attributes === "object") {
+    const c = (attributes as Record<string, unknown>).classification;
+    if (c && typeof c === "object") {
+      const os = (c as Record<string, unknown>).os;
+      if (typeof os === "string" && os.trim()) return os;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1692,7 +1718,9 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
         systemDescription: entitiesSwitch.systemDescription,
         mgmtIp: entitiesSwitch.mgmtIp,
         capabilities: entitiesSwitch.capabilities,
+        attributes: entitiesSwitch.attributes,
         excludedAt: entitiesSwitch.excludedAt,
+        mapHiddenAt: entitiesSwitch.mapHiddenAt,
       })
       .from(entitiesSwitch)
       .where(eq(entitiesSwitch.schoolId, schoolId)),
@@ -1704,7 +1732,10 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
         hostname: entitiesHost.hostname,
         deviceType: entitiesHost.deviceType,
         deviceTypeOverride: entitiesHost.deviceTypeOverride,
+        vendor: entitiesHost.vendor,
+        attributes: entitiesHost.attributes,
         excludedAt: entitiesHost.excludedAt,
+        mapHiddenAt: entitiesHost.mapHiddenAt,
       })
       .from(entitiesHost)
       .where(eq(entitiesHost.schoolId, schoolId)),
@@ -1719,19 +1750,24 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
       .where(eq(topologyPositions.schoolId, schoolId)),
   ]);
 
-  // Excluded (purged) entities must NOT appear on the map. Collect their IPs to
-  // prune from the stored snapshot graph, and key enrichment off live ones only.
+  // Devices that must NOT appear on the map: purged (excludedAt) AND map-hidden
+  // (mapHiddenAt — a reversible map-only hide that keeps the device in inventory +
+  // SNMP). Both are pruned from the graph identically; collect their IPs/chassis to
+  // strip from the stored snapshot, and key enrichment off mappable (visible) ones.
+  const offMap = (e: { excludedAt: Date | null; mapHiddenAt: Date | null }) =>
+    Boolean(e.excludedAt || e.mapHiddenAt);
   const excludedIps = new Set<string>();
-  for (const s of switchRows) if (s.excludedAt && s.mgmtIp) excludedIps.add(s.mgmtIp);
-  for (const h of hostRows) if (h.excludedAt && h.ip) excludedIps.add(h.ip);
+  for (const s of switchRows) if (offMap(s) && s.mgmtIp) excludedIps.add(s.mgmtIp);
+  for (const h of hostRows) if (offMap(h) && h.ip) excludedIps.add(h.ip);
   // Crawled switch/AP nodes are keyed `switch:<chassis>` and carry their address
-  // as mgmt_ip, not ip — so match excluded ones by chassis too, or purges that
-  // touch a fabric-discovered device would never clear from the map.
+  // as mgmt_ip, not ip — so match by chassis too, or a hide/purge of a
+  // fabric-discovered device would never clear from the map.
   const excludedChassis = new Set<string>();
-  for (const s of switchRows) if (s.excludedAt && s.chassisId) excludedChassis.add(s.chassisId);
-  const liveSwitches = switchRows.filter((s) => !s.excludedAt);
-  const liveHosts = hostRows.filter((h) => !h.excludedAt);
+  for (const s of switchRows) if (offMap(s) && s.chassisId) excludedChassis.add(s.chassisId);
+  const liveSwitches = switchRows.filter((s) => !offMap(s));
+  const liveHosts = hostRows.filter((h) => !offMap(h));
   const switchByIp = new Map(liveSwitches.filter((s) => s.mgmtIp).map((s) => [s.mgmtIp!, s]));
+  const switchByChassis = new Map(liveSwitches.map((s) => [s.chassisId, s]));
   const hostByIp = new Map(liveHosts.filter((h) => h.ip).map((h) => [h.ip!, h]));
   const posByKind = new Map<string, Record<string, { x: number; y: number }>>();
   for (const p of posRows) {
@@ -1743,7 +1779,15 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
   function enrich(kind: string, raw: RawNode[]): MapNode[] {
     return raw.map((n) => {
       const baseType = n.type ?? "host";
-      const sw = n.ip ? switchByIp.get(n.ip) : undefined;
+      // Resolve the switch entity by ip → mgmt_ip → chassis (`switch:<chassis>` id).
+      // Fabric-crawled switches/APs carry their address as mgmt_ip (not ip), so an
+      // ip-only match left them unlinked — breaking click-through. (queries.ts §map)
+      const mgmt = (n as { mgmt_ip?: unknown }).mgmt_ip;
+      const chassisFromId = n.id.startsWith("switch:") ? n.id.slice("switch:".length) : null;
+      const sw =
+        (n.ip ? switchByIp.get(n.ip) : undefined) ??
+        (typeof mgmt === "string" ? switchByIp.get(mgmt) : undefined) ??
+        (chassisFromId ? switchByChassis.get(chassisFromId) : undefined);
       if (sw) {
         return {
           id: n.id,
@@ -1751,6 +1795,8 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
           label: sw.systemName || n.label || n.ip || n.id,
           ip: n.ip ?? sw.mgmtIp ?? null,
           model: sw.systemDescription ?? null,
+          vendor: mapAttrStr(sw.attributes, "vendor"),
+          firmware: mapAttrStr(sw.attributes, "firmware") ?? mapAttrStr(sw.attributes, "os"),
           entityId: sw.id,
           entityKind: "switch",
         };
@@ -1763,6 +1809,8 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
           type: host.deviceTypeOverride || (baseType === "gateway" ? "router" : baseType),
           label: host.hostname || n.label || n.ip || n.id,
           ip: n.ip ?? null,
+          vendor: host.vendor ?? null,
+          firmware: hostOs(host.attributes),
           entityId: host.id,
           entityKind: "host",
         };
@@ -1827,7 +1875,9 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
           type: host.deviceTypeOverride || host.deviceType || "host",
           label: host.hostname || host.ip || mac,
           ip: host.ip,
-          model: att.port ? `on ${att.port}` : null,
+          vendor: host.vendor ?? null,
+          firmware: hostOs(host.attributes),
+          port: att.port ?? null,
           entityId: host.id,
           entityKind: "host",
         });
@@ -1845,6 +1895,83 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     return { ...g, nodes, edges: g.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
   }
   return { physical: prune(physical), logical: prune(logical) };
+}
+
+/** Entity ids hidden from the map at a school — for filtering AI map context. */
+export async function getMapHiddenKeys(
+  schoolId: number,
+): Promise<{ hostIds: Set<number>; switchIds: Set<number> }> {
+  const [sw, ho] = await Promise.all([
+    db
+      .select({ id: entitiesSwitch.id })
+      .from(entitiesSwitch)
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNotNull(entitiesSwitch.mapHiddenAt))),
+    db
+      .select({ id: entitiesHost.id })
+      .from(entitiesHost)
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNotNull(entitiesHost.mapHiddenAt))),
+  ]);
+  return {
+    switchIds: new Set(sw.map((r) => r.id)),
+    hostIds: new Set(ho.map((r) => r.id)),
+  };
+}
+
+export interface MapHiddenRow {
+  key: string; // "switch:<id>" | "host:<id>"
+  entityKind: "switch" | "host";
+  entityId: number;
+  name: string;
+  ip: string | null;
+  type: string;
+}
+
+/** Devices an operator has hidden from the map at this school — for the Hidden tab. */
+export async function getMapHiddenForSchool(schoolId: number): Promise<MapHiddenRow[]> {
+  const [switches, hosts] = await Promise.all([
+    db
+      .select({
+        id: entitiesSwitch.id,
+        systemName: entitiesSwitch.systemName,
+        mgmtIp: entitiesSwitch.mgmtIp,
+        chassisId: entitiesSwitch.chassisId,
+        capabilities: entitiesSwitch.capabilities,
+        systemDescription: entitiesSwitch.systemDescription,
+      })
+      .from(entitiesSwitch)
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNotNull(entitiesSwitch.mapHiddenAt))),
+    db
+      .select({
+        id: entitiesHost.id,
+        hostname: entitiesHost.hostname,
+        ip: entitiesHost.ip,
+        mac: entitiesHost.mac,
+        deviceType: entitiesHost.deviceType,
+        deviceTypeOverride: entitiesHost.deviceTypeOverride,
+      })
+      .from(entitiesHost)
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNotNull(entitiesHost.mapHiddenAt))),
+  ]);
+  const rows: MapHiddenRow[] = [
+    ...switches.map((s) => ({
+      key: `switch:${s.id}`,
+      entityKind: "switch" as const,
+      entityId: s.id,
+      name: s.systemName || s.mgmtIp || s.chassisId,
+      ip: s.mgmtIp,
+      type: refineInfraType("switch", s.capabilities ?? null, s.systemDescription),
+    })),
+    ...hosts.map((h) => ({
+      key: `host:${h.id}`,
+      entityKind: "host" as const,
+      entityId: h.id,
+      name: h.hostname || h.ip || h.mac,
+      ip: h.ip,
+      type: h.deviceTypeOverride || h.deviceType || "host",
+    })),
+  ];
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
 }
 
 // ---- admin: managed entity tree (rename / delete / purge) -----------------

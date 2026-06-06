@@ -1,12 +1,13 @@
 "use client";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Download, Layers, Maximize2, Network, RotateCcw, Save, Table2 } from "lucide-react";
+import { Download, ExternalLink, EyeOff, Layers, Maximize2, Network, RotateCcw, Save, Table2 } from "lucide-react";
 
 import type { MapGraph } from "@/db/queries";
-import { saveMapPositions } from "@/lib/admin/map-actions";
+import { saveMapPositions, setDeviceMapHidden } from "@/lib/admin/map-actions";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { iconUri } from "./device-icons";
 
@@ -34,6 +35,14 @@ const TYPE_STYLE: Record<string, { color: string; shape: string }> = {
 };
 const styleFor = (t: string) => TYPE_STYLE[t] ?? TYPE_STYLE.default;
 const INFRA = new Set(["internet", "router", "gateway", "scanner", "switch", "ap", "firewall"]);
+const TYPE_LABEL: Record<string, string> = {
+  internet: "Internet", router: "Router", gateway: "Gateway", scanner: "Sensor",
+  switch: "Switch", ap: "Access point", firewall: "Firewall", server: "Server",
+  printer: "Printer", camera: "Camera", computer: "Computer", phone: "IP phone",
+  mobile: "Mobile", storage: "Storage", media: "Media / TV", display: "Display",
+  iot: "IoT", subnet: "Subnet", group: "Group", host: "Host",
+};
+const typeLabel = (t: string) => TYPE_LABEL[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
 const trunc = (s: string) => (s && s.length > 22 ? s.slice(0, 21) + "…" : s);
 
 function buildElements(
@@ -41,8 +50,9 @@ function buildElements(
   infraOnly: boolean,
   groupLeaves: boolean,
   status: Record<string, string>,
+  hiddenTypes: Set<string>,
 ) {
-  const keep = (t: string) => (infraOnly ? INFRA.has(t) : true);
+  const keep = (t: string) => (infraOnly ? INFRA.has(t) : true) && !hiddenTypes.has(t);
   const nodes = graph.nodes.filter((n) => keep(n.type));
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = graph.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
@@ -96,6 +106,9 @@ function buildElements(
         type: n.type,
         ip: n.ip ?? "",
         model: n.model ?? "",
+        vendor: n.vendor ?? "",
+        firmware: n.firmware ?? "",
+        port: n.port ?? "",
         entityId: n.entityId ?? null,
         entityKind: n.entityKind ?? null,
         color: s.color,
@@ -166,6 +179,34 @@ const STATUS_LEGEND: { key: string; label: string; color: string }[] = [
   { key: "offline", label: "Offline", color: "#cbd5e1" },
 ];
 
+interface HoverState {
+  x: number;
+  y: number;
+  label: string;
+  ip: string;
+  type: string;
+  model: string;
+  vendor: string;
+  firmware: string;
+  port: string;
+  status: string;
+  connected: number;
+}
+interface MenuState {
+  x: number;
+  y: number;
+  entityId: number;
+  entityKind: "switch" | "host";
+  label: string;
+}
+
+const STATUS_BADGE: Record<string, { label: string; color: string }> = {
+  snmp: { label: "Answering SNMP", color: "#10b981" },
+  gap: { label: "Reachable, no SNMP", color: "#f59e0b" },
+  online: { label: "Online", color: "#38bdf8" },
+  offline: { label: "Offline", color: "#94a3b8" },
+};
+
 export function CytoscapePhysicalMap({
   graph,
   basePath,
@@ -184,16 +225,42 @@ export function CytoscapePhysicalMap({
   const cyRef = useRef<any>(null);
   const [infraOnly, setInfraOnly] = useState(false);
   const [groupLeaves, setGroupLeaves] = useState(true);
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
   const [cw, setCw] = useState(800);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [hover, setHover] = useState<{ x: number; y: number; label: string; ip: string; type: string; model: string } | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [, startHide] = useTransition();
+
+  // Device-type toggles (chips): the distinct types present + per-type counts.
+  const typeCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of graph.nodes) m.set(n.type, (m.get(n.type) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [graph]);
 
   const elements = useMemo(
-    () => buildElements(graph, infraOnly, groupLeaves, status),
-    [graph, infraOnly, groupLeaves, status],
+    () => buildElements(graph, infraOnly, groupLeaves, status, hiddenTypes),
+    [graph, infraOnly, groupLeaves, status, hiddenTypes],
   );
+
+  function toggleType(t: string) {
+    setHiddenTypes((s) => {
+      const n = new Set(s);
+      if (n.has(t)) n.delete(t);
+      else n.add(t);
+      return n;
+    });
+  }
+  function hideDevice(m: MenuState) {
+    setMenu(null);
+    startHide(async () => {
+      const res = await setDeviceMapHidden(schoolId, m.entityKind, m.entityId, true, basePath);
+      if (res.ok) router.refresh();
+    });
+  }
 
   useEffect(() => {
     let cy: any;
@@ -224,13 +291,37 @@ export function CytoscapePhysicalMap({
       cyRef.current = cy;
 
       cy.on("tap", "node", (e: any) => {
+        setMenu(null);
         const d = e.target.data();
         if (d.entityId && d.entityKind) router.push(`${basePath}/${d.entityKind}/${d.entityId}`);
+      });
+      cy.on("tap", (e: any) => {
+        if (e.target === cy) setMenu(null); // background tap closes the menu
+      });
+      // Right-click a device → context menu (Open / Hide from map).
+      cy.on("cxttap", "node", (e: any) => {
+        const d = e.target.data();
+        if (!d.entityId || !d.entityKind) return; // can't act on subnet/group/internet
+        const rp = e.target.renderedPosition();
+        setHover(null);
+        setMenu({ x: rp.x, y: rp.y, entityId: d.entityId, entityKind: d.entityKind, label: d.full || d.label });
       });
       cy.on("mouseover", "node", (e: any) => {
         const d = e.target.data();
         const rp = e.target.renderedPosition();
-        setHover({ x: rp.x, y: rp.y, label: d.full || d.label, ip: d.ip, type: d.type, model: d.model });
+        setHover({
+          x: rp.x,
+          y: rp.y,
+          label: d.full || d.label,
+          ip: d.ip,
+          type: d.type,
+          model: d.model,
+          vendor: d.vendor,
+          firmware: d.firmware,
+          port: d.port,
+          status: d.status,
+          connected: e.target.degree(false),
+        });
         const hood = e.target.closedNeighborhood();
         cy.elements().not(hood).addClass("dim");
       });
@@ -238,6 +329,8 @@ export function CytoscapePhysicalMap({
         setHover(null);
         cy.elements().removeClass("dim");
       });
+      // Panning/zooming should dismiss an open menu so it never floats out of place.
+      cy.on("pan zoom drag", () => setMenu(null));
 
       // Apply any saved manual positions ON TOP of the auto-layout: nodes you've
       // placed snap back to where you left them; new/unplaced nodes keep their
@@ -358,7 +451,43 @@ export function CytoscapePhysicalMap({
         )}
       </div>
 
-      <div className="relative overflow-hidden rounded-xl border bg-[var(--muted)]/30">
+      {/* Per-type visibility toggles — click a type to hide/show it on the map. */}
+      {typeCounts.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Show:</span>
+          {typeCounts.map(([t, count]) => {
+            const off = hiddenTypes.has(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => toggleType(t)}
+                title={off ? "Hidden — click to show" : "Click to hide this type"}
+                className={cn(
+                  "flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-xs hover:bg-accent",
+                  off ? "text-muted-foreground/50 line-through" : "text-muted-foreground",
+                )}
+              >
+                <span
+                  className="size-2.5 rounded-full"
+                  style={{ background: styleFor(t).color, opacity: off ? 0.3 : 1 }}
+                />
+                {typeLabel(t)} <span className="tabular-nums opacity-70">{count}</span>
+              </button>
+            );
+          })}
+          {hiddenTypes.size > 0 && (
+            <button type="button" onClick={() => setHiddenTypes(new Set())} className="text-xs text-primary hover:underline">
+              show all
+            </button>
+          )}
+        </div>
+      )}
+
+      <div
+        className="relative overflow-hidden rounded-xl border bg-[var(--muted)]/30"
+        onContextMenu={(e) => e.preventDefault()}
+      >
         {graph.nodes.length === 0 ? (
           <div className="flex h-[600px] items-center justify-center p-6 text-center text-sm text-muted-foreground">
             No physical topology captured yet. It builds from LLDP/CDP neighbors and the
@@ -367,16 +496,80 @@ export function CytoscapePhysicalMap({
         ) : (
           <>
             <div ref={containerRef} className="h-[600px] w-full" />
-            {hover && (
+            {hover && !menu && (
               <div
-                className="pointer-events-none absolute z-10 w-56 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md"
-                style={{ left: Math.min(hover.x + 14, Math.max(8, cw - 232)), top: hover.y + 14 }}
+                className="pointer-events-none absolute z-10 w-60 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md"
+                style={{ left: Math.min(hover.x + 14, Math.max(8, cw - 248)), top: hover.y + 14 }}
               >
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{hover.type}</p>
-                <p className="truncate text-sm font-semibold">{hover.label}</p>
-                {hover.ip && <p className="font-mono text-xs text-muted-foreground">{hover.ip}</p>}
-                {hover.model && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hover.model}</p>}
-                <p className="mt-1.5 text-[11px] text-muted-foreground">Click to open device detail</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{typeLabel(hover.type)}</p>
+                  {STATUS_BADGE[hover.status] && (
+                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <span className="size-2 rounded-full" style={{ background: STATUS_BADGE[hover.status].color }} />
+                      {STATUS_BADGE[hover.status].label}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 truncate text-sm font-semibold">{hover.label}</p>
+                <dl className="mt-1.5 space-y-0.5 text-xs">
+                  {hover.ip && (
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-muted-foreground">IP</dt>
+                      <dd className="font-mono">{hover.ip}</dd>
+                    </div>
+                  )}
+                  {hover.vendor && (
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-muted-foreground">Vendor</dt>
+                      <dd className="truncate text-right">{hover.vendor}</dd>
+                    </div>
+                  )}
+                  {/* Firmware is a first-class slot even when empty — it fills in as
+                      we add SSH config digestion / richer SNMP. */}
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-muted-foreground">Firmware</dt>
+                    <dd className="truncate text-right">{hover.firmware || "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-muted-foreground">Connected</dt>
+                    <dd className="tabular-nums">{hover.connected}</dd>
+                  </div>
+                  {hover.port && (
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-muted-foreground">Port</dt>
+                      <dd className="font-mono">{hover.port}</dd>
+                    </div>
+                  )}
+                </dl>
+                {hover.model && hover.model !== hover.firmware && (
+                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hover.model}</p>
+                )}
+                <p className="mt-1.5 text-[11px] text-muted-foreground">Click to open · right-click for actions</p>
+              </div>
+            )}
+            {menu && (
+              <div
+                className="absolute z-20 w-44 overflow-hidden rounded-lg border bg-popover py-1 text-popover-foreground shadow-md"
+                style={{ left: Math.min(menu.x + 6, Math.max(8, cw - 188)), top: menu.y + 6 }}
+              >
+                <p className="truncate border-b px-3 py-1.5 text-xs font-medium">{menu.label}</p>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  onClick={() => {
+                    router.push(`${basePath}/${menu.entityKind}/${menu.entityId}`);
+                    setMenu(null);
+                  }}
+                >
+                  <ExternalLink className="size-3.5" /> Open details
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  onClick={() => hideDevice(menu)}
+                >
+                  <EyeOff className="size-3.5" /> Hide from map
+                </button>
               </div>
             )}
           </>
@@ -385,8 +578,9 @@ export function CytoscapePhysicalMap({
 
       <p className="text-xs text-muted-foreground">
         {graph.nodes.length} nodes · {graph.edges.length} links · scroll to zoom, drag the canvas to pan,
-        drag a device to reposition it, click to open it.{canSave ? " Save layout to keep your arrangement." : ""} Leaf
-        devices attach to their access switch port via the bridge table; toggle grouping to expand them.
+        drag a device to reposition it, click to open it, right-click to hide it from the map.
+        {canSave ? " Save layout to keep your arrangement." : ""} Leaf devices attach to their access switch
+        port via the bridge table; toggle grouping to expand them.
       </p>
     </div>
   );

@@ -5,9 +5,10 @@
  * (not via a form) from the map's Save button with the current node layout.
  */
 import { revalidatePath } from "next/cache";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { topologyPositions } from "@/db/schema/entities";
+import { topologyPositions, entitiesSwitch, entitiesHost } from "@/db/schema/entities";
 import { auditLog } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
 
@@ -70,4 +71,58 @@ export async function saveMapPositions(
 
   if (basePath) revalidatePath(basePath);
   return { ok: true, saved: clean.length };
+}
+
+export interface MapHiddenResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Hide / unhide a device from the network map. A map-only toggle: unlike a purge
+ * (excludedAt) it keeps the device in the inventory and the SNMP poll set — it only
+ * removes it from the map graph and the AI map analysis. Any signed-in user may
+ * toggle it (shared state across everyone viewing the school).
+ */
+export async function setDeviceMapHidden(
+  schoolId: number,
+  entityKind: "switch" | "host",
+  entityId: number,
+  hidden: boolean,
+  basePath: string,
+): Promise<MapHiddenResult> {
+  const user = await getSessionUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+  if (entityKind !== "switch" && entityKind !== "host") return { ok: false, error: "Bad device kind." };
+  if (!Number.isInteger(entityId) || entityId <= 0) return { ok: false, error: "Bad device id." };
+
+  const set = {
+    mapHiddenAt: hidden ? new Date() : null,
+    mapHiddenBy: hidden ? user.id : null,
+  };
+  if (entityKind === "switch") {
+    await db
+      .update(entitiesSwitch)
+      .set(set)
+      .where(and(eq(entitiesSwitch.id, entityId), eq(entitiesSwitch.schoolId, schoolId)));
+  } else {
+    await db
+      .update(entitiesHost)
+      .set(set)
+      .where(and(eq(entitiesHost.id, entityId), eq(entitiesHost.schoolId, schoolId)));
+  }
+
+  try {
+    await db.insert(auditLog).values({
+      actorType: "user",
+      actor: user.email,
+      action: hidden ? "map_device_hidden" : "map_device_unhidden",
+      detail: { schoolId, entityKind, entityId },
+    });
+  } catch {
+    // best-effort
+  }
+
+  if (basePath) revalidatePath(basePath);
+  return { ok: true };
 }

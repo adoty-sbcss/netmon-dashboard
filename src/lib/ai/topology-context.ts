@@ -4,7 +4,7 @@
  * switch, inventory mix, and SNMP coverage gaps (the blind spots that bound how
  * much of the map can be trusted). Intentionally summarized — no raw host dumps.
  */
-import { getSchoolMap } from "@/db/queries";
+import { getSchoolMap, getMapHiddenKeys } from "@/db/queries";
 import { getInventoryForSchool } from "@/lib/inventory/queries";
 
 const INFRA = new Set(["switch", "router", "gateway", "ap", "firewall", "scanner"]);
@@ -13,10 +13,28 @@ export async function buildTopologyContext(
   schoolId: number,
   label: string,
 ): Promise<string> {
-  const [map, inv] = await Promise.all([
+  const [map, invAll, hidden] = await Promise.all([
     getSchoolMap(schoolId),
     getInventoryForSchool(schoolId),
+    getMapHiddenKeys(schoolId),
   ]);
+  // Map-hidden devices are excluded from the map graph by getSchoolMap; drop them
+  // from EVERYTHING the AI sees — the per-type counts, the SNMP-gap list, AND the
+  // top-line inventory summary — by recomputing the summary off the filtered rows.
+  const rows = invAll.rows.filter(
+    (r) =>
+      !(r.switchId != null && hidden.switchIds.has(r.switchId)) &&
+      !(r.hostId != null && hidden.hostIds.has(r.hostId)),
+  );
+  const inv = {
+    rows,
+    total: rows.length,
+    online: rows.filter((r) => r.online).length,
+    discovered: rows.filter((r) => r.source !== "manual").length,
+    manual: rows.filter((r) => r.source === "manual").length,
+    snmpResponding: rows.filter((r) => r.snmp === "responding").length,
+    snmpGaps: rows.filter((r) => r.snmp === "gap").length,
+  };
   const g = map.physical;
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]));
 

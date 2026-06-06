@@ -50,6 +50,13 @@ export const entitiesSwitch = pgTable(
     excludedBy: integer("excluded_by").references(() => users.id, {
       onDelete: "set null",
     }),
+    // Map-only hide: reversible, removes the device from the network map AND the
+    // AI map analysis, but (unlike excludedAt) keeps it in the inventory and the
+    // SNMP poll set. Preserved across re-ingestion (ingest sets explicit cols only).
+    mapHiddenAt: timestamp("map_hidden_at", { withTimezone: true }),
+    mapHiddenBy: integer("map_hidden_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [
     uniqueIndex("uq_switch_district_chassis").on(t.districtId, t.chassisId),
@@ -100,6 +107,12 @@ export const entitiesHost = pgTable(
     // re-ingestion.
     excludedAt: timestamp("excluded_at", { withTimezone: true }),
     excludedBy: integer("excluded_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Map-only hide — see entitiesSwitch.mapHiddenAt. Removes from map + AI map
+    // analysis but keeps the device in inventory + SNMP polling. Reversible.
+    mapHiddenAt: timestamp("map_hidden_at", { withTimezone: true }),
+    mapHiddenBy: integer("map_hidden_by").references(() => users.id, {
       onDelete: "set null",
     }),
   },
