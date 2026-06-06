@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DatabaseZap, DownloadCloud, Palette, Radio, School, Sparkles, Users } from "lucide-react";
+import { Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, Sparkles, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -233,6 +233,24 @@ export function AppSidebar({
             </SidebarMenu>
           </SidebarGroup>
         )}
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Help</SidebarGroupLabel>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                tooltip="Help center"
+                isActive={pathname === "/help" || pathname.startsWith("/help/")}
+              >
+                <Link href="/help">
+                  <LifeBuoy />
+                  <span>Help center</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
