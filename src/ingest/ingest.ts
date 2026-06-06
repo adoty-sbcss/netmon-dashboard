@@ -478,6 +478,14 @@ export async function ingestBundle(
       string,
       { hostname?: string | null; vendorClass?: string | null; paramList?: string | null }
     >();
+    // IP → mDNS/SSDP service discovery (device hint + advertised service types),
+    // accumulated across the bundle's scans. Responders are IP-keyed (no MAC); we
+    // match them to a host entity by IP at upsert. Strong signal for the chatty
+    // endpoints (AirPrint, Chromecast, cameras) that never speak SNMP.
+    const serviceByIp = new Map<
+      string,
+      { hint: string | null; services: string[] | null; source: string | null }
+    >();
     let day: string | null = null;
 
     for (const scan of bundle.scans) {
@@ -582,6 +590,20 @@ export async function ingestBundle(
         if (!fp.vendorClass && d.vendor_class_id) fp.vendorClass = str(d.vendor_class_id);
         if (!fp.paramList && d.param_req_list) fp.paramList = str(d.param_req_list);
         dhcpFp.set(mac, fp);
+      }
+
+      // Accumulate mDNS/SSDP responders for this scan, keyed by IP. Union the
+      // service types and keep the first non-null hint/source seen for an IP.
+      for (const sd of scan.serviceDiscovery) {
+        const ip = str(sd.ip);
+        if (!ip) continue;
+        const prev = serviceByIp.get(ip);
+        const merged = new Set([...(prev?.services ?? []), ...(sd.service_types ?? []).map(String)]);
+        serviceByIp.set(ip, {
+          hint: prev?.hint ?? str(sd.device_hint),
+          services: merged.size ? [...merged] : null,
+          source: prev?.source ?? str(sd.source),
+        });
       }
 
       // dns health (per-resolver aggregate + per-probe detail)
@@ -790,11 +812,14 @@ export async function ingestBundle(
         // Prefer the discovered hostname; fall back to the name the client
         // advertised over DHCP (option 12) when PTR/nmap gave us nothing.
         const hostname = str(d.hostname) ?? fp?.hostname ?? null;
-        // mDNS/SSDP service hint + raw service types (collector attaches these
-        // inline on the device — the strongest signal for chatty endpoints).
+        // mDNS/SSDP service hint + raw service types — the strongest signal for
+        // chatty endpoints. Prefer the dedicated service_discovery.json (matched
+        // by IP) and fall back to any inline 'extra' the collector attached.
         const extra = ((d.extra ?? {}) as unknown) as Record<string, unknown>;
-        const serviceHint = str(extra.service_hint);
-        const services = Array.isArray(extra.services) ? extra.services.map(String) : null;
+        const svc = ip ? serviceByIp.get(ip) : undefined;
+        const serviceHint = svc?.hint ?? str(extra.service_hint);
+        const services =
+          svc?.services ?? (Array.isArray(extra.services) ? extra.services.map(String) : null);
         const isGateway = (!!gwMac && mac.toLowerCase() === gwMac) || (!!gwIp && ip === gwIp);
         // Enrich: fill manufacturer from the OUI registry when the bundle says
         // "unknown"/blank, and classify device type from mDNS + SNMP + DHCP

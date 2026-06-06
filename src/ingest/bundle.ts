@@ -220,6 +220,17 @@ export interface RawSnmpTopology {
   edges?: RawSnmpTopoEdge[];
 }
 
+/** One mDNS/SSDP responder from the collector's service_discovery.json. IP-keyed
+ *  (no MAC); matched to a host entity by IP at ingest. */
+export interface RawServiceDiscovery {
+  ip?: string | null;
+  source?: string | null; // "mdns" | "ssdp"
+  hostname?: string | null;
+  service_types?: string[] | null;
+  device_hint?: string | null; // printer | chromecast | apple-av | camera | ...
+  details?: unknown;
+}
+
 export interface ScanData {
   meta: RawScanMeta;
   devices: DeviceRow[];
@@ -233,6 +244,7 @@ export interface ScanData {
   topology: RawTopology | null;
   snmpTopology: RawSnmpTopology | null;
   reachability: RawReachability[];
+  serviceDiscovery: RawServiceDiscovery[];
   scanDirName: string;
 }
 
@@ -396,6 +408,14 @@ export function readBundleDir(dir: string): Bundle {
           },
         reachability: asList<RawReachability>(
           readJson(join(raw, "net-reachability.json"), []),
+        ),
+        // mDNS/SSDP service responders (AirPrint, Chromecast, cameras, …). Ships
+        // as {devices:[...]}; absent on bundles from pre-mDNS collectors.
+        serviceDiscovery: asList<RawServiceDiscovery>(
+          readJson<{ devices?: RawServiceDiscovery[] }>(
+            join(scanDir, "service_discovery.json"),
+            {},
+          ).devices,
         ),
         scanDirName: entry,
       });

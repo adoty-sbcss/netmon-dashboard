@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Cpu,
   Network,
+  Radio,
   Tag,
 } from "lucide-react";
 
@@ -45,7 +46,14 @@ export default async function HostDetailPage({
   if (!host) notFound();
 
   const basePath = `/${district.slug}/${school.slug}`;
-  const attrEntries = Object.entries(host.attributes ?? {});
+  const attrs = (host.attributes ?? {}) as Record<string, unknown>;
+  // mDNS/SSDP service discovery — surfaced in its own block below, so keep it out
+  // of the generic attribute badges to avoid double-rendering.
+  const serviceHint = typeof attrs.service_hint === "string" ? attrs.service_hint : null;
+  const services = Array.isArray(attrs.services) ? attrs.services.map(String) : [];
+  const attrEntries = Object.entries(attrs).filter(
+    ([k]) => k !== "service_hint" && k !== "services",
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,6 +103,29 @@ export default async function HostDetailPage({
               value={host.lastSeenAt ? `${dateTime(host.lastSeenAt)} (${relativeTime(host.lastSeenAt)})` : null}
             />
           </dl>
+          {(serviceHint || services.length > 0) && (
+            <div className="mt-4 border-t pt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Radio className="size-4 text-primary" />
+                <span className="text-sm font-medium">Service discovery (mDNS / SSDP)</span>
+                {serviceHint && (
+                  <Badge variant="secondary" className="capitalize">{serviceHint}</Badge>
+                )}
+              </div>
+              {services.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {services.map((s) => (
+                    <Badge key={s} variant="outline" className="font-mono text-[11px]">
+                      {s}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Advertised over Bonjour/UPnP — how this device was identified without SNMP.
+              </p>
+            </div>
+          )}
           {attrEntries.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
               {attrEntries.map(([k, v]) => (
