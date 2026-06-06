@@ -292,3 +292,68 @@ export async function bulkSetSftpAction(
     message: `Pushed SFTP creds to ${rows.length} sensor(s) — watch the rollout below as each box reports the new user, then retire the old SFTP account.`,
   };
 }
+
+/**
+ * Fleet-wide topology-crawl scope/tuning push: merge the same crawl config (scope
+ * full|spine + optional enable/interval/budgets) into EVERY sensor's desired
+ * config and bump each version, so flipping the whole fleet to 'spine' is one
+ * action. Merges (SNMP/SFTP preserved); each box applies on its next check-in.
+ */
+export async function bulkSetCrawlScopeAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const scopeRaw = String(formData.get("topoScope") ?? "full").trim().toLowerCase();
+  const scope = scopeRaw === "spine" ? "spine" : "full";
+  const crawl: Record<string, unknown> = {
+    snmp_topology_scope: scope,
+    snmp_topology_enabled: formData.get("topoEnabled") === "on",
+  };
+  const intHours = String(formData.get("topoIntervalHours") ?? "").trim();
+  if (intHours) {
+    const h = Number(intHours);
+    if (Number.isFinite(h) && h >= 0) crawl.snmp_topology_interval = Math.floor(h * 3600);
+  }
+  const posInt = (name: string, key: string) => {
+    const raw = String(formData.get(name) ?? "").trim();
+    if (!raw) return;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 1) crawl[key] = Math.floor(n);
+  };
+  posInt("topoMaxNodes", "snmp_topology_max_nodes");
+  posInt("topoFanoutCap", "snmp_topology_fanout_cap");
+
+  const rows = await db
+    .select({
+      sensorId: sensors.id,
+      v: desiredConfig.configVersion,
+      config: desiredConfig.config,
+    })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id));
+  if (rows.length === 0) return { error: "No sensors to push to." };
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const merged = { ...((row.config as Record<string, unknown>) ?? {}), ...crawl };
+      const nextV = (row.v ?? 0) + 1;
+      await tx
+        .insert(desiredConfig)
+        .values({ sensorId: row.sensorId, configVersion: nextV, config: merged, updatedBy: admin.id })
+        .onConflictDoUpdate({
+          target: desiredConfig.sensorId,
+          set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+        });
+    }
+  });
+
+  await audit(admin.email, "sensor_bulk_crawl_scope_set", { count: rows.length, scope });
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Pushed crawl scope "${scope}" to ${rows.length} sensor(s) — each applies on its next check-in (watch the rollout below).`,
+  };
+}

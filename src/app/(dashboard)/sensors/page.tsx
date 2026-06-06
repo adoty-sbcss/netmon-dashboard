@@ -5,9 +5,12 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope } from "@/lib/auth/scope";
 import { listFleetSensors } from "@/db/fleet-queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
+import { Radar } from "lucide-react";
+
 import { FleetUpdateAll } from "./fleet-update-all";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -46,7 +49,16 @@ export default async function FleetSensorsPage() {
         description={`${num(sensors.length)} sensor${sensors.length === 1 ? "" : "s"} across every district you oversee${
           staleCount > 0 ? ` · ${num(staleCount)} need attention` : ""
         }`}
-        actions={user.role === "superadmin" ? <FleetUpdateAll /> : undefined}
+        actions={
+          user.role === "superadmin" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link href="/sensors/crawl"><Radar className="size-4" /> Crawl scope</Link>
+              </Button>
+              <FleetUpdateAll />
+            </div>
+          ) : undefined
+        }
       />
       <Card>
         <CardContent className="px-0 sm:px-6">
