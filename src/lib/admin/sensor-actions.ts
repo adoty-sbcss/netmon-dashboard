@@ -11,7 +11,7 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { sensors, auditLog } from "@/db/schema/app";
+import { sensors, auditLog, releaseSettings } from "@/db/schema/app";
 import {
   desiredConfig,
   commandQueue,
@@ -387,9 +387,96 @@ export async function bulkSetCrawlScopeAction(
 
   await audit(admin.email, "sensor_bulk_crawl_scope_set", { count: rows.length, scope });
   await adminEvent(admin.email, "fleet_crawl_scope_pushed", { count: rows.length, scope }, "medium");
+
   revalidatePath(basePathFor(formData));
   return {
     ok: true,
     message: `Pushed crawl scope "${scope}" to ${rows.length} sensor(s) — each applies on its next check-in (watch the rollout below).`,
+  };
+}
+
+// --- release channels / canary (#4) ----------------------------------------
+
+/** Merge an update-channel patch into the given sensors' desired config + bump
+ *  each version. Shared by the per-sensor + fleet release actions. */
+async function pushChannel(
+  patch: Record<string, unknown>,
+  adminId: number,
+  onlySensorId?: number,
+): Promise<number> {
+  const rows = await db
+    .select({ sensorId: sensors.id, v: desiredConfig.configVersion, config: desiredConfig.config })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(onlySensorId != null ? eq(sensors.id, onlySensorId) : undefined);
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const merged = { ...((row.config as Record<string, unknown>) ?? {}), ...patch };
+      const nextV = (row.v ?? 0) + 1;
+      await tx
+        .insert(desiredConfig)
+        .values({ sensorId: row.sensorId, configVersion: nextV, config: merged, updatedBy: adminId })
+        .onConflictDoUpdate({
+          target: desiredConfig.sensorId,
+          set: { configVersion: nextV, config: merged, updatedBy: adminId, updatedAt: new Date() },
+        });
+    }
+  });
+  return rows.length;
+}
+
+/** Set ONE sensor's update channel (the canary-cohort knob). For 'stable' the
+ *  box pins to the current stableSha; 'canary' tracks main; 'hold' pauses. */
+export async function setSensorChannelAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sensorId = Number(formData.get("sensorId"));
+  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+  const channel = String(formData.get("channel") ?? "stable").toLowerCase();
+  if (!["stable", "canary", "hold"].includes(channel)) return { error: "Bad channel." };
+
+  const [rel] = await db.select({ sha: releaseSettings.stableSha }).from(releaseSettings).limit(1);
+  const patch: Record<string, unknown> = { update_channel: channel };
+  if (channel === "stable") patch.update_ref = rel?.sha ?? "";
+  else if (channel === "canary") patch.update_ref = "";
+
+  await pushChannel(patch, admin.id, sensorId);
+  await audit(admin.email, "sensor_channel_set", { sensorId, channel });
+  await adminEvent(admin.email, "sensor_channel_set", { sensorId, channel }, "medium", `sensor:${sensorId}`);
+  revalidatePath(basePathFor(formData));
+  return { ok: true, message: `Sensor set to '${channel}' — applies on its next check-in.` };
+}
+
+/** Promote/pin: set the global stable SHA and push it to EVERY sensor on the
+ *  stable channel (update_channel=stable + update_ref=sha). The fleet converges
+ *  to this validated release on each box's next check-in + nightly update. */
+export async function pinStableReleaseAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sha = String(formData.get("stableSha") ?? "").trim();
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) return { error: "Enter a valid git commit SHA (7–40 hex chars)." };
+  const notes = String(formData.get("notes") ?? "").trim() || null;
+
+  await db
+    .insert(releaseSettings)
+    .values({ id: 1, stableSha: sha, notes, updatedBy: admin.id })
+    .onConflictDoUpdate({
+      target: releaseSettings.id,
+      set: { stableSha: sha, notes, updatedBy: admin.id, updatedAt: new Date() },
+    });
+
+  const count = await pushChannel({ update_channel: "stable", update_ref: sha }, admin.id);
+  await audit(admin.email, "release_stable_pinned", { sha, count });
+  await adminEvent(admin.email, "release_stable_pinned", { sha, count }, "medium");
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Pinned stable to ${sha.slice(0, 8)} and pushed to ${count} sensor(s) — each converges on its next update.`,
   };
 }

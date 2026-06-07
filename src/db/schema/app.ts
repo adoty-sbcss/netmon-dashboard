@@ -104,6 +104,10 @@ export const sensors = pgTable(
     reportedSftpPort: integer("reported_sftp_port"),
     reportedSftpUser: text("reported_sftp_user"),
     reportedConfigAt: timestamp("reported_config_at", { withTimezone: true }),
+    // --- release-channel rollout state (canary): the channel + exact commit the
+    //     box reports it's running, so the dashboard can watch a release promote.
+    reportedChannel: text("reported_channel"),
+    reportedSha: text("reported_sha"),
     // --- sensor self-health reported at check-in (the box's OWN vitals, not the
     //     network it watches). Full snapshot kept as JSONB — { cpu, mem, disk,
     //     os, uptimeSec, tempC } — rendered + thresholded on the sensor page.
@@ -116,6 +120,24 @@ export const sensors = pgTable(
   },
   (t) => [uniqueIndex("uq_sensors_school_slug").on(t.schoolId, t.slug)],
 );
+
+/**
+ * GLOBAL release settings — SINGLETON (id = 1). The promoted "stable" commit that
+ * stable-channel sensors converge to (pushed to them as update_ref). Canary
+ * sensors track origin/main; promote = set stableSha to the validated commit.
+ */
+export const releaseSettings = pgTable("release_settings", {
+  id: integer("id").primaryKey().default(1),
+  /** The promoted-good commit SHA the fleet's stable channel should run. */
+  stableSha: text("stable_sha"),
+  notes: text("notes"),
+  updatedBy: integer("updated_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
 
 // --- authn / authz ---------------------------------------------------------
 

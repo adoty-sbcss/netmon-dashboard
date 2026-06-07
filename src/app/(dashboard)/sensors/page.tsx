@@ -5,7 +5,7 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope } from "@/lib/auth/scope";
 import { listFleetSensors } from "@/db/fleet-queries";
 import { num, relativeTime, titleizeSlug } from "@/lib/format";
-import { Radar } from "lucide-react";
+import { Radar, Rocket } from "lucide-react";
 
 import { FleetUpdateAll } from "./fleet-update-all";
 import { PageHeader } from "@/components/page-header";
@@ -54,6 +54,9 @@ export default async function FleetSensorsPage() {
             <div className="flex flex-wrap items-center gap-2">
               <Button asChild variant="outline" size="sm">
                 <Link href="/sensors/crawl"><Radar className="size-4" /> Crawl scope</Link>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <Link href="/sensors/releases"><Rocket className="size-4" /> Releases</Link>
               </Button>
               <FleetUpdateAll />
             </div>

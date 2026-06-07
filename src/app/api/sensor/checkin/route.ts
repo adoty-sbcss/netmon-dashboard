@@ -38,6 +38,9 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     agentVersion?: string;
     configVersion?: number;
+    /** Release-channel rollout telemetry. */
+    commitSha?: string;
+    updateChannel?: string;
     localIp?: string;
     interface?: string;
     interfaceCidr?: string;
@@ -66,6 +69,8 @@ export async function POST(req: NextRequest) {
       ...(typeof body.localIp === "string" ? { localIp: body.localIp } : {}),
       ...(typeof body.interface === "string" ? { iface: body.interface } : {}),
       ...(typeof body.interfaceCidr === "string" ? { ifaceCidr: body.interfaceCidr } : {}),
+      ...(typeof body.commitSha === "string" ? { reportedSha: body.commitSha } : {}),
+      ...(typeof body.updateChannel === "string" ? { reportedChannel: body.updateChannel } : {}),
       ...(body.hostMetrics && typeof body.hostMetrics === "object"
         ? { reportedHostMetrics: body.hostMetrics, reportedMetricsAt: sql`now()` }
         : {}),
