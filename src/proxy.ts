@@ -35,6 +35,15 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Tunnel-broker callbacks (validate / alive / transcript) are called by the
+  // zero-secret broker server-to-server, NOT by a browser session. They
+  // authenticate themselves with the high-entropy per-session token / recordKey.
+  // Without this exemption the broker's POSTs get 307'd to /login and no console
+  // session can ever validate.
+  if (pathname.startsWith("/api/broker/")) {
+    return NextResponse.next();
+  }
+
   const claims = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
 
   const isLogin = pathname === LOGIN_PATH;
