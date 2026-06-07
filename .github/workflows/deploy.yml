@@ -75,6 +75,19 @@ jobs:
             --target migrator \
             .
 
+      # The tunnel-broker is a SEPARATE tiny Node service (broker/) with its own
+      # Dockerfile + context — not part of the Next build. Build it here so its
+      # image stays in lockstep with main; the broker Container App is rolled at
+      # the end (guarded until infra/broker.bicep has provisioned it).
+      - name: Build broker image in ACR
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "netmon-broker:${{ github.sha }}" \
+            --image "netmon-broker:latest" \
+            --file broker/Dockerfile \
+            broker
+
       - name: Point ingest Job at the new image
         # Jobs don't have revisions; update the template so the next scheduled
         # (or manual) execution pulls the freshly built ingest image.
@@ -146,3 +159,14 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --image "$ACR_NAME.azurecr.io/$IMAGE:${{ github.sha }}" \
             --revision-suffix "r${{ github.run_number }}"
+
+      - name: Roll broker to the new image
+        # Independent revision lifecycle from the web app. Guarded so a deploy
+        # still succeeds before infra/broker.bicep has created the broker app.
+        run: |
+          az containerapp update \
+            --name w2-sbcss-netmon-broker \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/netmon-broker:${{ github.sha }}" \
+            --revision-suffix "r${{ github.run_number }}" \
+            || echo "broker not provisioned yet — apply infra/broker.bicep to create it"

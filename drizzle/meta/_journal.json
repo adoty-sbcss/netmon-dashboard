@@ -246,6 +246,13 @@
       "when": 1780849514253,
       "tag": "0034_smiling_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1780865231550,
+      "tag": "0035_shell_sessions",
+      "breakpoints": true
     }
   ]
 }

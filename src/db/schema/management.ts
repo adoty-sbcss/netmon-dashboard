@@ -132,6 +132,56 @@ export const configBackups = pgTable(
   (t) => [uniqueIndex("uq_config_backup_sensor_file").on(t.sensorId, t.filename)],
 );
 
+export const shellSessionStatus = pgEnum("shell_session_status", [
+  "pending", // session row created + open-console command queued; waiting for sensor to dial the broker
+  "active", // both ends connected through the broker
+  "closed", // ended normally (either side disconnected, or operator closed)
+  "killed", // operator/admin pulled the kill-switch
+  "expired", // hard time-box reached
+]);
+
+/**
+ * Remote-console (browser SSH-like) session. The dashboard mints two opaque
+ * one-time tokens (operator + sensor, stored ONLY as sha256 hashes) plus a
+ * per-session recordKey the zero-secret broker uses to authenticate its
+ * /api/broker/alive + /transcript callbacks. The full transcript is recorded
+ * server-side here so the audit trail can't be tampered with from the browser.
+ *
+ * SECURITY: superadmin-only to open; restricted-command posture (only allow-
+ * listed diag-* commands flow); hard time-boxed via expiresAt; kill-switch via
+ * status='killed' (the broker polls /alive). Every open/kill emits a
+ * recordSecurityEvent (category 'admin').
+ */
+export const shellSessions = pgTable(
+  "shell_sessions",
+  {
+    /** sid — random hex, also the broker pairing key. */
+    id: text("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    status: shellSessionStatus("status").notNull().default("pending"),
+    /** sha256(plaintext); plaintext lives only in the browser / the sensor command args. */
+    operatorTokenHash: text("operator_token_hash").notNull(),
+    sensorTokenHash: text("sensor_token_hash").notNull(),
+    /** Capability the broker presents on /alive + /transcript (session-scoped). */
+    recordKey: text("record_key").notNull(),
+    /** The open-console command queued for the sensor. */
+    commandId: integer("command_id").references(() => commandQueue.id, {
+      onDelete: "set null",
+    }),
+    openedBy: integer("opened_by").references(() => users.id, { onDelete: "set null" }),
+    openedByEmail: text("opened_by_email"),
+    /** Append-only recorded frames: [{t, dir, frame}]. */
+    transcript: jsonb("transcript").notNull().default([]),
+    eventCount: integer("event_count").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [index("idx_shell_sessions_sensor").on(t.sensorId, t.createdAt)],
+);
+
 /**
  * Per-sensor enrollment secret for authenticating outbound check-ins. Store a
  * HASH of the token, never the token itself (issued once at enrollment).

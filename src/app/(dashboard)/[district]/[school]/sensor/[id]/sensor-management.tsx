@@ -20,6 +20,7 @@ import {
   type SensorActionState,
 } from "@/lib/admin/sensor-actions";
 import type { SensorManagement } from "@/db/queries";
+import { RemoteConsoleLive } from "./console-live";
 import { dateTime, relativeTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -319,33 +320,48 @@ export function SensorManagementPanel({
           <CardTitle className="flex items-center gap-2 text-base">
             <Terminal className="size-4 text-primary" />
             Remote console
-            <span className="text-xs font-normal text-muted-foreground">read-only diagnostics</span>
+            <span className="text-xs font-normal text-muted-foreground">restricted diagnostics</span>
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          <div className="flex flex-wrap gap-2">
-            {[
-              { cmd: "diag-interfaces", label: "Interfaces" },
-              { cmd: "diag-routes", label: "Routes" },
-              { cmd: "diag-arp", label: "ARP table" },
-              { cmd: "diag-dns", label: "DNS check" },
-              { cmd: "diag-disk", label: "Disk" },
-              { cmd: "diag-uptime", label: "Uptime" },
-              { cmd: "diag-selftest", label: "Selftest" },
-            ].map(({ cmd, label }) => (
-              <form action={cmdAction} key={cmd}>
-                <input type="hidden" name="sensorId" value={sensorId} />
-                <input type="hidden" name="basePath" value={basePath} />
-                <input type="hidden" name="command" value={cmd} />
-                <Button type="submit" variant="outline" size="sm" disabled={queuing}>{label}</Button>
-              </form>
-            ))}
+        <CardContent className="flex flex-col gap-4">
+          {/* Live session over the zero-secret tunnel broker (superadmin, time-boxed,
+              recorded, kill-switch). Restricted-command posture: allow-listed diag-* only. */}
+          <div className="flex flex-col gap-2">
+            <p className="text-xs font-medium text-muted-foreground">Live session</p>
+            <RemoteConsoleLive sensorId={sensorId} basePath={basePath} />
           </div>
-          <p className="text-xs text-muted-foreground">
-            Runs on the box at its next check-in; the captured output shows in the command
-            history below (click the row to expand). Real-time streaming via the tunnel
-            broker is coming next.
-          </p>
+
+          <div className="border-t" />
+
+          {/* Fallback: fire-and-forget diagnostics over the command queue — no live
+              connection needed; output lands in the command history below. */}
+          <div className="flex flex-col gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Queued diagnostics <span className="font-normal">(run at next check-in)</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { cmd: "diag-interfaces", label: "Interfaces" },
+                { cmd: "diag-routes", label: "Routes" },
+                { cmd: "diag-arp", label: "ARP table" },
+                { cmd: "diag-dns", label: "DNS check" },
+                { cmd: "diag-disk", label: "Disk" },
+                { cmd: "diag-uptime", label: "Uptime" },
+                { cmd: "diag-selftest", label: "Selftest" },
+              ].map(({ cmd, label }) => (
+                <form action={cmdAction} key={cmd}>
+                  <input type="hidden" name="sensorId" value={sensorId} />
+                  <input type="hidden" name="basePath" value={basePath} />
+                  <input type="hidden" name="command" value={cmd} />
+                  <Button type="submit" variant="outline" size="sm" disabled={queuing}>{label}</Button>
+                </form>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Runs on the box at its next check-in; the captured output shows in the command
+              history below (click the row to expand).
+            </p>
+          </div>
         </CardContent>
       </Card>
 

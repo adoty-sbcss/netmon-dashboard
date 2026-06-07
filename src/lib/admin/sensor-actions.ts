@@ -16,11 +16,13 @@ import {
   desiredConfig,
   commandQueue,
   sensorEnrollments,
+  shellSessions,
 } from "@/db/schema/management";
 import { headers } from "next/headers";
 
 import { getSessionUser } from "@/lib/auth/current-user";
 import { hashToken } from "@/lib/sensor/auth";
+import { BROKER_WSS_URL, CONSOLE_TTL_MS } from "@/lib/admin/console-config";
 import { clientIp } from "@/lib/security/rate-limit";
 import { recordSecurityEvent } from "@/lib/security/events";
 
@@ -30,6 +32,13 @@ export interface SensorActionState {
   message?: string;
   /** Set once, immediately after enrollment — the plaintext token to copy. */
   token?: string;
+  /** Set by openConsoleSessionAction — the operator's one-time WS credentials. */
+  session?: {
+    sid: string;
+    operatorToken: string;
+    broker: string;
+    expiresAt: number;
+  };
 }
 
 const SAFE_COMMANDS = new Set([
@@ -488,4 +497,107 @@ export async function pinStableReleaseAction(
     ok: true,
     message: `Pinned stable to ${sha.slice(0, 8)} and pushed to ${count} sensor(s) — each converges on its next update.`,
   };
+}
+
+/**
+ * Open a live remote-console session (browser SSH-like) to a sensor. Mints two
+ * opaque one-time tokens (operator + sensor; stored only as hashes) and a
+ * recordKey for the zero-secret broker, queues an `open-console` command the
+ * sensor picks up on its next check-in (and dials the broker), and returns the
+ * operator's credentials so the browser can connect. Superadmin-only,
+ * time-boxed (CONSOLE_TTL_MS), restricted-command, fully recorded.
+ */
+export async function openConsoleSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sensorId = Number(formData.get("sensorId"));
+  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+
+  const sid = randomBytes(16).toString("hex");
+  const operatorToken = randomBytes(32).toString("hex");
+  const sensorToken = randomBytes(32).toString("hex");
+  const recordKey = randomBytes(24).toString("hex");
+  const expiresAt = new Date(Date.now() + CONSOLE_TTL_MS);
+
+  // Queue the open-console command. 'approved' (not 'pending') because opening
+  // the session IS the superadmin's authorization — it dispatches at next check-in.
+  const [cmd] = await db
+    .insert(commandQueue)
+    .values({
+      sensorId,
+      command: "open-console",
+      args: { sid, broker: BROKER_WSS_URL, token: sensorToken, expiresAt: expiresAt.getTime() },
+      status: "approved",
+      requiresApproval: false,
+      approvedBy: admin.id,
+      approvedAt: new Date(),
+      createdBy: admin.id,
+    })
+    .returning({ id: commandQueue.id });
+
+  await db.insert(shellSessions).values({
+    id: sid,
+    sensorId,
+    status: "pending",
+    operatorTokenHash: hashToken(operatorToken),
+    sensorTokenHash: hashToken(sensorToken),
+    recordKey,
+    commandId: cmd?.id ?? null,
+    openedBy: admin.id,
+    openedByEmail: admin.email,
+    expiresAt,
+  });
+
+  await audit(admin.email, "console_session_opened", { sensorId, sid });
+  await adminEvent(
+    admin.email,
+    "console_session_opened",
+    { sensorId, sid },
+    "medium",
+    `sensor:${sensorId}`,
+  );
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: "Session opening — waiting for the sensor to connect on its next check-in.",
+    session: { sid, operatorToken, broker: BROKER_WSS_URL, expiresAt: expiresAt.getTime() },
+  };
+}
+
+/** Kill-switch: mark a console session killed. The broker's /alive poll drops the tunnel within ~10s. */
+export async function killConsoleSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sid = String(formData.get("sid") ?? "").trim();
+  if (!sid) return { error: "Invalid session." };
+
+  const [s] = await db
+    .select({ status: shellSessions.status, sensorId: shellSessions.sensorId })
+    .from(shellSessions)
+    .where(eq(shellSessions.id, sid))
+    .limit(1);
+  if (!s) return { error: "Session not found." };
+
+  if (s.status !== "closed" && s.status !== "expired" && s.status !== "killed") {
+    await db
+      .update(shellSessions)
+      .set({ status: "killed", closedAt: new Date() })
+      .where(eq(shellSessions.id, sid));
+  }
+  await audit(admin.email, "console_session_killed", { sid, sensorId: s.sensorId });
+  await adminEvent(
+    admin.email,
+    "console_session_killed",
+    { sid, sensorId: s.sensorId },
+    "medium",
+    `sensor:${s.sensorId}`,
+  );
+  revalidatePath(basePathFor(formData));
+  return { ok: true, message: "Session killed." };
 }
