@@ -9,10 +9,12 @@
  * generic (no "user exists" oracle).
  */
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { users, auditLog } from "@/db/schema/app";
+import { rateLimit, clientIp } from "@/lib/security/rate-limit";
 import { hashPassword, verifyPassword } from "./password";
 import {
   getSessionUser,
@@ -25,6 +27,12 @@ export interface ActionState {
 }
 
 const GENERIC_LOGIN_ERROR = "Invalid username or password.";
+
+// Per-IP login throttle. Generous for a human, punishing for a brute-forcer.
+// Keyed on IP only (not username) so an attacker can't lock a real user out by
+// spamming their email. Account-level MFA is the stronger, separate follow-up.
+const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_WINDOW_MS = 15 * 60_000;
 
 /** Normalize a typed login identifier (local username or email). */
 function normalizeIdentifier(raw: string): string {
@@ -52,6 +60,17 @@ export async function loginAction(
   const password = String(formData.get("password") ?? "");
   if (!identifier || !password) return { error: "Enter your username and password." };
 
+  const ip = clientIp(await headers());
+  const throttle = rateLimit(`login:ip:${ip}`, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS);
+  if (!throttle.ok) {
+    await audit("breakglass", identifier, "login_rate_limited", {
+      ip,
+      retryAfterSec: throttle.retryAfterSec,
+    });
+    const mins = Math.ceil(throttle.retryAfterSec / 60);
+    return { error: `Too many sign-in attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` };
+  }
+
   const [u] = await db
     .select()
     .from(users)
@@ -61,7 +80,7 @@ export async function loginAction(
   // Verify even when the user is missing/disabled to keep timing uniform-ish.
   const ok = await verifyPassword(password, u?.passwordHash);
   if (!u || u.disabled || !u.passwordHash || !ok) {
-    await audit("breakglass", identifier, "login_failed");
+    await audit("breakglass", identifier, "login_failed", { ip });
     return { error: GENERIC_LOGIN_ERROR };
   }
 
@@ -70,7 +89,7 @@ export async function loginAction(
     .set({ lastLoginAt: sql`now()` })
     .where(eq(users.id, u.id));
   await setSessionCookie(u.id, u.mustChangePassword);
-  await audit(u.isBreakGlass ? "breakglass" : "user", u.email, "login_ok");
+  await audit(u.isBreakGlass ? "breakglass" : "user", u.email, "login_ok", { ip });
 
   redirect(u.mustChangePassword ? "/account/change-password" : "/");
 }

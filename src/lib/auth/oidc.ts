@@ -12,8 +12,10 @@
  *   Microsoft: AUTH_MICROSOFT_ENTRA_ID_ID, AUTH_MICROSOFT_ENTRA_ID_SECRET,
  *              AUTH_MICROSOFT_ENTRA_ID_TENANT (optional, default "common")
  *
- * Redirect URI base: APP_ORIGIN if set, else derived from the request's
- * x-forwarded-* headers. It MUST match the URI registered with the provider.
+ * Redirect URI base: APP_ORIGIN (always set in production). We deliberately do
+ * NOT trust the attacker-controllable x-forwarded-host header in production —
+ * that would let a forged Host steer the OAuth redirect_uri. The header fallback
+ * is dev-only convenience.
  */
 import "server-only";
 
@@ -80,6 +82,13 @@ export function providerLabel(p: Provider): string {
 /** Public origin for building the redirect URI. */
 export function appOrigin(req: Request): string {
   if (process.env.APP_ORIGIN) return process.env.APP_ORIGIN.replace(/\/$/, "");
+  // No APP_ORIGIN configured. In production, refuse to trust forwarded Host
+  // headers (an attacker could forge them to hijack the OAuth redirect_uri);
+  // fail closed to the request's own origin instead. The header-derived origin
+  // is dev-only convenience.
+  if (process.env.NODE_ENV === "production") {
+    return new URL(req.url).origin;
+  }
   const h = req.headers;
   const proto = h.get("x-forwarded-proto") || "https";
   const host = h.get("x-forwarded-host") || h.get("host");
