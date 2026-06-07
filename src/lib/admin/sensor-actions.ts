@@ -17,8 +17,12 @@ import {
   commandQueue,
   sensorEnrollments,
 } from "@/db/schema/management";
+import { headers } from "next/headers";
+
 import { getSessionUser } from "@/lib/auth/current-user";
 import { hashToken } from "@/lib/sensor/auth";
+import { clientIp } from "@/lib/security/rate-limit";
+import { recordSecurityEvent } from "@/lib/security/events";
 
 export interface SensorActionState {
   error?: string;
@@ -52,6 +56,32 @@ async function audit(actor: string, action: string, detail: Record<string, unkno
   }
 }
 
+/**
+ * Mirror a privileged control-plane change into the consolidated security feed
+ * (category 'admin') so it surfaces on /security + the security AI, not just the
+ * audit log. Best-effort (recordSecurityEvent never throws).
+ */
+async function adminEvent(
+  actor: string,
+  action: string,
+  detail: Record<string, unknown> = {},
+  severity: "info" | "low" | "medium" = "info",
+  target: string | null = null,
+) {
+  const hdrs = await headers();
+  await recordSecurityEvent({
+    category: "admin",
+    action,
+    severity,
+    actorType: "user",
+    actor,
+    sourceIp: clientIp(hdrs),
+    userAgent: hdrs.get("user-agent"),
+    target,
+    detail,
+  });
+}
+
 function basePathFor(formData: FormData): string {
   return String(formData.get("basePath") ?? "");
 }
@@ -80,6 +110,7 @@ export async function enrollSensorAction(
   });
 
   await audit(admin.email, "sensor_enrolled", { sensorId, slug: sensor.slug });
+  await adminEvent(admin.email, "sensor_token_rotated", { sensorId, slug: sensor.slug }, "medium", `sensor:${sensorId}`);
   revalidatePath(basePathFor(formData));
   return {
     ok: true,
@@ -169,6 +200,7 @@ export async function saveSensorConfigAction(
     });
 
   await audit(admin.email, "sensor_config_saved", { sensorId, version: nextVersion, config });
+  await adminEvent(admin.email, "sensor_config_pushed", { sensorId, version: nextVersion, keys: Object.keys(config) }, "info", `sensor:${sensorId}`);
   revalidatePath(basePathFor(formData));
   return { ok: true, message: `Config v${nextVersion} saved — applies on the sensor's next check-in.` };
 }
@@ -194,6 +226,7 @@ export async function queueCommandAction(
   });
 
   await audit(admin.email, "sensor_command_queued", { sensorId, command });
+  await adminEvent(admin.email, "sensor_command_queued", { sensorId, command }, command === "update" ? "medium" : "info", `sensor:${sensorId}`);
   revalidatePath(basePathFor(formData));
   return { ok: true, message: `Queued “${command}” — runs on the next check-in.` };
 }
@@ -220,6 +253,7 @@ export async function bulkQueueUpdateAction(
     .values(all.map((s) => ({ sensorId: s.id, command: "update", createdBy: admin.id })));
 
   await audit(admin.email, "sensor_bulk_update_queued", { count: all.length });
+  await adminEvent(admin.email, "fleet_update_queued", { count: all.length }, "medium");
   revalidatePath(basePathFor(formData));
   return {
     ok: true,
@@ -286,6 +320,7 @@ export async function bulkSetSftpAction(
     user: sftpUser,
     passwordChanged: Boolean(pw),
   });
+  await adminEvent(admin.email, "fleet_sftp_pushed", { count: rows.length, host: sftpHost, user: sftpUser, passwordChanged: Boolean(pw) }, "medium");
   revalidatePath(basePathFor(formData));
   return {
     ok: true,
@@ -351,6 +386,7 @@ export async function bulkSetCrawlScopeAction(
   });
 
   await audit(admin.email, "sensor_bulk_crawl_scope_set", { count: rows.length, scope });
+  await adminEvent(admin.email, "fleet_crawl_scope_pushed", { count: rows.length, scope }, "medium");
   revalidatePath(basePathFor(formData));
   return {
     ok: true,

@@ -11,6 +11,7 @@ import { db } from "@/db";
 import { topologyPositions, entitiesSwitch, entitiesHost } from "@/db/schema/entities";
 import { auditLog } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
+import { recordSecurityEvent } from "@/lib/security/events";
 
 export interface SavePositionsResult {
   ok: boolean;
@@ -122,6 +123,16 @@ export async function setDeviceMapHidden(
   } catch {
     // best-effort
   }
+  // Mirror into the consolidated security feed (privileged map change).
+  await recordSecurityEvent({
+    category: "admin",
+    action: hidden ? "map_device_hidden" : "map_device_unhidden",
+    severity: "info",
+    actorType: "user",
+    actor: user.email,
+    target: `${entityKind}:${entityId}`,
+    detail: { schoolId },
+  });
 
   if (basePath) revalidatePath(basePath);
   return { ok: true };
