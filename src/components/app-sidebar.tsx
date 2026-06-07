@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, Sparkles, Users } from "lucide-react";
+import { Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, ShieldAlert, Sparkles, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -158,6 +158,18 @@ export function AppSidebar({
           <SidebarGroup>
             <SidebarGroupLabel>Administration</SidebarGroupLabel>
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Security analysis"
+                  isActive={pathname === "/security"}
+                >
+                  <Link href="/security">
+                    <ShieldAlert />
+                    <span>Security</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   asChild

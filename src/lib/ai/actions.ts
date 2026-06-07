@@ -31,6 +31,7 @@ import {
   type AiGlobalSettings,
 } from "./settings";
 import { getRun, type AnalysisRun } from "./queries";
+import { getSecurityRun, type SecurityAnalysisRun } from "./security-queries";
 
 const AI_SETTINGS_PATH = "/settings/ai";
 
@@ -228,6 +229,18 @@ export async function startSecurityAnalysis(): Promise<StartAnalysisResult> {
 
   await audit(user.email, "ai_security_analysis_run", { runId, trigger: "manual" });
   return { ok: true, runId };
+}
+
+/** Poll a security run's status + results (superadmin only). */
+export async function getSecurityRunStatus(
+  runId: string,
+): Promise<{ run?: SecurityAnalysisRun; error?: string }> {
+  const user = await requireSuperadmin();
+  if (!user) return { error: "Not authorized." };
+
+  const run = await getSecurityRun(runId);
+  if (!run) return { error: "Run not found." };
+  return { run };
 }
 
 // ---------------------------------------------------------------------------
