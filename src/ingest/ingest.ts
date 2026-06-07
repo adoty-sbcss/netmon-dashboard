@@ -51,6 +51,7 @@ import {
   type RawTopology,
 } from "./bundle";
 import { classifyHost } from "../lib/classify";
+import { decodeSysObjectId } from "../lib/oui/sysobjectid";
 import { isCiscoIpPhoneName, isIpPhoneMapNode, isIpPhoneTopoNode } from "../lib/classify/device-hints";
 
 /**
@@ -101,6 +102,7 @@ const IFNAME_PREFIX = "1.3.6.1.2.1.31.1.1.1.1."; // ifName: suffix=ifIndex, val=
 const ENT_CLASS_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.5."; // entPhysicalClass (3 = chassis)
 const ENT_SERIAL_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.11."; // entPhysicalSerialNum
 const ENT_MODEL_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.13."; // entPhysicalModelName
+const SYS_OBJECTID_OID = "1.3.6.1.2.1.1.2.0"; // sysObjectID -> vendor PEN decode
 
 const normOid = (oid?: string | null) => (oid ?? "").replace(/^\./, "");
 
@@ -185,13 +187,14 @@ function deriveHostSwitchPorts(snmp: ScanData["snmp"]): DerivedPort[] {
  */
 function deriveSwitchIdentity(
   snmp: ScanData["snmp"],
-): Map<string, { serial?: string; model?: string }> {
+): Map<string, { serial?: string; model?: string; vendor?: string }> {
   const clean = (v: string | null): string | undefined => {
     const s = (v ?? "").replace(/^"|"$/g, "").trim();
     return s && s.toLowerCase() !== "null" ? s : undefined;
   };
   // dev -> entPhysicalIndex -> { cls, serial, model }
   const byDev = new Map<string, Map<string, { cls?: string; serial?: string; model?: string }>>();
+  const sysoid = new Map<string, string>(); // dev -> sysObjectID value
   const put = (dev: string, idx: string, k: "cls" | "serial" | "model", v: string | undefined) => {
     if (v == null) return;
     let ents = byDev.get(dev);
@@ -204,19 +207,26 @@ function deriveSwitchIdentity(
     const oid = normOid(p.oid);
     const dev = str(p.device_ip) ?? "";
     if (!dev) continue;
-    if (oid.startsWith(ENT_CLASS_PREFIX)) put(dev, oid.slice(ENT_CLASS_PREFIX.length), "cls", clean(str(p.value)));
+    if (oid === SYS_OBJECTID_OID) sysoid.set(dev, str(p.value) ?? "");
+    else if (oid.startsWith(ENT_CLASS_PREFIX)) put(dev, oid.slice(ENT_CLASS_PREFIX.length), "cls", clean(str(p.value)));
     else if (oid.startsWith(ENT_SERIAL_PREFIX)) put(dev, oid.slice(ENT_SERIAL_PREFIX.length), "serial", clean(str(p.value)));
     else if (oid.startsWith(ENT_MODEL_PREFIX)) put(dev, oid.slice(ENT_MODEL_PREFIX.length), "model", clean(str(p.value)));
   }
-  const out = new Map<string, { serial?: string; model?: string }>();
-  for (const [dev, ents] of byDev) {
+  const out = new Map<string, { serial?: string; model?: string; vendor?: string }>();
+  const devs = new Set<string>([...byDev.keys(), ...sysoid.keys()]);
+  for (const dev of devs) {
+    const ents = byDev.get(dev);
     let best: { cls?: string; serial?: string; model?: string } | undefined;
-    for (const e of ents.values()) {
-      if (!e.serial && !e.model) continue;
-      if (e.cls === "3") { best = e; break; } // chassis wins outright
-      if (!best) best = e;
+    if (ents) {
+      for (const e of ents.values()) {
+        if (!e.serial && !e.model) continue;
+        if (e.cls === "3") { best = e; break; } // chassis wins outright
+        if (!best) best = e;
+      }
     }
-    if (best) out.set(dev, { serial: best.serial, model: best.model });
+    const vendor = decodeSysObjectId(sysoid.get(dev))?.vendor;
+    if (best?.serial || best?.model || vendor)
+      out.set(dev, { serial: best?.serial, model: best?.model, vendor });
   }
   return out;
 }
@@ -951,6 +961,7 @@ export async function ingestBundle(
         const swAttrs: Record<string, unknown> = {};
         if (swIdent?.serial) swAttrs.serial = swIdent.serial;
         if (swIdent?.model) swAttrs.model = swIdent.model;
+        if (swIdent?.vendor) swAttrs.vendor = swIdent.vendor;
         await tx
           .insert(entitiesSwitch)
           .values({
