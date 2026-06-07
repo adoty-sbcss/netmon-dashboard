@@ -236,6 +236,28 @@ async function main() {
       `deferred=${tally.deferred}.`,
   );
 
+  // --- Global security analysis (the dashboard's OWN attack surface) ----------
+  // Reviews security_events across the whole app (auth / sensor / perimeter
+  // signals). Global, not per-district; skips silently when the window is empty
+  // so a quiet day costs nothing. Set AI_SECURITY=0 to disable.
+  if (process.env.AI_SECURITY !== "0") {
+    try {
+      const { runSecurityAnalysis } = await import("@/lib/ai/security-run");
+      const { runId, eventCount } = await runSecurityAnalysis({
+        window,
+        trigger: "scheduled",
+        requestedBy: null,
+      });
+      console.log(
+        runId
+          ? `✓ security (global) → run ${runId} over ${eventCount} event(s)`
+          : `security: ${eventCount === 0 ? "no events in window" : "no providers"} — skipped`,
+      );
+    } catch (err) {
+      console.error(`✗ security: ${(err as Error).message}`);
+    }
+  }
+
   // --- Device-type AI adjudication (the low-confidence classification tail) ---
   // Only escalates ambiguous devices, caches by signalHash, and shares the same
   // limiter as the sweep above. Set AI_CLASSIFY=0 to skip it.

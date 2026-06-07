@@ -16,6 +16,11 @@ import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getUserScope, scopeAllowsDistrict } from "@/lib/auth/scope";
 import { prepareRun, executeRun, type RunRequest } from "./orchestrator";
+import {
+  prepareSecurityRun,
+  executeSecurityRun,
+  type SecurityRunRequest,
+} from "./security-run";
 import { activeProviders, getProvider } from "./providers/registry";
 import {
   resolveProviderConfig,
@@ -190,6 +195,39 @@ export async function getRunStatus(
   }
 
   return { run };
+}
+
+/**
+ * Kick off a GLOBAL security analysis (superadmin only) — reviews the dashboard's
+ * own security_events. Same write-row-then-poll model as the analyses above.
+ */
+export async function startSecurityAnalysis(): Promise<StartAnalysisResult> {
+  const user = await requireSuperadmin();
+  if (!user) return { error: "Not authorized." };
+
+  if ((await activeProviders()).length === 0) {
+    return {
+      error:
+        "No AI provider is enabled yet. Configure one in Settings → AI analysis.",
+    };
+  }
+
+  const now = new Date();
+  const req: SecurityRunRequest = {
+    window: { start: new Date(now.getTime() - ANALYSIS_WINDOW_MS), end: now },
+    trigger: "manual",
+    requestedBy: user.id,
+  };
+
+  const { runId } = await prepareSecurityRun(req);
+  if (!runId) return { error: "No AI provider is enabled yet." };
+
+  after(async () => {
+    await executeSecurityRun(runId, req);
+  });
+
+  await audit(user.email, "ai_security_analysis_run", { runId, trigger: "manual" });
+  return { ok: true, runId };
 }
 
 // ---------------------------------------------------------------------------

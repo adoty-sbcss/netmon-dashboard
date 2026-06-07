@@ -157,3 +157,53 @@ export const aiSettings = pgTable("ai_settings", {
     .defaultNow()
     .notNull(),
 });
+
+/**
+ * GLOBAL security analysis runs — the dashboard reviewing its OWN attack surface
+ * (failed logins, enrollment probes, sensor-auth failures, …). UNLIKE ai_analyses
+ * these have NO district: the security_events they read are about the public
+ * app's perimeter, not any one tenant, so the audience is the superadmin. One run
+ * still fans out to every active provider (shared runId) and stores one row per
+ * model — mirroring ai_analyses so the UI reuses the same SeverityBadge/finding
+ * cards. Findings surface on the superadmin Security page (no per-district issues
+ * reconciliation). Reuses the AiFinding shape.
+ */
+export const securityAnalyses = pgTable(
+  "security_analyses",
+  {
+    id: serial("id").primaryKey(),
+    /** Groups the per-model rows produced by one run. */
+    runId: text("run_id").notNull(),
+    /** Analyzed window (typically the last 24h). */
+    windowStart: timestamp("window_start", { withTimezone: true }),
+    windowEnd: timestamp("window_end", { withTimezone: true }),
+    /** 'scheduled' | 'manual'. */
+    trigger: text("trigger").notNull(),
+    /** How many security_events fell in the window (0 ⇒ scheduled run is skipped). */
+    eventCount: integer("event_count"),
+    /** 'azure-openai' | 'anthropic' | ... */
+    providerId: text("provider_id").notNull(),
+    model: text("model"),
+    /** 'running' | 'ok' | 'failed'. */
+    status: text("status").notNull().default("running"),
+    prose: text("prose"),
+    findings: jsonb("findings").$type<AiFinding[]>().notNull().default([]),
+    tokensIn: integer("tokens_in"),
+    tokensOut: integer("tokens_out"),
+    costUsd: doublePrecision("cost_usd"),
+    latencyMs: integer("latency_ms"),
+    error: text("error"),
+    /** Null for scheduled runs; the requesting superadmin for manual runs. */
+    requestedBy: integer("requested_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("idx_security_analyses_created").on(t.createdAt),
+    index("idx_security_analyses_run").on(t.runId),
+  ],
+);

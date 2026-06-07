@@ -232,6 +232,13 @@
       "when": 1780805125549,
       "tag": "0032_wise_franklin_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780837927268,
+      "tag": "0033_graceful_magma",
+      "breakpoints": true
     }
   ]
 }
