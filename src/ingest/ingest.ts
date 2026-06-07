@@ -97,6 +97,10 @@ const INSERT_CHUNK = 500;
 const FDB_PORT_PREFIX = "1.3.6.1.2.1.17.4.3.1.2."; // dot1dTpFdbPort: suffix=MAC octets, val=bridgePort
 const BASEPORT_IFINDEX_PREFIX = "1.3.6.1.2.1.17.1.4.1.2."; // dot1dBasePortIfIndex: suffix=bridgePort, val=ifIndex
 const IFNAME_PREFIX = "1.3.6.1.2.1.31.1.1.1.1."; // ifName: suffix=ifIndex, val=name
+// ENTITY-MIB (RFC 4133): per-physical-entity inventory. suffix = entPhysicalIndex.
+const ENT_CLASS_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.5."; // entPhysicalClass (3 = chassis)
+const ENT_SERIAL_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.11."; // entPhysicalSerialNum
+const ENT_MODEL_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.13."; // entPhysicalModelName
 
 const normOid = (oid?: string | null) => (oid ?? "").replace(/^\./, "");
 
@@ -171,6 +175,50 @@ function deriveHostSwitchPorts(snmp: ScanData["snmp"]): DerivedPort[] {
     if (!existing || portRank(cand) > portRank(existing)) byMac.set(mac, cand);
   }
   return [...byMac.values()];
+}
+
+/**
+ * Pull the chassis serial # + clean model string per device from the ENTITY-MIB
+ * (entPhysicalSerialNum / entPhysicalModelName), preferring the chassis entity
+ * (entPhysicalClass = 3). Returns device_ip -> { serial?, model? }. Powers real
+ * serials + clean models on switch inventory (the collector already bundles these).
+ */
+function deriveSwitchIdentity(
+  snmp: ScanData["snmp"],
+): Map<string, { serial?: string; model?: string }> {
+  const clean = (v: string | null): string | undefined => {
+    const s = (v ?? "").replace(/^"|"$/g, "").trim();
+    return s && s.toLowerCase() !== "null" ? s : undefined;
+  };
+  // dev -> entPhysicalIndex -> { cls, serial, model }
+  const byDev = new Map<string, Map<string, { cls?: string; serial?: string; model?: string }>>();
+  const put = (dev: string, idx: string, k: "cls" | "serial" | "model", v: string | undefined) => {
+    if (v == null) return;
+    let ents = byDev.get(dev);
+    if (!ents) { ents = new Map(); byDev.set(dev, ents); }
+    const e = ents.get(idx) ?? {};
+    e[k] = v;
+    ents.set(idx, e);
+  };
+  for (const p of snmp) {
+    const oid = normOid(p.oid);
+    const dev = str(p.device_ip) ?? "";
+    if (!dev) continue;
+    if (oid.startsWith(ENT_CLASS_PREFIX)) put(dev, oid.slice(ENT_CLASS_PREFIX.length), "cls", clean(str(p.value)));
+    else if (oid.startsWith(ENT_SERIAL_PREFIX)) put(dev, oid.slice(ENT_SERIAL_PREFIX.length), "serial", clean(str(p.value)));
+    else if (oid.startsWith(ENT_MODEL_PREFIX)) put(dev, oid.slice(ENT_MODEL_PREFIX.length), "model", clean(str(p.value)));
+  }
+  const out = new Map<string, { serial?: string; model?: string }>();
+  for (const [dev, ents] of byDev) {
+    let best: { cls?: string; serial?: string; model?: string } | undefined;
+    for (const e of ents.values()) {
+      if (!e.serial && !e.model) continue;
+      if (e.cls === "3") { best = e; break; } // chassis wins outright
+      if (!best) best = e;
+    }
+    if (best) out.set(dev, { serial: best.serial, model: best.model });
+  }
+  return out;
 }
 
 export interface IdentityOverride {
@@ -892,11 +940,17 @@ export async function ingestBundle(
     // where most of the fabric inventory comes from. Dedup on chassis_id; coalesce
     // so a later sparse crawl never nulls a name/description we already have.
     for (const scan of bundle.scans) {
+      // Chassis serial # + clean model per polled device (ENTITY-MIB) for inventory.
+      const switchIdentity = deriveSwitchIdentity(scan.snmp);
       for (const n of scan.snmpTopology?.nodes ?? []) {
         const chassis = str(n.chassis_id);
         if (!chassis) continue;
         if (isIpPhoneTopoNode(n)) continue; // don't list Cisco IP phones as switches
         const seen = toDate(scan.meta.completed_at) ?? new Date();
+        const swIdent = switchIdentity.get((n.mgmt_ips && str(n.mgmt_ips[0])) ?? "");
+        const swAttrs: Record<string, unknown> = {};
+        if (swIdent?.serial) swAttrs.serial = swIdent.serial;
+        if (swIdent?.model) swAttrs.model = swIdent.model;
         await tx
           .insert(entitiesSwitch)
           .values({
@@ -907,6 +961,7 @@ export async function ingestBundle(
             systemDescription: str(n.system_description),
             mgmtIp: (n.mgmt_ips && str(n.mgmt_ips[0])) ?? null,
             capabilities: n.capabilities ?? null,
+            attributes: swAttrs,
             firstSeenAt: seen,
             lastSeenAt: seen,
           })
@@ -918,6 +973,8 @@ export async function ingestBundle(
               systemDescription: sql`coalesce(excluded.system_description, ${entitiesSwitch.systemDescription})`,
               mgmtIp: sql`coalesce(excluded.mgmt_ip, ${entitiesSwitch.mgmtIp})`,
               capabilities: sql`coalesce(excluded.capabilities, ${entitiesSwitch.capabilities})`,
+              // Merge ENTITY-MIB serial/model into attributes (preserve other keys).
+              attributes: sql`${entitiesSwitch.attributes} || ${JSON.stringify(swAttrs)}::jsonb`,
               lastSeenAt: seen,
               updatedAt: new Date(),
             },
