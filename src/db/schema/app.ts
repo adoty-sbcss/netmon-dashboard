@@ -190,6 +190,54 @@ export const auditLog = pgTable(
   (t) => [index("idx_audit_at").on(t.at)],
 );
 
+/**
+ * Consolidated security-event log — the single store the scheduled AI security
+ * analysis reads. Distinct from audit_log (the admin/compliance action trail):
+ * these are security SIGNALS with first-class severity / category / source-IP so
+ * they can be filtered, aggregated, and reasoned over. Written best-effort via
+ * recordSecurityEvent() at security-relevant points (source='app'); Azure-side
+ * signals (HTTP 4xx bursts, Entra sign-ins) land here later with source='azure'.
+ * `analyzedAt` lets the AI pass cheaply select "events not yet incorporated".
+ */
+export const securityEvents = pgTable(
+  "security_events",
+  {
+    id: serial("id").primaryKey(),
+    at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
+    /** auth | authz | sensor | admin | perimeter | system */
+    category: text("category").notNull(),
+    /** info | low | medium | high | critical */
+    severity: text("severity").notNull().default("info"),
+    /** Machine action key, e.g. 'login_failed', 'sensor_auth_failed'. */
+    action: text("action").notNull(),
+    /** 'user' | 'breakglass' | 'sensor' | 'system' | 'anon' */
+    actorType: text("actor_type"),
+    /** Email / sensor identity / component name — never a secret. */
+    actor: text("actor"),
+    /** Best-effort client IP (x-forwarded-for). */
+    sourceIp: text("source_ip"),
+    userAgent: text("user_agent"),
+    /** What was acted on (route, sensor slug, target email). */
+    target: text("target"),
+    /** District for scoping the security view, when known. */
+    districtId: integer("district_id").references(() => districts.id, {
+      onDelete: "set null",
+    }),
+    /** Structured context (counts, reason codes) — never secrets. */
+    detail: jsonb("detail").notNull().default({}),
+    /** 'app' | 'azure' — origin of the signal. */
+    source: text("source").notNull().default("app"),
+    /** Stamped once the AI security pass has incorporated this row. */
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("idx_secevent_at").on(t.at),
+    index("idx_secevent_cat_sev").on(t.category, t.severity),
+    index("idx_secevent_ip").on(t.sourceIp),
+    index("idx_secevent_analyzed").on(t.analyzedAt),
+  ],
+);
+
 // --- ingestion configuration -----------------------------------------------
 
 /**

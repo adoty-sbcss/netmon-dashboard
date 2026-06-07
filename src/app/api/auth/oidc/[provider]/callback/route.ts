@@ -16,6 +16,8 @@ import {
   providerEnabled,
   redirectUri,
 } from "@/lib/auth/oidc";
+import { clientIp } from "@/lib/security/rate-limit";
+import { recordSecurityEvent } from "@/lib/security/events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,14 +50,38 @@ export async function GET(
   const email = await exchangeCodeForEmail(provider, code, redirectUri(req, provider));
   if (!email) return fail("oidc");
 
+  const ip = clientIp(req.headers);
+  const userAgent = req.headers.get("user-agent");
+
   const [u] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (!u || u.disabled) {
-    await audit(email, "login_denied", { provider, reason: u ? "disabled" : "not_provisioned" });
+    const reason = u ? "disabled" : "not_provisioned";
+    await audit(email, "login_denied", { provider, reason });
+    await recordSecurityEvent({
+      category: "authz",
+      action: "login_denied",
+      severity: "medium",
+      actorType: "user",
+      actor: email,
+      sourceIp: ip,
+      userAgent,
+      detail: { provider, reason },
+    });
     return fail("denied");
   }
 
   await db.update(users).set({ lastLoginAt: sql`now()` }).where(eq(users.id, u.id));
   await audit(u.email, "login_ok", { provider });
+  await recordSecurityEvent({
+    category: "auth",
+    action: "login_ok",
+    severity: "info",
+    actorType: "user",
+    actor: u.email,
+    sourceIp: ip,
+    userAgent,
+    detail: { method: "oidc", provider },
+  });
 
   const token = await createSessionToken(u.id, { mustChangePassword: u.mustChangePassword });
   const res = NextResponse.redirect(

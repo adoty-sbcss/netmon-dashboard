@@ -15,6 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { users, auditLog } from "@/db/schema/app";
 import { rateLimit, clientIp } from "@/lib/security/rate-limit";
+import { recordSecurityEvent } from "@/lib/security/events";
 import { hashPassword, verifyPassword } from "./password";
 import {
   getSessionUser,
@@ -60,12 +61,24 @@ export async function loginAction(
   const password = String(formData.get("password") ?? "");
   if (!identifier || !password) return { error: "Enter your username and password." };
 
-  const ip = clientIp(await headers());
+  const hdrs = await headers();
+  const ip = clientIp(hdrs);
+  const userAgent = hdrs.get("user-agent");
   const throttle = rateLimit(`login:ip:${ip}`, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS);
   if (!throttle.ok) {
     await audit("breakglass", identifier, "login_rate_limited", {
       ip,
       retryAfterSec: throttle.retryAfterSec,
+    });
+    await recordSecurityEvent({
+      category: "auth",
+      action: "login_rate_limited",
+      severity: "medium",
+      actorType: "breakglass",
+      actor: identifier,
+      sourceIp: ip,
+      userAgent,
+      detail: { retryAfterSec: throttle.retryAfterSec },
     });
     const mins = Math.ceil(throttle.retryAfterSec / 60);
     return { error: `Too many sign-in attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` };
@@ -81,6 +94,16 @@ export async function loginAction(
   const ok = await verifyPassword(password, u?.passwordHash);
   if (!u || u.disabled || !u.passwordHash || !ok) {
     await audit("breakglass", identifier, "login_failed", { ip });
+    await recordSecurityEvent({
+      category: "auth",
+      action: "login_failed",
+      severity: "low",
+      actorType: "breakglass",
+      actor: identifier,
+      sourceIp: ip,
+      userAgent,
+      detail: { reason: !u ? "no_user" : u.disabled ? "disabled" : "bad_password" },
+    });
     return { error: GENERIC_LOGIN_ERROR };
   }
 
@@ -90,6 +113,16 @@ export async function loginAction(
     .where(eq(users.id, u.id));
   await setSessionCookie(u.id, u.mustChangePassword);
   await audit(u.isBreakGlass ? "breakglass" : "user", u.email, "login_ok", { ip });
+  await recordSecurityEvent({
+    category: "auth",
+    action: "login_ok",
+    severity: "info",
+    actorType: u.isBreakGlass ? "breakglass" : "user",
+    actor: u.email,
+    sourceIp: ip,
+    userAgent,
+    detail: { method: "password", breakGlass: u.isBreakGlass },
+  });
 
   redirect(u.mustChangePassword ? "/account/change-password" : "/");
 }

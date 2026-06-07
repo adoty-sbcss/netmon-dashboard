@@ -225,6 +225,13 @@
       "when": 1780750267031,
       "tag": "0031_futuristic_fantastic_four",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1780805125549,
+      "tag": "0032_wise_franklin_storm",
+      "breakpoints": true
     }
   ]
 }

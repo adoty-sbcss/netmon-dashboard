@@ -8,6 +8,7 @@ import { sensorEnrollments } from "@/db/schema/management";
 import { verifyBootstrap } from "@/lib/sensor/enrollment";
 import { hashToken } from "@/lib/sensor/auth";
 import { rateLimit, clientIp } from "@/lib/security/rate-limit";
+import { recordSecurityEvent } from "@/lib/security/events";
 import { getOrCreateSensorId } from "@/ingest/config-backup";
 import { slugify } from "@/ingest/bundle";
 
@@ -39,9 +40,20 @@ async function auditEnroll(actor: string, action: string, detail: Record<string,
  */
 export async function POST(req: NextRequest) {
   const ip = clientIp(req.headers);
+  const userAgent = req.headers.get("user-agent");
   const throttle = rateLimit(`enroll:ip:${ip}`, ENROLL_MAX_ATTEMPTS, ENROLL_WINDOW_MS);
   if (!throttle.ok) {
     await auditEnroll(ip, "sensor_enroll_rate_limited", { ip, retryAfterSec: throttle.retryAfterSec });
+    await recordSecurityEvent({
+      category: "sensor",
+      action: "sensor_enroll_rate_limited",
+      severity: "high",
+      actorType: "anon",
+      sourceIp: ip,
+      userAgent,
+      target: "/api/sensor/enroll",
+      detail: { retryAfterSec: throttle.retryAfterSec },
+    });
     return NextResponse.json(
       { error: "rate limited" },
       { status: 429, headers: { "Retry-After": String(throttle.retryAfterSec) } },
@@ -57,6 +69,16 @@ export async function POST(req: NextRequest) {
 
   if (!(await verifyBootstrap(String(body.bootstrapKey ?? "")))) {
     await auditEnroll(ip, "sensor_enroll_refused", { ip, reason: "bad_bootstrap_key" });
+    await recordSecurityEvent({
+      category: "sensor",
+      action: "sensor_enroll_refused",
+      severity: "medium",
+      actorType: "anon",
+      sourceIp: ip,
+      userAgent,
+      target: "/api/sensor/enroll",
+      detail: { reason: "bad_bootstrap_key" },
+    });
     return NextResponse.json({ error: "enrollment refused" }, { status: 401 });
   }
 

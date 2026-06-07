@@ -5,6 +5,8 @@ import { db } from "@/db";
 import { sensors } from "@/db/schema/app";
 import { desiredConfig, commandQueue } from "@/db/schema/management";
 import { resolveSensorFromBearer } from "@/lib/sensor/auth";
+import { clientIp } from "@/lib/security/rate-limit";
+import { recordSecurityEvent } from "@/lib/security/events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +21,19 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: NextRequest) {
   const sensorId = await resolveSensorFromBearer(req.headers.get("authorization"));
-  if (!sensorId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!sensorId) {
+    await recordSecurityEvent({
+      category: "sensor",
+      action: "sensor_auth_failed",
+      severity: "low",
+      actorType: "anon",
+      sourceIp: clientIp(req.headers),
+      userAgent: req.headers.get("user-agent"),
+      target: "/api/sensor/checkin",
+      detail: { hasAuthHeader: Boolean(req.headers.get("authorization")) },
+    });
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const body = (await req.json().catch(() => ({}))) as {
     agentVersion?: string;
