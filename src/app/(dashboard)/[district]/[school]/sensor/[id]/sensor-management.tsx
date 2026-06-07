@@ -51,6 +51,20 @@ const STATUS_TONE: Record<string, string> = {
 /** Render a command result — log files as <pre>, anything else as JSON. */
 function renderResult(result: Record<string, unknown>) {
   const entries = Object.entries(result);
+  // Remote-console diagnostics return { command, exit, output } — show the
+  // captured output as a terminal-style block.
+  if (typeof result.output === "string") {
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="text-[10px] text-muted-foreground">
+          {String(result.command ?? "diagnostic")} · exit {String(result.exit ?? "?")}
+        </p>
+        <pre className="max-h-72 overflow-auto rounded bg-background p-2 text-[11px] leading-relaxed">
+          {result.output || "(no output)"}
+        </pre>
+      </div>
+    );
+  }
   const logs = entries.filter(([k]) => k.toLowerCase().endsWith(".log"));
   if (logs.length > 0) {
     return (
@@ -294,6 +308,44 @@ export function SensorManagementPanel({
               </Button>
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* Remote console — restricted, read-only diagnostics (no SSH). Each runs a
+          fixed allow-listed command on the box; output appears in the command
+          history below. State-changing actions are intentionally excluded. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Terminal className="size-4 text-primary" />
+            Remote console
+            <span className="text-xs font-normal text-muted-foreground">read-only diagnostics</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <div className="flex flex-wrap gap-2">
+            {[
+              { cmd: "diag-interfaces", label: "Interfaces" },
+              { cmd: "diag-routes", label: "Routes" },
+              { cmd: "diag-arp", label: "ARP table" },
+              { cmd: "diag-dns", label: "DNS check" },
+              { cmd: "diag-disk", label: "Disk" },
+              { cmd: "diag-uptime", label: "Uptime" },
+              { cmd: "diag-selftest", label: "Selftest" },
+            ].map(({ cmd, label }) => (
+              <form action={cmdAction} key={cmd}>
+                <input type="hidden" name="sensorId" value={sensorId} />
+                <input type="hidden" name="basePath" value={basePath} />
+                <input type="hidden" name="command" value={cmd} />
+                <Button type="submit" variant="outline" size="sm" disabled={queuing}>{label}</Button>
+              </form>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Runs on the box at its next check-in; the captured output shows in the command
+            history below (click the row to expand). Real-time streaming via the tunnel
+            broker is coming next.
+          </p>
         </CardContent>
       </Card>
 

@@ -40,6 +40,15 @@ const SAFE_COMMANDS = new Set([
   // Remote code update: the box pulls + rebuilds on its next check-in, with the
   // collector's own healthcheck + auto-rollback. Honored by checkin.py (exit 11).
   "update",
+  // Restricted read-only remote-console diagnostics (collector _DIAG_COMMANDS).
+  // Fixed-argv, no injection surface; state-changing actions are NOT here.
+  "diag-interfaces",
+  "diag-routes",
+  "diag-arp",
+  "diag-disk",
+  "diag-uptime",
+  "diag-dns",
+  "diag-selftest",
 ]);
 
 async function requireAdmin() {
