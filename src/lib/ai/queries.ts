@@ -6,8 +6,10 @@ import "server-only";
 import { and, count, desc, eq, gte, max, sql, sum } from "drizzle-orm";
 
 import { db } from "@/db";
-import { aiAnalyses, type AiFinding } from "@/db/schema/ai";
+import { aiAnalyses, securityAnalyses, type AiFinding } from "@/db/schema/ai";
 import { districts, schools } from "@/db/schema/app";
+import { chatMessages } from "@/db/schema/chat";
+import { estimateCost } from "./pricing";
 
 export interface AnalysisRow {
   id: number;
@@ -230,6 +232,101 @@ export async function getAiUsageThisMonth(): Promise<ProviderUsage[]> {
     tokensOut: Number(r.tokensOut ?? 0),
     costUsd: Number(r.costUsd ?? 0),
   }));
+}
+
+// ---- usage by category (AI-7) ---------------------------------------------
+
+export interface CategoryUsage {
+  category: "scheduled" | "security" | "assistant";
+  label: string;
+  /** runs (analysis) or turns (assistant). */
+  units: number;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+/**
+ * Month-to-date AI spend split by category (AI-7): scheduled/manual network
+ * analysis, security analysis, and ad-hoc assistant usage (the in-app chatbot +
+ * the AI-6 "Help me fix this" drill-down, which both flow through chat_messages).
+ * Chat rows have no stored cost, so it's computed per-model via estimateCost.
+ */
+export async function getAiUsageByCategory(): Promise<CategoryUsage[]> {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const [sched] = await db
+    .select({
+      runs: count(),
+      tokensIn: sum(aiAnalyses.tokensIn),
+      tokensOut: sum(aiAnalyses.tokensOut),
+      costUsd: sum(aiAnalyses.costUsd),
+    })
+    .from(aiAnalyses)
+    .where(gte(aiAnalyses.createdAt, monthStart));
+
+  const [sec] = await db
+    .select({
+      runs: count(),
+      tokensIn: sum(securityAnalyses.tokensIn),
+      tokensOut: sum(securityAnalyses.tokensOut),
+      costUsd: sum(securityAnalyses.costUsd),
+    })
+    .from(securityAnalyses)
+    .where(gte(securityAnalyses.createdAt, monthStart));
+
+  // Assistant: group by model so cost can be priced per-model (no stored cost).
+  const chatRows = await db
+    .select({
+      model: chatMessages.model,
+      turns: count(),
+      tokensIn: sum(chatMessages.tokensIn),
+      tokensOut: sum(chatMessages.tokensOut),
+    })
+    .from(chatMessages)
+    .where(and(eq(chatMessages.role, "assistant"), gte(chatMessages.createdAt, monthStart)))
+    .groupBy(chatMessages.model);
+
+  let chatTurns = 0;
+  let chatIn = 0;
+  let chatOut = 0;
+  let chatCost = 0;
+  for (const r of chatRows) {
+    const tin = Number(r.tokensIn ?? 0);
+    const tout = Number(r.tokensOut ?? 0);
+    chatTurns += Number(r.turns ?? 0);
+    chatIn += tin;
+    chatOut += tout;
+    chatCost += estimateCost(r.model, tin, tout) ?? 0;
+  }
+
+  return [
+    {
+      category: "scheduled",
+      label: "Scheduled analysis",
+      units: Number(sched?.runs ?? 0),
+      tokensIn: Number(sched?.tokensIn ?? 0),
+      tokensOut: Number(sched?.tokensOut ?? 0),
+      costUsd: Number(sched?.costUsd ?? 0),
+    },
+    {
+      category: "security",
+      label: "Security analysis",
+      units: Number(sec?.runs ?? 0),
+      tokensIn: Number(sec?.tokensIn ?? 0),
+      tokensOut: Number(sec?.tokensOut ?? 0),
+      costUsd: Number(sec?.costUsd ?? 0),
+    },
+    {
+      category: "assistant",
+      label: "Assistant & drill-down",
+      units: chatTurns,
+      tokensIn: chatIn,
+      tokensOut: chatOut,
+      costUsd: chatCost,
+    },
+  ];
 }
 
 // ---- activity log + daily usage (the "what/when/where" view) ---------------

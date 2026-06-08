@@ -12,6 +12,7 @@ import {
   getAiUsageThisMonth,
   getRecentAiRuns,
   getDailyAiUsage,
+  getAiUsageByCategory,
 } from "@/lib/ai/queries";
 import { PageHeader } from "@/components/page-header";
 import { AiSettingsForm } from "./ai-settings-form";
@@ -24,12 +25,13 @@ export default async function AiSettingsPage() {
   if (!user) redirect("/login");
   if (user.role !== "superadmin") redirect("/");
 
-  const [views, settings, usage, recentRuns, dailyUsage] = await Promise.all([
+  const [views, settings, usage, recentRuns, dailyUsage, categoryUsage] = await Promise.all([
     Promise.all(AI_PROVIDER_IDS.map((id) => getProviderSettingsView(id))),
     getAiSettings(),
     getAiUsageThisMonth(),
     getRecentAiRuns(30),
     getDailyAiUsage(14),
+    getAiUsageByCategory(),
   ]);
 
   // Pair each provider's static metadata (label + which fields it needs) with
@@ -58,6 +60,7 @@ export default async function AiSettingsPage() {
         usage={usage}
         recentRuns={recentRuns}
         dailyUsage={dailyUsage}
+        categoryUsage={categoryUsage}
       />
     </div>
   );

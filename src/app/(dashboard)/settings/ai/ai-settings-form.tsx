@@ -23,7 +23,7 @@ import {
 } from "@/lib/ai/actions";
 import type { AiProviderSettingsView, AiGlobalSettings } from "@/lib/ai/settings";
 import type { ProviderFieldSpec } from "@/lib/ai/types";
-import type { ProviderUsage, RecentAiRun, DailyAiUsage } from "@/lib/ai/queries";
+import type { ProviderUsage, RecentAiRun, DailyAiUsage, CategoryUsage } from "@/lib/ai/queries";
 import {
   modelOptionsFor,
   AZURE_API_VERSIONS,
@@ -572,6 +572,56 @@ function UsageCard({
   );
 }
 
+function CategoryUsageCard({ categories }: { categories: CategoryUsage[] }) {
+  const total = categories.reduce((a, c) => a + c.costUsd, 0);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <BarChart3 className="size-4 text-primary" /> Spend by category this month
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="text-xs text-muted-foreground">
+              <tr>
+                <th className="py-1 pr-4 font-medium">Category</th>
+                <th className="py-1 pr-4 font-medium">Calls</th>
+                <th className="py-1 pr-4 font-medium">Tokens in/out</th>
+                <th className="py-1 font-medium">Est. cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map((c) => (
+                <tr key={c.category} className="border-t">
+                  <td className="py-1.5 pr-4">{c.label}</td>
+                  <td className="py-1.5 pr-4">{c.units || "—"}</td>
+                  <td className="py-1.5 pr-4 tabular-nums">
+                    {c.tokensIn.toLocaleString()} / {c.tokensOut.toLocaleString()}
+                  </td>
+                  <td className="py-1.5 tabular-nums">{fmtUsd(c.costUsd)}</td>
+                </tr>
+              ))}
+              <tr className="border-t font-medium">
+                <td className="py-1.5 pr-4">Total</td>
+                <td className="py-1.5 pr-4" />
+                <td className="py-1.5 pr-4" />
+                <td className="py-1.5 tabular-nums">{fmtUsd(total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Includes scheduled network analysis, security analysis, and ad-hoc assistant
+          usage (the in-app chatbot + &ldquo;Help me fix this&rdquo; drill-downs). Assistant
+          cost is estimated from token counts × model prices.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function fmtTokens(n: number | null): string {
   if (n == null) return "—";
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
@@ -696,12 +746,14 @@ export function AiSettingsForm({
   usage,
   recentRuns,
   dailyUsage,
+  categoryUsage,
 }: {
   providers: ProviderProp[];
   settings: AiGlobalSettings;
   usage: ProviderUsage[];
   recentRuns: RecentAiRun[];
   dailyUsage: DailyAiUsage[];
+  categoryUsage: CategoryUsage[];
 }) {
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -723,6 +775,7 @@ export function AiSettingsForm({
       />
       <ActivityCard runs={recentRuns} daily={dailyUsage} />
       <UsageCard usage={usage} providers={providers} cap={settings.monthlySpendCapUsd} />
+      <CategoryUsageCard categories={categoryUsage} />
     </div>
   );
 }
