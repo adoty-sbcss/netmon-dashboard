@@ -108,6 +108,44 @@ export async function ensureDistrictSftpUser(
 }
 
 /**
+ * Tear down a district's depot footprint: delete its SFTP local user + its
+ * upload folder (and bundles) on the depot. Best-effort + idempotent — the
+ * district_sftp DB row cascades when the district is deleted, so this only
+ * handles the Azure side. Never throws (a delete shouldn't be blocked by a
+ * stuck Azure call); logs instead.
+ */
+export async function deleteDistrictSftp(districtId: number, slug: string): Promise<void> {
+  if (!sftpProvisioningConfigured()) return;
+  const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID!;
+  const [row] = await db
+    .select({ username: districtSftp.username })
+    .from(districtSftp)
+    .where(eq(districtSftp.districtId, districtId))
+    .limit(1);
+  // username is "<account>.<localName>" — ARM wants just <localName>.
+  const localName = row?.username.includes(".")
+    ? row.username.slice(row.username.indexOf(".") + 1)
+    : null;
+
+  if (localName) {
+    try {
+      const { StorageManagementClient } = await import("@azure/arm-storage");
+      const client = new StorageManagementClient(await credential(), subscriptionId);
+      await client.localUsers.delete(DEPOT_RG, DEPOT_ACCOUNT, localName);
+    } catch (e) {
+      console.error(`[sftp-delete] user ${localName} failed:`, e);
+    }
+  }
+  try {
+    const { DataLakeServiceClient } = await import("@azure/storage-file-datalake");
+    const svc = new DataLakeServiceClient(`https://${DEPOT_ACCOUNT}.dfs.core.windows.net`, await credential());
+    await svc.getFileSystemClient(DEPOT_CONTAINER).getDirectoryClient(`upload/${slug}`).deleteIfExists(true);
+  } catch (e) {
+    console.error(`[sftp-delete] folder upload/${slug} failed:`, e);
+  }
+}
+
+/**
  * Read a district's stored scoped SFTP creds (decrypted), or null if not minted.
  * The sensor is chroot'd to its district folder; remotePath stays "/" and the
  * collector appends its own <district>/<school>/<device> beneath it. (Ingest

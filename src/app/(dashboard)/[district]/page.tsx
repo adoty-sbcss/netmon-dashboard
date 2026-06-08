@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/card";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { AddLandingSpot } from "@/components/admin/add-landing-spot";
+import { DeleteLandingSpot } from "@/components/admin/delete-landing-spot";
 
 export default async function DistrictPage({
   params,
@@ -172,6 +173,13 @@ export default async function DistrictPage({
           </div>
         )}
       </div>
+
+      {user?.role === "superadmin" && (
+        <div className="mt-2 border-t pt-4">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Danger zone</p>
+          <DeleteLandingSpot kind="district" slug={district.slug} />
+        </div>
+      )}
     </div>
   );
 }

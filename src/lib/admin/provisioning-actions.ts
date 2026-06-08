@@ -16,6 +16,12 @@ import { headers } from "next/headers";
 
 import { db } from "@/db";
 import { districts, schools } from "@/db/schema/app";
+import {
+  entitiesSwitch,
+  entitiesHost,
+  topologySnapshots,
+  topologyPositions,
+} from "@/db/schema/entities";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { clientIp } from "@/lib/security/rate-limit";
 import { recordSecurityEvent } from "@/lib/security/events";
@@ -144,4 +150,87 @@ export async function createSchoolAction(
   await adminEvent(admin.email, "school_created", { slug, name, districtSlug });
   revalidatePath(`/${districtSlug}`);
   return { ok: true, message: `Created school “${name}”.`, slug };
+}
+
+/**
+ * Delete a district and EVERYTHING in it. Destructive — requires the typed slug
+ * to match. DB cascades remove schools, sensors, entities, snapshots, findings,
+ * AI, iperf, issues, policy, registry, command queue, district_sftp; security
+ * events are kept (district_id set null). Also tears down the depot SFTP user +
+ * folder (the DB cascade can't reach Azure). Redirects to the overview after.
+ */
+export async function deleteDistrictAction(
+  _prev: ProvisionActionState,
+  formData: FormData,
+): Promise<ProvisionActionState> {
+  const admin = await requireSuperadmin();
+  if (!admin) return { error: "Not authorized." };
+  const slug = String(formData.get("slug") ?? "").trim();
+  const confirm = String(formData.get("confirm") ?? "").trim();
+  if (!slug) return { error: "Missing district." };
+  if (confirm !== slug) return { error: `Type the district slug “${slug}” exactly to confirm.` };
+
+  const [district] = await db
+    .select({ id: districts.id, name: districts.name })
+    .from(districts)
+    .where(eq(districts.slug, slug))
+    .limit(1);
+  if (!district) return { error: "District not found." };
+
+  // Azure side first (needs the district_sftp row, which cascades on delete).
+  try {
+    const { deleteDistrictSftp } = await import("@/lib/admin/sftp-provision");
+    await deleteDistrictSftp(district.id, slug);
+  } catch (e) {
+    console.error(`[district-delete] sftp teardown ${slug} failed:`, e);
+  }
+
+  await db.delete(districts).where(eq(districts.id, district.id)); // cascades the rest
+  await adminEvent(admin.email, "district_deleted", { slug, name: district.name });
+  revalidatePath("/");
+  redirect("/");
+}
+
+/**
+ * Delete a school and its data. Sensors cascade; entities are `set null` on
+ * schools, so we remove the school's entities + school-scoped topology snapshots
+ * and saved positions explicitly, in one transaction. Requires the typed slug.
+ */
+export async function deleteSchoolAction(
+  _prev: ProvisionActionState,
+  formData: FormData,
+): Promise<ProvisionActionState> {
+  const admin = await requireSuperadmin();
+  if (!admin) return { error: "Not authorized." };
+  const districtSlug = String(formData.get("districtSlug") ?? "").trim();
+  const slug = String(formData.get("slug") ?? "").trim();
+  const confirm = String(formData.get("confirm") ?? "").trim();
+  if (!districtSlug || !slug) return { error: "Missing school." };
+  if (confirm !== slug) return { error: `Type the school slug “${slug}” exactly to confirm.` };
+
+  const [district] = await db
+    .select({ id: districts.id })
+    .from(districts)
+    .where(eq(districts.slug, districtSlug))
+    .limit(1);
+  if (!district) return { error: "District not found." };
+  const [school] = await db
+    .select({ id: schools.id, name: schools.name })
+    .from(schools)
+    .where(and(eq(schools.districtId, district.id), eq(schools.slug, slug)))
+    .limit(1);
+  if (!school) return { error: "School not found." };
+
+  await db.transaction(async (tx) => {
+    await tx.delete(entitiesSwitch).where(eq(entitiesSwitch.schoolId, school.id));
+    await tx.delete(entitiesHost).where(eq(entitiesHost.schoolId, school.id));
+    await tx.delete(topologyPositions).where(eq(topologyPositions.schoolId, school.id));
+    await tx
+      .delete(topologySnapshots)
+      .where(and(eq(topologySnapshots.scopeType, "school"), eq(topologySnapshots.scopeId, school.id)));
+    await tx.delete(schools).where(eq(schools.id, school.id)); // cascades sensors + school-FK rows
+  });
+  await adminEvent(admin.email, "school_deleted", { slug, name: school.name, districtSlug });
+  revalidatePath(`/${districtSlug}`);
+  redirect(`/${districtSlug}`);
 }

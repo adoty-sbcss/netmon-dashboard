@@ -39,6 +39,7 @@ import { getEnrollmentView } from "@/lib/sensor/enrollment";
 import { resolveSftpConfig } from "@/lib/ingest/settings";
 import { getDistrictSftpCreds } from "@/lib/admin/sftp-provision";
 import { DeploySensor } from "./deploy-sensor";
+import { DeleteLandingSpot } from "@/components/admin/delete-landing-spot";
 
 export default async function SchoolPage({
   params,
@@ -282,6 +283,13 @@ export default async function SchoolPage({
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {user?.role === "superadmin" && (
+        <div className="mt-2 border-t pt-4">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Danger zone</p>
+          <DeleteLandingSpot kind="school" slug={school.slug} districtSlug={district.slug} />
+        </div>
       )}
     </div>
   );
