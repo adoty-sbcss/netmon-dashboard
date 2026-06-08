@@ -118,18 +118,6 @@ export default async function SchoolPage({
         description={`${district.name} · last scan ${relativeTime(stats.lastScanAt)}`}
       />
 
-      {deploy && (
-        <DeploySensor
-          appOrigin={deploy.appOrigin}
-          bootstrapKey={deploy.bootstrapKey}
-          sftp={deploy.sftp}
-          districtName={district.name}
-          districtSlug={district.slug}
-          schoolName={school.name || titleizeSlug(school.slug)}
-          schoolSlug={school.slug}
-        />
-      )}
-
       {/* Primary metrics — the at-a-glance health of the site */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
         <StatCard
@@ -156,13 +144,6 @@ export default async function SchoolPage({
           }
         />
       </div>
-
-      {/* What needs attention first: AI health summary + rule-based findings,
-          kept above the deeper telemetry so issues surface before counts. */}
-      <AiFindingsCard
-        summary={aiSummary}
-        href={`/${district.slug}/${school.slug}/ai`}
-      />
 
       {/* Activity metrics — deeper telemetry */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
@@ -191,6 +172,9 @@ export default async function SchoolPage({
           href={`/${district.slug}/${school.slug}/stp`}
         />
       </div>
+
+      {/* AI analysis — under the telemetry it summarizes (Neighbors/DHCP/etc.). */}
+      <AiFindingsCard summary={aiSummary} href={`/${district.slug}/${school.slug}/ai`} />
 
       {/* Sensors */}
       <Card>
@@ -260,6 +244,19 @@ export default async function SchoolPage({
           )}
         </CardContent>
       </Card>
+
+      {/* Deploy a sensor here — grouped with the Sensors section above. */}
+      {deploy && (
+        <DeploySensor
+          appOrigin={deploy.appOrigin}
+          bootstrapKey={deploy.bootstrapKey}
+          sftp={deploy.sftp}
+          districtName={district.name}
+          districtSlug={district.slug}
+          schoolName={school.name || titleizeSlug(school.slug)}
+          schoolSlug={school.slug}
+        />
+      )}
 
       {/* Health snapshot */}
       {latestHealth && (
