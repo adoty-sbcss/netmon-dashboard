@@ -24,6 +24,9 @@ import type { AnalysisScope, ChatMessage } from "./types";
 
 const MAX_HISTORY = 24;
 const MAX_INPUT_CHARS = 4000;
+// AI-3: a session is considered stale after this much inactivity; opening the
+// widget then starts a fresh conversation (the old transcript stays recorded).
+const SESSION_IDLE_MS = 60 * 60 * 1000;
 
 // Top-level dashboard routes that are NOT district slugs.
 const RESERVED = new Set(["settings", "account", "admin", "login", "api"]);
@@ -97,6 +100,13 @@ export async function getAssistantSession(): Promise<{
     .limit(1);
   if (!conv) return { conversationId: null, messages: [] };
 
+  // AI-3: auto-reset after 60 min of inactivity. Don't resume a stale session —
+  // return an empty one so the next message opens a fresh conversation. The old
+  // transcript is untouched (still visible in the superadmin viewer).
+  if (conv.updatedAt && Date.now() - conv.updatedAt.getTime() > SESSION_IDLE_MS) {
+    return { conversationId: null, messages: [] };
+  }
+
   const rows = await db
     .select()
     .from(chatMessages)
@@ -126,7 +136,13 @@ export async function sendAssistantMessage(
       .where(eq(chatConversations.id, convId))
       .limit(1);
     if (!conv || conv.userId !== user.id) return { error: "Conversation not found." };
-  } else {
+    // AI-3: if the widget sat open past the idle window, don't append to the
+    // stale conversation — start a fresh one (matches getAssistantSession).
+    if (conv.updatedAt && Date.now() - conv.updatedAt.getTime() > SESSION_IDLE_MS) {
+      convId = null;
+    }
+  }
+  if (convId == null) {
     const [created] = await db
       .insert(chatConversations)
       .values({

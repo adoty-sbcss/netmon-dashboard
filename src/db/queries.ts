@@ -1176,7 +1176,14 @@ export interface DhcpAnalysis {
   truncated: boolean;
   summary: { clients: number; scopes: number; servers: number; ackRate: number | null };
   scopes: DhcpScope[];
-  servers: { ip: string; mac: string | null; messages: number; scopes: number }[];
+  servers: {
+    ip: string;
+    mac: string | null;
+    messages: number;
+    scopes: number;
+    /** True/false when an authorized-server policy was supplied (AI-5); else undefined. */
+    authorized?: boolean;
+  }[];
   clients: DhcpClientView[];
   issues: DhcpIssue[];
 }
@@ -1192,8 +1199,12 @@ const DHCP_ANALYSIS_LIMIT = 3000;
  */
 export async function getDhcpAnalysis(
   schoolId: number,
-  opts: { scanId?: number } = {},
+  opts: { scanId?: number; authorizedServers?: Set<string> } = {},
 ): Promise<DhcpAnalysis> {
+  // AI-5: when the district has declared an authorized DHCP-server allow-list,
+  // make the deterministic issues authorization-aware so we don't tell the model
+  // (or the dashboard) that expected failover servers look "rogue".
+  const authz = opts.authorizedServers;
   const where = opts.scanId
     ? and(eq(sensors.schoolId, schoolId), eq(dhcpObservations.scanRunId, opts.scanId))
     : eq(sensors.schoolId, schoolId);
@@ -1332,7 +1343,13 @@ export async function getDhcpAnalysis(
     .sort((a, b) => b.clients - a.clients);
 
   const servers = [...serverMap.values()]
-    .map((s) => ({ ip: s.ip, mac: s.mac, messages: s.messages, scopes: s._scopes.size }))
+    .map((s) => ({
+      ip: s.ip,
+      mac: s.mac,
+      messages: s.messages,
+      scopes: s._scopes.size,
+      ...(authz ? { authorized: authz.has(s.ip) } : {}),
+    }))
     .sort((a, b) => b.messages - a.messages);
 
   const clients = [...clientMap.values()].sort((a, b) => {
@@ -1367,7 +1384,20 @@ export async function getDhcpAnalysis(
     });
   }
   for (const s of scopes) {
-    if (s.servers.length > 1) {
+    if (s.servers.length <= 1) continue;
+    if (authz) {
+      // Multiple AUTHORIZED servers on a scope = expected failover, not a problem.
+      const unauthorized = s.servers.filter((ip) => !authz.has(ip));
+      if (unauthorized.length === 0) continue;
+      const authorized = s.servers.filter((ip) => authz.has(ip));
+      issues.push({
+        severity: "warning",
+        title: `Scope ${s.network} has ${unauthorized.length} unauthorized DHCP server${unauthorized.length === 1 ? "" : "s"}`,
+        detail:
+          `Server(s) NOT on the district's authorized list answered this scope (possible rogue/misconfigured): ${unauthorized.join(", ")}. ` +
+          `Authorized server(s) here: ${authorized.join(", ") || "none"}.`,
+      });
+    } else {
       issues.push({
         severity: "warning",
         title: `Scope ${s.network} served by ${s.servers.length} DHCP servers`,
@@ -1375,7 +1405,17 @@ export async function getDhcpAnalysis(
       });
     }
   }
-  if (servers.length > 1) {
+  if (authz) {
+    // Only unauthorized servers are noteworthy; any number of authorized servers is fine.
+    const unauthorizedServers = servers.filter((s) => !authz.has(s.ip));
+    if (unauthorizedServers.length > 0) {
+      issues.push({
+        severity: "warning",
+        title: `${unauthorizedServers.length} unauthorized DHCP server${unauthorizedServers.length === 1 ? "" : "s"} seen at this school`,
+        detail: `Not on the district's authorized list: ${unauthorizedServers.map((s) => s.ip).join(", ")}.`,
+      });
+    }
+  } else if (servers.length > 1) {
     issues.push({
       severity: "info",
       title: `${servers.length} DHCP servers seen at this school`,

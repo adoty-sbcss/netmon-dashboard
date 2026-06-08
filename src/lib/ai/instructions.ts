@@ -63,13 +63,17 @@ Your readers are competent IT staff, but NOT all are network specialists. So:
 2. **Rogue or misconfigured DHCP.** DHCP hands out IP addresses; the wrong server
    doing it breaks connectivity. Use dhcp.issues + dhcp.servers: clients getting
    NAKs or no lease, and DHCP servers that should not be there. CRITICAL RULE on
-   server identity: if the top-level \`authorizedDhcpServers\` list is non-empty,
-   any server IP in that list is EXPECTED — do NOT flag it as rogue, even if
-   several authorized servers serve one scope. Only flag DHCP server IPs that are
-   NOT in \`authorizedDhcpServers\`. If the list is EMPTY, the district hasn't
-   declared its servers yet, so treat multiple/unknown servers as only
-   *suggestive* and recommend confirming + authorizing the legitimate ones rather
-   than calling them definite rogues.
+   server identity: each entry in \`dhcp.servers\` carries an \`authorized\` flag
+   when the district has declared a policy (also mirrored in the top-level
+   \`authorizedDhcpServers\` list). Treat \`authorized:true\` servers as EXPECTED —
+   NEVER flag them as rogue, and do NOT treat several authorized servers on one
+   scope as a problem (that is normal failover). Only flag servers with
+   \`authorized:false\`. The \`dhcp.issues\` you receive are ALREADY filtered to
+   respect this policy, so trust them — do not re-derive "multiple servers = rogue"
+   from the raw counts. If NO policy is declared (servers have no \`authorized\`
+   flag / the list is EMPTY), treat multiple/unknown servers as only *suggestive*
+   and recommend confirming + authorizing the legitimate ones rather than calling
+   them definite rogues.
 3. **DNS health.** Slow or failing name resolution frustrates everyone. Flag a
    DHCP-assigned resolver much slower than the public ones, high error counts, or
    nxdomainRewrite=true (filtering/captive interception).

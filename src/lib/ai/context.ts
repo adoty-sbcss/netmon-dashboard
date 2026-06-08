@@ -60,13 +60,20 @@ interface SchoolContext {
   healthTrend: { day: string; metrics: Record<string, number> }[];
 }
 
-async function buildSchoolContext(schoolId: number, slug: string, name: string | null): Promise<SchoolContext> {
+async function buildSchoolContext(
+  schoolId: number,
+  slug: string,
+  name: string | null,
+  authorizedServers: Set<string>,
+): Promise<SchoolContext> {
   const [stats, findings, dns, dhcp, stp, switches, hosts, trend] =
     await Promise.all([
       getSchoolStats(schoolId),
       listFindingsForSchool(schoolId, 50),
       listDnsForSchool(schoolId),
-      getDhcpAnalysis(schoolId),
+      // AI-5: pass the authorized list so DHCP issues are authorization-aware
+      // (each server tagged authorized:true/false; expected failover not flagged).
+      getDhcpAnalysis(schoolId, { authorizedServers }),
       listStpForSchool(schoolId),
       listSwitchesForSchool(schoolId),
       listHostsForSchool(schoolId),
@@ -126,22 +133,23 @@ export async function buildAnalysisContext(
   scope: AnalysisScope,
   window: AnalysisWindow,
 ): Promise<string> {
+  // Operator-declared authorized DHCP servers for this district — fetched first so
+  // each school's DHCP analysis can tag servers authorized:true/false and skip
+  // "rogue" framing for expected (failover) servers (AI-5).
+  const authorizedSet = await getAuthorizedDhcpServerSet(scope.districtId);
+
   let schools_: SchoolContext[];
 
   if (scope.type === "school") {
-    schools_ = [await buildSchoolContext(scope.id, scope.label, scope.label)];
+    schools_ = [await buildSchoolContext(scope.id, scope.label, scope.label, authorizedSet)];
   } else {
     const schoolRows = await listSchools(scope.districtId);
     schools_ = await Promise.all(
-      schoolRows.map((s) => buildSchoolContext(s.id, s.slug, s.name)),
+      schoolRows.map((s) => buildSchoolContext(s.id, s.slug, s.name, authorizedSet)),
     );
   }
 
-  // Operator-declared authorized DHCP servers for this district — the model must
-  // treat these as expected and only flag servers NOT in this list as rogue.
-  const authorizedDhcpServers = [
-    ...(await getAuthorizedDhcpServerSet(scope.districtId)),
-  ];
+  const authorizedDhcpServers = [...authorizedSet];
 
   const payload = {
     scope: { type: scope.type, label: scope.label },
