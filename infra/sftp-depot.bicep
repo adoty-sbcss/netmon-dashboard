@@ -36,6 +36,9 @@ param localUserName string = 'netmon'
 @description('Home directory for the SFTP local user (container root).')
 param homeDirectory string = 'bundles'
 
+@description('Read-all SFTP local user for the dashboard ingest job (lists + reads every district folder; never writes).')
+param ingestUserName string = 'ingest'
+
 resource depot 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: depotAccountName
   location: location
@@ -90,6 +93,28 @@ resource localUser 'Microsoft.Storage/storageAccounts/localUsers@2023-05-01' = {
   }
 }
 
+// Read-all user for ingest: homed at the container root so it can walk every
+// district's folder, but with read+list ONLY — it can never write or delete a
+// bundle. The per-district WRITE users (sensors) are minted at runtime by the
+// dashboard (scoped to bundles/upload/<district>); see SFTP-2b.
+resource ingestUser 'Microsoft.Storage/storageAccounts/localUsers@2023-05-01' = {
+  parent: depot
+  name: ingestUserName
+  properties: {
+    hasSshPassword: true
+    hasSshKey: false
+    homeDirectory: containerName
+    permissionScopes: [
+      {
+        permissions: 'rl'
+        service: 'blob'
+        resourceName: containerName
+      }
+    ]
+  }
+}
+
 output sftpHost string = '${depotAccountName}.blob.core.windows.net'
 output sftpUser string = '${depotAccountName}.${localUserName}'
+output ingestUser string = '${depotAccountName}.${ingestUserName}'
 output homeDir string = homeDirectory
