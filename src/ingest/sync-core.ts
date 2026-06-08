@@ -99,14 +99,29 @@ export async function runSync(
   const force = !!opts.force;
   const limit = opts.limit ?? null;
 
-  // Already-parsed filenames — skip re-downloading these (unless --force).
+  // Already-parsed bundles — skip re-downloading these (unless --force).
+  // ING-1: key on tenancy + filename (= the bundle's path), NOT bare filename,
+  // since identical filenames collide across districts (shared mdf/idf slugs).
+  // This is only a download optimization; ingestBundle re-checks authoritatively.
   const parsedRows = force
     ? []
     : await db
-        .select({ filename: ingestedBundles.filename })
+        .select({
+          districtSlug: ingestedBundles.districtSlug,
+          schoolSlug: ingestedBundles.schoolSlug,
+          deviceSlug: ingestedBundles.deviceSlug,
+          filename: ingestedBundles.filename,
+        })
         .from(ingestedBundles)
         .where(eq(ingestedBundles.parseStatus, "parsed"));
-  const parsed = new Set(parsedRows.map((r) => r.filename));
+  const parsed = new Set(
+    parsedRows.map(
+      (r) => `${r.districtSlug}/${r.schoolSlug}/${r.deviceSlug}/${r.filename}`,
+    ),
+  );
+  // The SFTP path is [baseDir/]<district>/<school>/<device>/<file>; compare its
+  // trailing 4 segments against the tenancy key above.
+  const pathKey = (p: string) => p.split("/").filter(Boolean).slice(-4).join("/");
 
   const sftp = new Client();
   const summary: SyncSummary = { found: 0, new: 0, ingested: 0, skipped: 0, failed: 0 };
@@ -127,7 +142,7 @@ export async function runSync(
     const configZips = allZips.filter((z) => isConfigBackupPath(z.path));
     const zips = allZips.filter((z) => !isConfigBackupPath(z.path));
     summary.found = zips.length;
-    const fresh = zips.filter((z) => !parsed.has(z.name));
+    const fresh = zips.filter((z) => !parsed.has(pathKey(z.path)));
     summary.new = fresh.length;
     log(
       `Found ${zips.length} bundle(s); ${fresh.length} not yet parsed${

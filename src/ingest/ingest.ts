@@ -568,10 +568,20 @@ export async function ingestBundle(
       .filter((d): d is Date => d !== null)
       .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
 
+    // ING-1: dedup on TENANCY + filename, not bare filename — many sites share a
+    // device slug (mdf/idf), so identical filenames across districts must not be
+    // treated as the same bundle.
     const [existing] = await tx
       .select()
       .from(ingestedBundles)
-      .where(eq(ingestedBundles.filename, bundle.filename));
+      .where(
+        and(
+          eq(ingestedBundles.districtSlug, ident.district),
+          eq(ingestedBundles.schoolSlug, ident.school),
+          eq(ingestedBundles.deviceSlug, ident.device),
+          eq(ingestedBundles.filename, bundle.filename),
+        ),
+      );
 
     if (existing && existing.parseStatus === "parsed" && !ov.force) {
       return { skipped: true } as const;

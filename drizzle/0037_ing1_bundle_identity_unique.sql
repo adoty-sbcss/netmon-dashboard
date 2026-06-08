@@ -1,0 +1,2 @@
+ALTER TABLE "ingested_bundles" DROP CONSTRAINT "ingested_bundles_filename_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_bundle_identity_filename" ON "ingested_bundles" USING btree ("district_slug","school_slug","device_slug","filename");

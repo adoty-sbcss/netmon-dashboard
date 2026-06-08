@@ -325,7 +325,7 @@ export const ingestedBundles = pgTable(
   "ingested_bundles",
   {
     id: serial("id").primaryKey(),
-    filename: text("filename").notNull().unique(),
+    filename: text("filename").notNull(),
     districtSlug: text("district_slug"),
     schoolSlug: text("school_slug"),
     deviceSlug: text("device_slug"),
@@ -346,6 +346,15 @@ export const ingestedBundles = pgTable(
       t.districtSlug,
       t.schoolSlug,
       t.deviceSlug,
+    ),
+    // ING-1: dedup per TENANCY + filename, not bare filename. Many sites share a
+    // device slug (mdf/idf), so identical filenames across districts must not
+    // collide. (Replaces the old UNIQUE(filename).)
+    uniqueIndex("uq_bundle_identity_filename").on(
+      t.districtSlug,
+      t.schoolSlug,
+      t.deviceSlug,
+      t.filename,
     ),
   ],
 );
