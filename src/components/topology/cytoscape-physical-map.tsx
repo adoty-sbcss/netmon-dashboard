@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Download, ExternalLink, EyeOff, Layers, Maximize2, Network, Radar, RotateCcw, Save, Table2 } from "lucide-react";
 
-import type { MapGraph } from "@/db/queries";
+import type { MapGraph, IfaceSummary } from "@/db/queries";
 import { saveMapPositions, setDeviceMapHidden } from "@/lib/admin/map-actions";
 import { ipInAnyCidr } from "@/lib/net";
 import { cn } from "@/lib/utils";
@@ -122,6 +122,7 @@ function buildElements(
         icon: iconUri(n.type),
         status: status[key] ?? "",
         coverage,
+        ifaceSummary: n.ifaceSummary ?? null, // MAP-4 hover summary (switches)
       },
     });
   }
@@ -133,7 +134,20 @@ function buildElements(
   if (gw) els.push({ data: { id: "e_internet", source: "__internet", target: gw.id, kind: "wan" } });
   for (const e of edges) {
     if (grouped.has(e.source) || grouped.has(e.target)) continue;
-    els.push({ data: { id: `e_${e.source}_${e.target}_${e.kind ?? ""}`, source: e.source, target: e.target, kind: e.kind ?? "" } });
+    // MAP-3/MAP-4: mark a blocked STP link + label uplinks with their speed.
+    const blocked = e.stp_blocked ? 1 : 0;
+    const spd = e.speed_mbps ?? null;
+    const speedLabel = spd ? (spd >= 1000 ? `${spd / 1000}G` : `${spd}M`) : "";
+    els.push({
+      data: {
+        id: `e_${e.source}_${e.target}_${e.kind ?? ""}`,
+        source: e.source,
+        target: e.target,
+        kind: e.kind ?? "",
+        blocked,
+        edgeLabel: blocked ? `blocked${speedLabel ? ` · ${speedLabel}` : ""}` : speedLabel,
+      },
+    });
   }
   return els;
 }
@@ -172,9 +186,27 @@ const STYLESHEET: any[] = [
   { selector: 'node[status="gap"]', style: { "border-color": "#f59e0b", "border-width": 3 } },
   { selector: 'node[status="online"]', style: { "border-color": "#38bdf8", "border-width": 3 } },
   { selector: 'node[status="offline"]', style: { "border-color": "#cbd5e1", "border-width": 2, opacity: 0.6 } },
-  { selector: "edge", style: { width: 1.4, "line-color": "#cbd5e1", "curve-style": "bezier", "target-arrow-shape": "none" } },
+  {
+    selector: "edge",
+    style: {
+      width: 1.4,
+      "line-color": "#cbd5e1",
+      "curve-style": "bezier",
+      "target-arrow-shape": "none",
+      // MAP-4: speed / blocked label (empty string on most edges → nothing shown).
+      label: "data(edgeLabel)",
+      "font-size": 7,
+      color: "#94a3b8",
+      "text-rotation": "autorotate",
+      "text-background-color": "#ffffff",
+      "text-background-opacity": 0.75,
+      "text-background-padding": "1px",
+    },
+  },
   { selector: 'edge[kind="fdb"]', style: { "line-color": "#93c5fd", width: 1 } },
   { selector: 'edge[kind="wan"]', style: { "line-color": "#fbbf24", width: 2.5 } },
+  // MAP-3: a redundant link an STP-blocking port is holding down — dashed + red.
+  { selector: "edge[blocked = 1]", style: { "line-color": "#ef4444", "line-style": "dashed", width: 2, color: "#ef4444" } },
   { selector: "node:selected", style: { "border-color": "#6366f1", "border-width": 4 } },
   { selector: ".dim", style: { opacity: 0.2 } },
   // Coverage overlay (applied as classes only while the Coverage toggle is on).
@@ -206,6 +238,7 @@ interface HoverState {
   port: string;
   status: string;
   connected: number;
+  ifaceSummary?: IfaceSummary | null;
 }
 interface MenuState {
   x: number;
@@ -339,6 +372,7 @@ export function CytoscapePhysicalMap({
           port: d.port,
           status: d.status,
           connected: e.target.degree(false),
+          ifaceSummary: d.ifaceSummary ?? null,
         });
         const hood = e.target.closedNeighborhood();
         cy.elements().not(hood).addClass("dim");
@@ -597,6 +631,35 @@ export function CytoscapePhysicalMap({
                     </div>
                   )}
                 </dl>
+                {/* MAP-4: interface-health roll-up for switches (ifXTable + STP). */}
+                {hover.ifaceSummary && (
+                  <div className="mt-1.5 border-t pt-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">Interfaces</span>
+                      <span className="tabular-nums">
+                        {hover.ifaceSummary.total} ·{" "}
+                        <span className="text-emerald-600">{hover.ifaceSummary.up} up</span>
+                        {hover.ifaceSummary.down > 0 && (
+                          <span className="text-muted-foreground"> · {hover.ifaceSummary.down} down</span>
+                        )}
+                      </span>
+                    </div>
+                    {(hover.ifaceSummary.errorPorts > 0 || hover.ifaceSummary.blockedPorts > 0) && (
+                      <div className="mt-0.5 flex gap-1.5">
+                        {hover.ifaceSummary.errorPorts > 0 && (
+                          <span className="rounded bg-amber-100 px-1 text-amber-700">
+                            {hover.ifaceSummary.errorPorts} err
+                          </span>
+                        )}
+                        {hover.ifaceSummary.blockedPorts > 0 && (
+                          <span className="rounded bg-red-100 px-1 text-red-700">
+                            {hover.ifaceSummary.blockedPorts} blocked
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {hover.model && hover.model !== hover.firmware && (
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hover.model}</p>
                 )}

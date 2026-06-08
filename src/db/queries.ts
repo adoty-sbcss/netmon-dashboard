@@ -47,6 +47,7 @@ import {
 } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
 import { isIpPhoneMapNode, refineInfraType } from "../lib/classify/device-hints";
+import type { SnmpInterface } from "../ingest/bundle";
 
 // ---- shared shapes --------------------------------------------------------
 
@@ -1582,11 +1583,26 @@ interface RawNode {
   label?: string | null;
   ip?: string | null;
   hostCount?: number | null;
+  // CORE-2: per-ifIndex interface health on fabric switch nodes.
+  interfaces?: Record<string, SnmpInterface> | null;
 }
 export interface TopoEdge {
   source: string;
   target: string;
   kind?: string | null;
+  // MAP-3/MAP-4 (carried through from the stored snapshot edges).
+  local_port?: string | null;
+  remote_port?: string | null;
+  stp_blocked?: boolean | null; // local STP port state is blocking → redundant link held down
+  speed_mbps?: number | null; // local port ifHighSpeed
+}
+/** Per-switch interface-health summary for the map hover. */
+export interface IfaceSummary {
+  total: number;
+  up: number;
+  down: number;
+  errorPorts: number;
+  blockedPorts: number;
 }
 /** A render-ready map node: refined type + entity link + hover detail. */
 export interface MapNode {
@@ -1603,6 +1619,9 @@ export interface MapNode {
   entityId?: number | null;
   entityKind?: "switch" | "host" | null;
   hostCount?: number | null;
+  // MAP-4: interface health on switch nodes (full per-ifIndex map + a summary).
+  interfaces?: Record<string, SnmpInterface> | null;
+  ifaceSummary?: IfaceSummary | null;
 }
 export interface MapGraph {
   nodes: MapNode[];
@@ -1622,6 +1641,26 @@ function mapAttrStr(attributes: unknown, key: string): string | null {
     if (typeof v === "string" && v.trim()) return v;
   }
   return null;
+}
+
+/** MAP-4: roll a switch's per-interface health into hover-card counts. */
+function summarizeInterfaces(
+  ifaces: Record<string, SnmpInterface> | null | undefined,
+): IfaceSummary | null {
+  if (!ifaces) return null;
+  const vals = Object.values(ifaces);
+  if (vals.length === 0) return null;
+  let up = 0;
+  let down = 0;
+  let errorPorts = 0;
+  let blockedPorts = 0;
+  for (const i of vals) {
+    if (i.oper_status === "up") up++;
+    else if (i.oper_status === "down") down++;
+    if ((i.in_errors ?? 0) > 0 || (i.out_errors ?? 0) > 0) errorPorts++;
+    if (i.stp_state === "blocking") blockedPorts++;
+  }
+  return { total: vals.length, up, down, errorPorts, blockedPorts };
 }
 
 /** Host OS string from the AI classification stash (attributes.classification.os). */
@@ -1789,6 +1828,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
         (typeof mgmt === "string" ? switchByIp.get(mgmt) : undefined) ??
         (chassisFromId ? switchByChassis.get(chassisFromId) : undefined);
       if (sw) {
+        const interfaces = n.interfaces ?? null; // CORE-2 per-port health on the snapshot node
         return {
           id: n.id,
           type: refineInfraType(baseType, sw.capabilities ?? null, sw.systemDescription),
@@ -1799,6 +1839,8 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
           firmware: mapAttrStr(sw.attributes, "firmware") ?? mapAttrStr(sw.attributes, "os"),
           entityId: sw.id,
           entityKind: "switch",
+          interfaces,
+          ifaceSummary: summarizeInterfaces(interfaces),
         };
       }
       const host = n.ip && baseType !== "subnet" ? hostByIp.get(n.ip) : undefined;

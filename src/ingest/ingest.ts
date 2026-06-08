@@ -36,6 +36,7 @@ import {
   entitiesSwitch,
   entitiesHost,
   topologySnapshots,
+  topologyPositions,
   healthRollupDaily,
 } from "../db/schema";
 import {
@@ -49,7 +50,11 @@ import {
   type Bundle,
   type ScanData,
   type RawTopology,
+  type SnmpInterface,
 } from "./bundle";
+
+/** CORE-2: per-ifIndex interface health map carried on a fabric node. */
+type RawInterfaces = Record<string, SnmpInterface>;
 import { classifyHost } from "../lib/classify";
 import { decodeSysObjectId } from "../lib/oui/sysobjectid";
 import { isCiscoIpPhoneName, isIpPhoneMapNode, isIpPhoneTopoNode } from "../lib/classify/device-hints";
@@ -365,6 +370,65 @@ function mergeTopoGraphs(existing: TopoGraph | null, incoming: TopoGraph): TopoG
 }
 
 /**
+ * MAP-5: reconcile placeholder physical-graph nodes (`cdp:<name>` / `ip:<addr>`,
+ * from the local LLDP/CDP scan) into the canonical `switch:<chassis>` fabric node
+ * when they resolve to the SAME box. Conservative by design: matches ONLY on an
+ * exact management-IP equality (an IP belongs to exactly one device → no risk of
+ * merging two distinct switches). Drops the placeholder (the fabric node is
+ * richer) and rewrites edges. Returns the reconciled graph + the id remap so the
+ * caller can migrate saved positions to follow.
+ */
+function reconcilePlaceholderNodes(graph: TopoGraph): {
+  graph: TopoGraph;
+  remap: Map<string, string>;
+} {
+  const ipToSwitch = new Map<string, string>();
+  for (const n of graph.nodes) {
+    const id = n.id;
+    if (typeof id === "string" && id.startsWith("switch:")) {
+      const mip = (n as { mgmt_ip?: unknown }).mgmt_ip;
+      if (typeof mip === "string" && mip) ipToSwitch.set(mip, id);
+    }
+  }
+  const remap = new Map<string, string>();
+  if (ipToSwitch.size > 0) {
+    for (const n of graph.nodes) {
+      const id = n.id;
+      if (typeof id !== "string") continue;
+      if (
+        id.startsWith("switch:") ||
+        id.startsWith("gw:") ||
+        id.startsWith("scanner:") ||
+        id.startsWith("subnet:")
+      )
+        continue;
+      let ip: string | null = id.startsWith("ip:") ? id.slice(3) : null;
+      const nip = (n as { ip?: unknown }).ip;
+      const nmip = (n as { mgmt_ip?: unknown }).mgmt_ip;
+      if (!ip && typeof nip === "string") ip = nip;
+      if (!ip && typeof nmip === "string") ip = nmip;
+      const target = ip ? ipToSwitch.get(ip) : undefined;
+      if (target && target !== id) remap.set(id, target);
+    }
+  }
+  if (remap.size === 0) return { graph, remap };
+
+  const keptNodes = graph.nodes.filter((n) => !remap.has(n.id as string));
+  const edgeMap = new Map<string, TopoGraph["edges"][number]>();
+  for (const e of graph.edges) {
+    const source = remap.get(e.source) ?? e.source;
+    const target = remap.get(e.target) ?? e.target;
+    if (source === target) continue; // collapsed self-loop → drop
+    const ne = { ...e, source, target };
+    edgeMap.set(`${source}|${target}|${ne.kind ?? ""}`, ne);
+  }
+  return {
+    graph: { nodes: keptNodes, edges: [...edgeMap.values()], sourceScanId: graph.sourceScanId },
+    remap,
+  };
+}
+
+/**
  * Build a physical-graph contribution from the SNMP fabric crawl across ALL
  * scans in the bundle. Switch nodes are keyed `switch:<chassis_id>` — the SAME
  * scheme buildPhysicalGraph() uses for LLDP neighbors — so crawl-discovered
@@ -382,6 +446,8 @@ function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): T
       if (!chassis) continue;
       if (isIpPhoneTopoNode(n)) continue; // Cisco IP phones crawl as fake switches
       const id = `switch:${chassis}`;
+      const ifaces = n.extra?.interfaces ?? null; // CORE-2: ifXTable + STP per ifIndex
+      const existing = nodeById.get(id);
       nodeById.set(id, {
         id,
         type: "switch",
@@ -390,6 +456,8 @@ function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): T
         mgmt_ip: (n.mgmt_ips && str(n.mgmt_ips[0])) ?? null,
         source: str(n.source) ?? "snmp",
         capabilities: n.capabilities ?? null,
+        // Keep interface data from whichever scan actually polled this switch.
+        interfaces: ifaces ?? (existing?.interfaces as RawInterfaces | undefined) ?? null,
       });
     }
     for (const e of topo.edges ?? []) {
@@ -406,7 +474,20 @@ function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): T
         kind,
         local_port: str(e.local_port_id) ?? str(e.local_port_desc),
         remote_port: str(e.remote_port_id) ?? str(e.remote_port_desc),
+        // Stash the local ifIndex so the post-pass can join to interface health.
+        local_ifindex: str(e.local_port_id),
       });
+    }
+  }
+  // MAP-3/MAP-4 post-pass: now that every node's interfaces are merged, join each
+  // edge to its LOCAL port's health → mark blocked STP links + carry link speed.
+  for (const e of edgeByKey.values()) {
+    const ifidx = e.local_ifindex as string | null | undefined;
+    const ifaces = nodeById.get(e.source as string)?.interfaces as RawInterfaces | null | undefined;
+    const li = ifidx && ifaces ? ifaces[ifidx] : undefined;
+    if (li) {
+      if (li.stp_state === "blocking") e.stp_blocked = true;
+      if (typeof li.speed_mbps === "number") e.speed_mbps = li.speed_mbps;
     }
   }
   return { nodes: [...nodeById.values()], edges: [...edgeByKey.values()], sourceScanId };
@@ -1029,13 +1110,48 @@ export async function ingestBundle(
         (existing?.graph as TopoGraph | undefined) ?? null,
         snap.graph as TopoGraph,
       );
+      // MAP-5: collapse placeholder cdp:/ip: nodes into their chassis node (physical
+      // only) and migrate any saved map positions to follow the rekeying.
+      let finalGraph = merged;
+      if (snap.kind === "physical") {
+        const rec = reconcilePlaceholderNodes(merged);
+        finalGraph = rec.graph;
+        if (rec.remap.size > 0) {
+          const placed = await tx
+            .select({ nodeId: topologyPositions.nodeId })
+            .from(topologyPositions)
+            .where(
+              and(
+                eq(topologyPositions.schoolId, school.id),
+                eq(topologyPositions.kind, "physical"),
+              ),
+            );
+          const placedIds = new Set(placed.map((p) => p.nodeId));
+          for (const [oldId, newId] of rec.remap) {
+            if (!placedIds.has(oldId)) continue;
+            const where = and(
+              eq(topologyPositions.schoolId, school.id),
+              eq(topologyPositions.kind, "physical"),
+              eq(topologyPositions.nodeId, oldId),
+            );
+            if (placedIds.has(newId)) {
+              // Canonical node already has a position → just drop the orphan.
+              await tx.delete(topologyPositions).where(where);
+            } else {
+              // Move the placeholder's saved spot onto the canonical id.
+              await tx.update(topologyPositions).set({ nodeId: newId }).where(where);
+              placedIds.add(newId);
+            }
+          }
+        }
+      }
       await tx
         .insert(topologySnapshots)
         .values({
           kind: snap.kind,
           scopeType: "school",
           scopeId: school.id,
-          graph: merged,
+          graph: finalGraph,
           generatedAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -1044,7 +1160,7 @@ export async function ingestBundle(
             topologySnapshots.scopeType,
             topologySnapshots.scopeId,
           ],
-          set: { graph: merged, generatedAt: new Date() },
+          set: { graph: finalGraph, generatedAt: new Date() },
         });
     }
 

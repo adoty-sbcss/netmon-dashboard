@@ -195,6 +195,17 @@ export interface RawTopology {
   edges: TopoEdge[];
 }
 
+/** CORE-2: per-interface health + STP port role on a crawled switch (ifXTable +
+ *  dot1dStpPortState), keyed by ifIndex. Rides in the node's `extra.interfaces`. */
+export interface SnmpInterface {
+  name?: string | null;
+  speed_mbps?: number | null;
+  oper_status?: string | null; // up | down | dormant | ...
+  in_errors?: number | null;
+  out_errors?: number | null;
+  stp_state?: string | null; // forwarding | blocking | listening | ...
+}
+
 /** snmp_topology.json — the SNMP fabric crawl (chassis-keyed, multi-switch). */
 export interface RawSnmpTopoNode {
   chassis_id?: string | null;
@@ -204,6 +215,8 @@ export interface RawSnmpTopoNode {
   discovered_via_ip?: string | null;
   source?: string | null;
   capabilities?: string[] | null;
+  // CORE-2: interface health / STP keyed by ifIndex (stored in topology_nodes.extra).
+  extra?: { interfaces?: Record<string, SnmpInterface> | null } | null;
 }
 export interface RawSnmpTopoEdge {
   local_chassis_id?: string | null;
