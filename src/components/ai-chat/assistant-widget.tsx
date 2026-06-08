@@ -32,6 +32,9 @@ export function AiAssistantWidget({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // AI-6: a "Help me fix this" prompt seeded from a finding card, queued until the
+  // panel has loaded its session.
+  const [pending, setPending] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load the active session the first time the panel is opened.
@@ -53,11 +56,36 @@ export function AiAssistantWidget({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, sending, open]);
 
-  async function send() {
-    const text = input.trim();
+  // AI-6: other parts of the UI (e.g. a finding's "Help me fix this" button) can
+  // ask the assistant by dispatching a window event. Open the panel and queue the
+  // prompt; it's sent once the session has loaded.
+  useEffect(() => {
+    function onAsk(e: Event) {
+      const prompt = (e as CustomEvent).detail?.prompt;
+      if (typeof prompt === "string" && prompt.trim()) {
+        setOpen(true);
+        setPending(prompt.trim());
+      }
+    }
+    window.addEventListener("netmon:ask-assistant", onAsk as EventListener);
+    return () => window.removeEventListener("netmon:ask-assistant", onAsk as EventListener);
+  }, []);
+
+  // Send the queued prompt once the panel is open + the session is loaded.
+  useEffect(() => {
+    if (pending && loaded && !sending) {
+      const p = pending;
+      setPending(null);
+      void send(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, loaded, sending]);
+
+  async function send(textArg?: string) {
+    const text = (textArg ?? input).trim();
     if (!text || sending) return;
     setError(null);
-    setInput("");
+    if (textArg === undefined) setInput("");
     setMessages((m) => [
       ...m,
       { id: -Date.now(), role: "user", content: text, createdAt: new Date() },

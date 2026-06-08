@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/severity-badge";
+import { AskAssistantButton } from "@/components/ai-chat/ask-assistant-button";
 import { relativeTime } from "@/lib/format";
 import type { ProviderDescriptor } from "@/lib/ai/providers/registry";
 import type { AnalysisRun, AnalysisRow } from "@/lib/ai/queries";
@@ -213,6 +214,20 @@ function ModelColumn({
                         {f.recommendation}
                       </p>
                     )}
+                    <div className="mt-2">
+                      <AskAssistantButton
+                        prompt={
+                          `Help me with this network finding from the AI analysis.\n` +
+                          `Title: ${f.title}\n` +
+                          `Severity: ${f.severity} (${f.confidence})\n` +
+                          (f.detail ? `Detail: ${f.detail}\n` : "") +
+                          (f.evidence ? `Evidence: ${f.evidence}\n` : "") +
+                          (f.recommendation ? `Suggested next step: ${f.recommendation}\n` : "") +
+                          `\nWalk me through: (1) how to confirm and locate this on the network, ` +
+                          `(2) the concrete steps to fix it, and (3) anything related I should also check.`
+                        }
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
