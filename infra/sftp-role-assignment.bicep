@@ -29,3 +29,21 @@ resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalType: 'ServicePrincipal'
   }
 }
+
+// Storage Blob Data Contributor (built-in) scoped to the depot ONLY. Lets the
+// dashboard create each district's home DIRECTORY (bundles/upload/<slug>) over
+// HTTPS/443 via the Data Lake API — VNet-injected Container Apps can't reliably
+// open outbound port-22 SFTP, so directory creation can't go over SFTP.
+var blobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+resource blobContribAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(depot.id, principalId, blobDataContributorRoleId)
+  scope: depot
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      blobDataContributorRoleId
+    )
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}

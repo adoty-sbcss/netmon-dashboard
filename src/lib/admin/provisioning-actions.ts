@@ -98,6 +98,9 @@ export async function createDistrictAction(
       await adminEvent(admin.email, "district_sftp_minted", { slug, username: creds.username });
       sftpMsg = " Scoped SFTP user provisioned.";
     } catch (e) {
+      // Surface to Container Apps logs (the security event's detail isn't yet
+      // visible in the UI) so a failure is debuggable from `az containerapp logs`.
+      console.error(`[sftp-mint] district=${slug} failed:`, e);
       await adminEvent(admin.email, "district_sftp_mint_failed", {
         slug,
         error: e instanceof Error ? e.message : String(e),

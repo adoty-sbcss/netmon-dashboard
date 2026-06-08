@@ -14,7 +14,6 @@ import "server-only";
  * and the deploy card falls back to the shared fleet SFTP).
  */
 import { eq } from "drizzle-orm";
-import Client from "ssh2-sftp-client";
 
 import { db } from "@/db";
 import { districtSftp } from "@/db/schema/management";
@@ -24,7 +23,6 @@ const DEPOT_ACCOUNT = process.env.DEPOT_SFTP_ACCOUNT ?? "w2sbcssnetmondepot";
 const DEPOT_RG = process.env.DEPOT_SFTP_RG ?? "W2-SBCSS-District-NetMon-Dashboard";
 const DEPOT_CONTAINER = "bundles";
 const DEPOT_HOST = `${DEPOT_ACCOUNT}.blob.core.windows.net`;
-const ADMIN_USER = `${DEPOT_ACCOUNT}.netmon`; // container-root rcwdl user, used only to mkdir
 
 export interface DistrictSftpCreds {
   username: string;
@@ -34,30 +32,28 @@ export interface DistrictSftpCreds {
   remotePath: string;
 }
 
-/** True when the env needed to talk to Azure ARM + the depot admin is present. */
-export function sftpProvisioningConfigured(): boolean {
-  return Boolean(
-    process.env.AZURE_SUBSCRIPTION_ID &&
-      process.env.AZURE_MANAGED_IDENTITY_CLIENT_ID &&
-      process.env.DEPOT_ADMIN_SFTP_PASSWORD,
-  );
+/** Managed-identity credential for ARM + Data Lake (the UAMI assigned to the web app). */
+async function credential() {
+  const { ManagedIdentityCredential } = await import("@azure/identity");
+  return new ManagedIdentityCredential({ clientId: process.env.AZURE_MANAGED_IDENTITY_CLIENT_ID! });
 }
 
-/** Create the per-district chroot home (the new user can't create its own root). */
+/** True when the env needed to talk to Azure (ARM + Data Lake) is present. */
+export function sftpProvisioningConfigured(): boolean {
+  return Boolean(process.env.AZURE_SUBSCRIPTION_ID && process.env.AZURE_MANAGED_IDENTITY_CLIENT_ID);
+}
+
+/**
+ * Create the per-district chroot home over HTTPS/443 via the Data Lake API (the
+ * new local user can't create its own chroot root). Uses the managed identity +
+ * Storage Blob Data Contributor on the depot. NOT over SFTP: a VNet-injected
+ * Container App can't reliably make outbound port-22 connections.
+ */
 async function ensureHomeDir(slug: string): Promise<void> {
-  const sftp = new Client();
-  try {
-    await sftp.connect({
-      host: DEPOT_HOST,
-      port: 22,
-      username: ADMIN_USER,
-      password: process.env.DEPOT_ADMIN_SFTP_PASSWORD!,
-      readyTimeout: 20000,
-    });
-    await sftp.mkdir(`upload/${slug}`, true); // recursive; idempotent-ish
-  } finally {
-    await sftp.end().catch(() => {});
-  }
+  const { DataLakeServiceClient } = await import("@azure/storage-file-datalake");
+  const svc = new DataLakeServiceClient(`https://${DEPOT_ACCOUNT}.dfs.core.windows.net`, await credential());
+  const fs = svc.getFileSystemClient(DEPOT_CONTAINER);
+  await fs.getDirectoryClient(`upload/${slug}`).createIfNotExists();
 }
 
 /**
@@ -70,20 +66,17 @@ export async function ensureDistrictSftpUser(
   slug: string,
 ): Promise<DistrictSftpCreds> {
   if (!sftpProvisioningConfigured()) {
-    throw new Error("SFTP provisioning not configured (AZURE_* / DEPOT_ADMIN_SFTP_PASSWORD)");
+    throw new Error("SFTP provisioning not configured (AZURE_SUBSCRIPTION_ID / AZURE_MANAGED_IDENTITY_CLIENT_ID)");
   }
   const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID!;
-  const clientId = process.env.AZURE_MANAGED_IDENTITY_CLIENT_ID!;
   const homeDir = `${DEPOT_CONTAINER}/upload/${slug}`;
 
-  // 1. chroot home must exist before the user can write to it.
+  // 1. chroot home must exist before the user can write to it (HTTPS/443).
   await ensureHomeDir(slug);
 
   // 2. Create/refresh the local user (management plane) via the scoped role.
-  const { ManagedIdentityCredential } = await import("@azure/identity");
   const { StorageManagementClient } = await import("@azure/arm-storage");
-  const cred = new ManagedIdentityCredential({ clientId });
-  const client = new StorageManagementClient(cred, subscriptionId);
+  const client = new StorageManagementClient(await credential(), subscriptionId);
 
   await client.localUsers.createOrUpdate(DEPOT_RG, DEPOT_ACCOUNT, slug, {
     hasSshPassword: true,

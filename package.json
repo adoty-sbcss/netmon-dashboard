@@ -22,6 +22,7 @@
     "@anthropic-ai/sdk": "^0.100.1",
     "@azure/arm-storage": "^20.0.0",
     "@azure/identity": "^4.13.1",
+    "@azure/storage-file-datalake": "^12.30.0",
     "adm-zip": "^0.5.17",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
