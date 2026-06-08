@@ -82,11 +82,31 @@ export async function createDistrictAction(
     .limit(1);
   if (existing) return { error: `A district with slug “${slug}” already exists.` };
 
-  await db.insert(districts).values({ slug, name });
+  const [created] = await db
+    .insert(districts)
+    .values({ slug, name })
+    .returning({ id: districts.id });
   await adminEvent(admin.email, "district_created", { slug, name });
+
+  // SFTP-2b: best-effort auto-mint the district's scoped SFTP user. A failure must
+  // NOT block district creation — the deploy card falls back to the shared SFTP.
+  let sftpMsg = "";
+  if (created) {
+    try {
+      const { ensureDistrictSftpUser } = await import("@/lib/admin/sftp-provision");
+      const creds = await ensureDistrictSftpUser(created.id, slug);
+      await adminEvent(admin.email, "district_sftp_minted", { slug, username: creds.username });
+      sftpMsg = " Scoped SFTP user provisioned.";
+    } catch (e) {
+      await adminEvent(admin.email, "district_sftp_mint_failed", {
+        slug,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      sftpMsg = " (Scoped SFTP not auto-provisioned yet — using shared SFTP for now.)";
+    }
+  }
   revalidatePath("/");
-  // SFTP-2b will auto-mint this district's scoped SFTP user here (next phase).
-  return { ok: true, message: `Created district “${name}”.`, slug };
+  return { ok: true, message: `Created district “${name}”.${sftpMsg}`, slug };
 }
 
 /** Create a school landing spot under a district. */

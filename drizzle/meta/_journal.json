@@ -253,6 +253,13 @@
       "when": 1780865231550,
       "tag": "0035_shell_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1780923705806,
+      "tag": "0036_district_sftp",
+      "breakpoints": true
     }
   ]
 }

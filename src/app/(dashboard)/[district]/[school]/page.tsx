@@ -37,6 +37,7 @@ import { headers } from "next/headers";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { getEnrollmentView } from "@/lib/sensor/enrollment";
 import { resolveSftpConfig } from "@/lib/ingest/settings";
+import { getDistrictSftpCreds } from "@/lib/admin/sftp-provision";
 import { DeploySensor } from "./deploy-sensor";
 
 export default async function SchoolPage({
@@ -80,19 +81,30 @@ export default async function SchoolPage({
       const proto = hdrs.get("x-forwarded-proto") ?? "https";
       appOrigin = host ? `${proto}://${host}` : "";
     }
+    // Prefer this district's SCOPED depot creds (SFTP-2b); fall back to the
+    // shared fleet SFTP until the district's user has been minted.
+    const districtCreds = await getDistrictSftpCreds(district.id);
     const c = sftpResolved.config;
     deploy = {
       appOrigin,
       bootstrapKey: enrollment.bootstrapKey,
-      sftp: c
+      sftp: districtCreds
         ? {
-            host: c.host,
-            port: c.port,
-            user: c.username,
-            password: c.password ?? null,
-            remotePath: c.baseDir || "/",
+            host: districtCreds.host,
+            port: districtCreds.port,
+            user: districtCreds.username,
+            password: districtCreds.password,
+            remotePath: districtCreds.remotePath,
           }
-        : null,
+        : c
+          ? {
+              host: c.host,
+              port: c.port,
+              user: c.username,
+              password: c.password ?? null,
+              remotePath: c.baseDir || "/",
+            }
+          : null,
     };
   }
 

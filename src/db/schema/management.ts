@@ -22,7 +22,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { sensors, users } from "./app";
+import { sensors, users, districts } from "./app";
 
 export const commandStatus = pgEnum("command_status", [
   "pending", // queued, not yet approved (if approval required)
@@ -131,6 +131,29 @@ export const configBackups = pgTable(
   },
   (t) => [uniqueIndex("uq_config_backup_sensor_file").on(t.sensorId, t.filename)],
 );
+
+/**
+ * SFTP-2b: per-district scoped SFTP user on the bundle depot. Auto-minted on
+ * district create via the dashboard's managed identity + the scoped custom role.
+ * Each district's user is chroot'd to bundles/upload/<slug> so a leaked sensor
+ * credential only exposes that one district's folder. Password stored ENCRYPTED
+ * (decrypted only to render the deploy installer for that spot).
+ */
+export const districtSftp = pgTable("district_sftp", {
+  id: serial("id").primaryKey(),
+  districtId: integer("district_id")
+    .notNull()
+    .unique()
+    .references(() => districts.id, { onDelete: "cascade" }),
+  /** SFTP login: "<account>.<district-slug>". */
+  username: text("username").notNull(),
+  /** secret-box(password). */
+  passwordEnc: text("password_enc").notNull(),
+  /** Chroot home directory, e.g. "bundles/upload/springfield-usd". */
+  homeDir: text("home_dir").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const shellSessionStatus = pgEnum("shell_session_status", [
   "pending", // session row created + open-console command queued; waiting for sensor to dial the broker
