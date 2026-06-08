@@ -28,16 +28,22 @@ const { WebSocketServer } = require("ws");
 
 const PORT = parseInt(process.env.BROKER_PORT || "8080", 10);
 const DASHBOARD_URL = (process.env.DASHBOARD_URL || "").replace(/\/+$/, "");
-const MAX_SESSION_MS = 15 * 60 * 1000; // hard ceiling regardless of expiresAt
+// Absolute ceiling from session creation regardless of the dashboard's expiresAt.
+// The real (possibly extended, CON-6) deadline is driven by the dashboard via
+// /validate + /alive; this just caps how far an extend can ever push. Keep in
+// sync with CONSOLE_ABS_MAX_MS on the dashboard.
+const ABS_MAX_MS = 60 * 60 * 1000;
 const IDLE_MS = 2 * 60 * 1000;
 const ALIVE_POLL_MS = 10 * 1000;
 const TRANSCRIPT_FLUSH_MS = 30 * 1000;
 const MAX_PAYLOAD = 256 * 1024;
 const MAX_TRANSCRIPT_EVENTS = 5000;
 
-// Defense-in-depth allow-list; mirrors the sensor's _DIAG_COMMANDS registry.
-// The sensor is the source of truth and re-validates every id.
+// Defense-in-depth allow-list; mirrors the sensor's _DIAG_COMMANDS +
+// _CONTROL_COMMANDS registries. The sensor is the source of truth and
+// re-validates every id; this just refuses to relay anything off-list.
 const ALLOWED_CMDS = new Set([
+  // read-only diagnostics
   "diag-interfaces",
   "diag-routes",
   "diag-arp",
@@ -45,6 +51,8 @@ const ALLOWED_CMDS = new Set([
   "diag-uptime",
   "diag-dns",
   "diag-selftest",
+  // state-changing controls (CON-5) — in-container scope; dashboard confirms + audits
+  "ctl-flush-arp",
 ]);
 
 if (!DASHBOARD_URL) {
@@ -74,7 +82,7 @@ function getSession(sid) {
       sensor: null,
       createdAt: now(),
       lastActivity: now(),
-      expiresAt: now() + MAX_SESSION_MS,
+      expiresAt: now() + ABS_MAX_MS,
       transcript: [],
       timers: { idle: null, hard: null, alive: null, flush: null },
       closing: false,
@@ -144,18 +152,23 @@ async function flushTranscript(session, closed) {
   }
 }
 
+// Returns { alive, expiresAt? }. Fail-open on transient dashboard errors (the
+// hard ceiling still bounds the session); expiresAt is omitted when unknown.
 async function checkAlive(session) {
-  if (!session.recordKey) return true;
+  if (!session.recordKey) return { alive: true };
   try {
     const res = await dashboardFetch(
       `/api/broker/alive?sid=${encodeURIComponent(session.sid)}`,
       { headers: { "x-record-key": session.recordKey } }
     );
-    if (!res.ok) return true; // fail-open on transient dashboard errors; hard ceiling still applies
+    if (!res.ok) return { alive: true };
     const data = await res.json();
-    return data && data.alive !== false;
+    return {
+      alive: !data || data.alive !== false,
+      expiresAt: data && typeof data.expiresAt === "number" ? data.expiresAt : undefined,
+    };
   } catch {
-    return true;
+    return { alive: true };
   }
 }
 
@@ -192,21 +205,53 @@ function bumpActivity(session) {
   session.lastActivity = now();
 }
 
-function armTimers(session) {
-  clearTimers(session);
-  const hardMs = Math.max(1000, Math.min(MAX_SESSION_MS, session.expiresAt - now()));
+// (Re)arm ONLY the hard time-box timer from the current session.expiresAt. Split
+// out of armTimers so an extend can push the deadline back without disturbing the
+// idle/alive/flush intervals.
+function armHard(session) {
+  if (session.timers.hard) clearTimeout(session.timers.hard);
+  const hardMs = Math.max(1000, Math.min(ABS_MAX_MS, session.expiresAt - now()));
   session.timers.hard = setTimeout(
     () => closeSession(session, 1000, "time-box reached"),
     hardMs
   );
+}
+
+// Adopt a new authoritative deadline (from /validate or /alive), capped to the
+// absolute ceiling. If it actually moves the deadline, re-arm the hard timer and
+// tell both ends so the operator's countdown tracks it. Returns true if changed.
+function applyExpiry(session, expiresAtMs) {
+  if (typeof expiresAtMs !== "number") return false;
+  const capped = Math.min(session.createdAt + ABS_MAX_MS, expiresAtMs);
+  if (capped <= session.expiresAt) return false;
+  session.expiresAt = capped;
+  armHard(session);
+  const msg = JSON.stringify({ type: "expiry", expiresAt: session.expiresAt });
+  for (const sock of [session.operator, session.sensor]) {
+    if (sock && sock.readyState === sock.OPEN) {
+      try {
+        sock.send(msg);
+      } catch {}
+    }
+  }
+  return true;
+}
+
+function armTimers(session) {
+  clearTimers(session);
+  armHard(session);
   session.timers.idle = setInterval(() => {
     if (now() - session.lastActivity > IDLE_MS) {
       closeSession(session, 1000, "idle timeout");
     }
   }, 15 * 1000);
   session.timers.alive = setInterval(async () => {
-    const alive = await checkAlive(session);
-    if (!alive) closeSession(session, 1000, "killed by operator");
+    const { alive, expiresAt } = await checkAlive(session);
+    if (!alive) {
+      closeSession(session, 1000, "killed by operator");
+      return;
+    }
+    applyExpiry(session, expiresAt); // picks up extends (CON-6)
   }, ALIVE_POLL_MS);
   session.timers.flush = setInterval(
     () => flushTranscript(session, false),
@@ -318,7 +363,10 @@ function attach(ws, role, result) {
   session.sensorId = result.sensorId || session.sensorId;
   session.recordKey = result.recordKey || session.recordKey;
   if (typeof result.expiresAt === "number") {
-    session.expiresAt = Math.min(session.createdAt + MAX_SESSION_MS, result.expiresAt);
+    // The sensor's /validate resets the clock to pairing-time, so this may move
+    // the deadline LATER than the click-time provisional value — adopt it
+    // directly (capped), don't just shrink toward it.
+    session.expiresAt = Math.min(session.createdAt + ABS_MAX_MS, result.expiresAt);
   }
 
   // One socket per role; replace a stale one.
@@ -337,7 +385,9 @@ function attach(ws, role, result) {
   // Notify peer + arm session lifecycle once both ends are present.
   if (session.operator && session.sensor) {
     armTimers(session);
-    const ready = JSON.stringify({ type: "ready" });
+    // Carry the authoritative (pairing-based) deadline so the operator's
+    // countdown reflects real remaining time, not the click-time estimate.
+    const ready = JSON.stringify({ type: "ready", expiresAt: session.expiresAt });
     for (const sock of [session.operator, session.sensor]) {
       if (sock.readyState === sock.OPEN) sock.send(ready);
     }

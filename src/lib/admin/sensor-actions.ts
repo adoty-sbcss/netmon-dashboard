@@ -22,7 +22,7 @@ import { headers } from "next/headers";
 
 import { getSessionUser } from "@/lib/auth/current-user";
 import { hashToken } from "@/lib/sensor/auth";
-import { BROKER_WSS_URL, CONSOLE_TTL_MS } from "@/lib/admin/console-config";
+import { BROKER_WSS_URL, CONSOLE_TTL_MS, CONSOLE_ABS_MAX_MS } from "@/lib/admin/console-config";
 import { clientIp } from "@/lib/security/rate-limit";
 import { recordSecurityEvent } from "@/lib/security/events";
 
@@ -39,6 +39,8 @@ export interface SensorActionState {
     broker: string;
     expiresAt: number;
   };
+  /** Set by extendConsoleSessionAction — the new time-box (ms epoch). */
+  extendedExpiresAt?: number;
 }
 
 const SAFE_COMMANDS = new Set([
@@ -565,6 +567,61 @@ export async function openConsoleSessionAction(
     message: "Session opening — waiting for the sensor to connect on its next check-in.",
     session: { sid, operatorToken, broker: BROKER_WSS_URL, expiresAt: expiresAt.getTime() },
   };
+}
+
+/**
+ * Extend a live console session's time-box by CONSOLE_TTL_MS (CON-6). Capped at
+ * createdAt + CONSOLE_ABS_MAX_MS. Only bumps the DB `expiresAt`; the broker's
+ * /alive poll picks up the new value within ~10s, re-arms its hard timer, and
+ * pushes an `expiry` frame to both ends. Superadmin-only, audited.
+ */
+export async function extendConsoleSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sid = String(formData.get("sid") ?? "").trim();
+  if (!sid) return { error: "Invalid session." };
+
+  const [s] = await db
+    .select({
+      status: shellSessions.status,
+      sensorId: shellSessions.sensorId,
+      createdAt: shellSessions.createdAt,
+      expiresAt: shellSessions.expiresAt,
+    })
+    .from(shellSessions)
+    .where(eq(shellSessions.id, sid))
+    .limit(1);
+  if (!s) return { error: "Session not found." };
+  if (s.status === "closed" || s.status === "killed" || s.status === "expired") {
+    return { error: "Session already ended." };
+  }
+
+  const absMax = s.createdAt.getTime() + CONSOLE_ABS_MAX_MS;
+  // Extend from whichever is later — the current deadline or now — so extending
+  // after a lull doesn't lose time, then clamp to the absolute ceiling.
+  const proposed = Math.min(absMax, Math.max(s.expiresAt.getTime(), Date.now()) + CONSOLE_TTL_MS);
+  if (proposed <= s.expiresAt.getTime()) {
+    return { error: "Session is already at its maximum length (60 min)." };
+  }
+
+  await db
+    .update(shellSessions)
+    .set({ expiresAt: new Date(proposed) })
+    .where(eq(shellSessions.id, sid));
+
+  await audit(admin.email, "console_session_extended", { sid, sensorId: s.sensorId, expiresAt: proposed });
+  await adminEvent(
+    admin.email,
+    "console_session_extended",
+    { sid, sensorId: s.sensorId },
+    "info",
+    `sensor:${s.sensorId}`,
+  );
+  revalidatePath(basePathFor(formData));
+  return { ok: true, message: "Session extended +15 min.", extendedExpiresAt: proposed };
 }
 
 /** Kill-switch: mark a console session killed. The broker's /alive poll drops the tunnel within ~10s. */

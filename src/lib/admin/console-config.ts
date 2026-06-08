@@ -26,5 +26,39 @@ export const CONSOLE_COMMANDS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "diag-selftest", label: "Selftest" },
 ];
 
-/** Hard session ceiling, mirrored on the broker. */
+/**
+ * State-changing console actions (CON-5). Mirrors the collector's
+ * _CONTROL_COMMANDS + the broker allow-list. Unlike the read-only diagnostics
+ * above, these CHANGE state on the box, so the UI gates each one behind an
+ * explicit confirm and the action is audited. IN-CONTAINER scope only — host
+ * actions (restart/reboot) need the host-execution path + security sign-off.
+ * Keep this list short, safe, and reviewed with the security chat (SEC owner).
+ */
+export const CONSOLE_CONTROL_COMMANDS: ReadonlyArray<{
+  id: string;
+  label: string;
+  /** Shown in the confirm prompt so the operator knows what will happen. */
+  confirm: string;
+}> = [
+  {
+    id: "ctl-flush-arp",
+    label: "Flush ARP cache",
+    confirm:
+      "Flush the sensor's ARP/neighbor cache? Stale entries are cleared and re-learned on the next scan.",
+  },
+];
+
+/**
+ * Initial session budget once the sensor pairs, AND the increment added by each
+ * "extend" (CON-6). The dashboard resets this clock to start at PAIRING (not at
+ * click) so the up-to-10-min wait for the sensor's next check-in doesn't erode
+ * the usable session. Mirrored on the broker.
+ */
 export const CONSOLE_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Absolute ceiling measured from session creation. Extends (+CONSOLE_TTL_MS
+ * each) can never push a session past this. The broker enforces the same cap as
+ * defense-in-depth. Keep these two in sync.
+ */
+export const CONSOLE_ABS_MAX_MS = 60 * 60 * 1000;

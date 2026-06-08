@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { shellSessions } from "@/db/schema/management";
 import { hashToken } from "@/lib/sensor/auth";
 import { getSession, isTerminal, expireIfPast } from "@/lib/broker/sessions";
+import { CONSOLE_TTL_MS, CONSOLE_ABS_MAX_MS } from "@/lib/admin/console-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,11 +40,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  // First sensor connection promotes the session from pending -> active.
+  // First sensor connection promotes the session from pending -> active AND
+  // (re)starts the time-box at PAIRING. The clock was provisionally set at click
+  // (openConsoleSessionAction), but the sensor only dials in on its next ~10-min
+  // check-in; without this reset that wait would silently eat the usable session.
+  // Capped so a session can never run past createdAt + CONSOLE_ABS_MAX_MS.
+  let expiresAtMs = s.expiresAt.getTime();
   if (role === "sensor" && s.status === "pending") {
+    expiresAtMs = Math.min(
+      s.createdAt.getTime() + CONSOLE_ABS_MAX_MS,
+      Date.now() + CONSOLE_TTL_MS,
+    );
     await db
       .update(shellSessions)
-      .set({ status: "active" })
+      .set({ status: "active", expiresAt: new Date(expiresAtMs) })
       .where(eq(shellSessions.id, sid));
   }
 
@@ -51,7 +61,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     sid,
     sensorId: s.sensorId,
-    expiresAt: s.expiresAt.getTime(),
+    expiresAt: expiresAtMs,
     recordKey: s.recordKey,
   });
 }
