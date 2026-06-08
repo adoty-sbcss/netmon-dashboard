@@ -28,6 +28,7 @@ export async function proxy(req: NextRequest) {
   // /api/sensor/* routes, like config-backup download, still require a session.)
   if (
     pathname === "/api/sensor/checkin" ||
+    pathname === "/api/sensor/console-poll" ||
     pathname === "/api/sensor/result" ||
     pathname === "/api/sensor/enroll" ||
     pathname === "/api/sensor/iperf-result"
