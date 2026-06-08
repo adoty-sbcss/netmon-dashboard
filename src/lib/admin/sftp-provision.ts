@@ -70,6 +70,11 @@ export async function ensureDistrictSftpUser(
   }
   const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID!;
   const homeDir = `${DEPOT_CONTAINER}/upload/${slug}`;
+  // Azure SFTP local-user NAMES allow lowercase letters + digits ONLY (no dashes),
+  // 3–64 chars, unique per account. Derive a valid, deterministic, unique name
+  // from the slug (dash-free) + the districtId (guarantees uniqueness). The folder
+  // (homeDir) keeps the readable dashed slug — dashes are fine in blob paths.
+  const localName = (`nm${slug.replace(/[^a-z0-9]/g, "")}`).slice(0, 60) + String(districtId);
 
   // 1. chroot home must exist before the user can write to it (HTTPS/443).
   await ensureHomeDir(slug);
@@ -78,7 +83,7 @@ export async function ensureDistrictSftpUser(
   const { StorageManagementClient } = await import("@azure/arm-storage");
   const client = new StorageManagementClient(await credential(), subscriptionId);
 
-  await client.localUsers.createOrUpdate(DEPOT_RG, DEPOT_ACCOUNT, slug, {
+  await client.localUsers.createOrUpdate(DEPOT_RG, DEPOT_ACCOUNT, localName, {
     hasSshPassword: true,
     hasSshKey: false,
     homeDirectory: homeDir,
@@ -86,11 +91,11 @@ export async function ensureDistrictSftpUser(
   });
 
   // 3. Generate the password (returned once).
-  const result = await client.localUsers.regeneratePassword(DEPOT_RG, DEPOT_ACCOUNT, slug);
+  const result = await client.localUsers.regeneratePassword(DEPOT_RG, DEPOT_ACCOUNT, localName);
   const password = result.sshPassword;
   if (!password) throw new Error("Azure did not return an SFTP password");
 
-  const username = `${DEPOT_ACCOUNT}.${slug}`;
+  const username = `${DEPOT_ACCOUNT}.${localName}`;
   await db
     .insert(districtSftp)
     .values({ districtId, username, passwordEnc: encryptSecret(password), homeDir })
