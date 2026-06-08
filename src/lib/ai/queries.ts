@@ -10,6 +10,8 @@ import { aiAnalyses, securityAnalyses, type AiFinding } from "@/db/schema/ai";
 import { districts, schools } from "@/db/schema/app";
 import { chatMessages } from "@/db/schema/chat";
 import { estimateCost } from "./pricing";
+import { getMutedIssues } from "@/lib/issues/queries";
+import { issueKeyFromTitle } from "@/lib/issues/reconcile";
 
 export interface AnalysisRow {
   id: number;
@@ -179,8 +181,18 @@ export async function getLatestAiSummary(
   const run = await getLatestRunForDistrict(districtId, scopeType, scopeId);
   if (!run) return null;
   const ok = run.rows.filter((r) => r.status === "ok");
+
+  // AI-4: hide findings the operator muted so already-generated ones disappear
+  // immediately (future runs are also told to skip them via the analysis context).
+  const mutedScopeId = scopeType === "school" ? scopeId : districtId;
+  const mutedKeys =
+    mutedScopeId != null
+      ? new Set((await getMutedIssues(scopeType, mutedScopeId)).map((m) => m.issueKey))
+      : new Set<string>();
+
   const findings: AiFindingItem[] = ok
     .flatMap((r) => r.findings.map((f) => ({ ...f, model: r.model })))
+    .filter((f) => !mutedKeys.has(issueKeyFromTitle(f.title)))
     .sort((a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9));
   return {
     runId: run.runId,

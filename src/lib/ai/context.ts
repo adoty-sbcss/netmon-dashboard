@@ -27,6 +27,7 @@ import {
   getSchoolHealthTrend,
 } from "@/db/queries";
 import { getAuthorizedDhcpServerSet } from "@/lib/dhcp-policy";
+import { getMutedIssues } from "@/lib/issues/queries";
 import type { AnalysisScope, AnalysisWindow } from "./types";
 
 /** Compact per-school evidence block. */
@@ -151,10 +152,14 @@ export async function buildAnalysisContext(
 
   const authorizedDhcpServers = [...authorizedSet];
 
+  // Issues the operator has muted (AI-4): the model must NOT re-report these.
+  const mutedIssues = (await getMutedIssues(scope.type, scope.id)).map((m) => m.title);
+
   const payload = {
     scope: { type: scope.type, label: scope.label },
     window: { start: window.start.toISOString(), end: window.end.toISOString() },
     authorizedDhcpServers,
+    mutedIssues,
     schoolCount: schools_.length,
     schools: schools_,
   };

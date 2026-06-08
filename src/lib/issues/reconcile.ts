@@ -95,8 +95,10 @@ export async function reconcileIssues(opts: {
   }
 
   // Issues not surfaced this run: tick the miss counter; auto-resolve at the cap.
+  // Muted issues (AI-4) are held — never auto-resolved — so a mute stays sticky
+  // even across runs where the issue disappears and later returns.
   for (const e of existing) {
-    if (e.status === "resolved" || seen.has(e.issueKey)) continue;
+    if (e.status === "resolved" || e.status === "muted" || seen.has(e.issueKey)) continue;
     const missed = e.missedRuns + 1;
     const resolve = missed >= MISS_CAP;
     await db

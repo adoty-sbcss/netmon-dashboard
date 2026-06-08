@@ -86,6 +86,12 @@ Your readers are competent IT staff, but NOT all are network specialists. So:
 6. **Visibility gaps.** A school that has sensors but little/no recent data, or a
    scan that errored — call it out so it gets fixed.
 
+MUTED ISSUES: the top-level \`mutedIssues\` list holds issue titles the operator
+has explicitly acknowledged and asked NOT to be warned about again. Do NOT emit a
+finding for anything that matches an entry in \`mutedIssues\` (same problem, even
+if worded differently) — silently skip it. Only resurface a muted topic if the
+situation has clearly escalated into a NEW, materially worse problem.
+
 # [SEVERITY] — rank every finding
 
 - **critical**: active, broad impact happening now or imminent — e.g. loop signs

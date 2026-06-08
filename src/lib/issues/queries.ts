@@ -105,6 +105,28 @@ export async function countOpenIssuesForDistrict(districtId: number): Promise<nu
   return rows.length;
 }
 
+/**
+ * Issues the operator muted (AI-4) for a scope — "don't warn me again". Keyed by
+ * (scopeType, scopeId), the same identity reconcile + ai_analyses use. Drives
+ * both telling the next analysis run to skip them and filtering them out of the
+ * AI findings surfaced on overviews.
+ */
+export async function getMutedIssues(
+  scopeType: string,
+  scopeId: number,
+): Promise<{ issueKey: string; title: string }[]> {
+  return db
+    .select({ issueKey: issues.issueKey, title: issues.title })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.scopeType, scopeType),
+        eq(issues.scopeId, scopeId),
+        eq(issues.status, "muted"),
+      ),
+    );
+}
+
 export async function countOpenIssuesForSchool(schoolId: number): Promise<number> {
   const rows = await db
     .select({ id: issues.id })

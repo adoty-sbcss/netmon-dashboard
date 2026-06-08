@@ -53,6 +53,25 @@ export async function updateIssueAction(
         updatedAt: now,
       })
       .where(eq(issues.id, id));
+  } else if (action === "mute") {
+    // AI-4: "acknowledge — don't warn me about this again". Sticky: reconcile
+    // won't reopen/auto-resolve it, future analysis runs are told to skip it, and
+    // it's filtered out of the AI findings surfaced on overviews.
+    await db
+      .update(issues)
+      .set({ status: "muted", acknowledgedBy: admin.id, acknowledgedAt: now, updatedAt: now })
+      .where(eq(issues.id, id));
+  } else if (action === "unmute") {
+    await db
+      .update(issues)
+      .set({
+        status: "open",
+        acknowledgedBy: null,
+        acknowledgedAt: null,
+        missedRuns: 0,
+        updatedAt: now,
+      })
+      .where(eq(issues.id, id));
   } else {
     return { error: "Unknown action." };
   }

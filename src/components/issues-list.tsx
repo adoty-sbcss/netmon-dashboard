@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { Check, CircleCheck, RotateCcw, ShieldCheck } from "lucide-react";
+import { Bell, BellOff, Check, CircleCheck, RotateCcw, ShieldCheck } from "lucide-react";
 
 import type { IssueRow } from "@/lib/issues/queries";
 import { updateIssueAction, type IssueActionState } from "@/lib/issues/actions";
@@ -52,11 +52,15 @@ function IssueRowActions({
   const common = { action, pending, id, basePath };
   if (status === "resolved")
     return <IssueActionButton {...common} act="reopen" label="Reopen" Icon={RotateCcw} />;
+  if (status === "muted")
+    return <IssueActionButton {...common} act="unmute" label="Unmute" Icon={Bell} />;
   return (
     <div className="flex gap-2">
       {status !== "acknowledged" && (
         <IssueActionButton {...common} act="acknowledge" label="Ack" Icon={Check} />
       )}
+      {/* AI-4: stronger than Ack — hide it and stop the AI re-raising it. */}
+      <IssueActionButton {...common} act="mute" label="Mute" Icon={BellOff} />
       <IssueActionButton {...common} act="resolve" label="Resolve" Icon={CircleCheck} />
     </div>
   );
@@ -95,6 +99,9 @@ export function IssuesList({
               {showScope && <Badge variant="outline" className="text-xs">{i.scopeLabel}</Badge>}
               {i.status === "acknowledged" && (
                 <Badge variant="outline" className="text-muted-foreground">acknowledged</Badge>
+              )}
+              {i.status === "muted" && (
+                <Badge variant="outline" className="text-muted-foreground">muted</Badge>
               )}
               {i.status === "resolved" && (
                 <Badge variant="outline" className="border-[var(--success)]/40 text-[var(--success)]">resolved</Badge>
