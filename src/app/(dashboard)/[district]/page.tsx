@@ -28,6 +28,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getSessionUser } from "@/lib/auth/current-user";
+import { AddLandingSpot } from "@/components/admin/add-landing-spot";
 
 export default async function DistrictPage({
   params,
@@ -37,6 +39,7 @@ export default async function DistrictPage({
   const { district: districtSlug } = await params;
   const district = await getDistrictBySlug(districtSlug);
   if (!district) notFound();
+  const user = await getSessionUser();
 
   const [schools, aiSummary] = await Promise.all([
     listSchools(district.id),
@@ -100,7 +103,12 @@ export default async function DistrictPage({
       />
 
       <div id="schools" className="scroll-mt-20">
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Schools</h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Schools</h2>
+          {user?.role === "superadmin" && (
+            <AddLandingSpot kind="school" districtSlug={district.slug} />
+          )}
+        </div>
         {schools.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center gap-2 py-12 text-center">

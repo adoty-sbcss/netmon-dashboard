@@ -24,6 +24,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AddLandingSpot } from "@/components/admin/add-landing-spot";
 
 export default async function OverviewPage() {
   const user = await getSessionUser();
@@ -69,9 +70,10 @@ export default async function OverviewPage() {
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-          Districts
-        </h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Districts</h2>
+          {user.role === "superadmin" && <AddLandingSpot kind="district" />}
+        </div>
         {districts.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center gap-2 py-12 text-center">

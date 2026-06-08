@@ -33,6 +33,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { headers } from "next/headers";
+import { getSessionUser } from "@/lib/auth/current-user";
+import { getEnrollmentView } from "@/lib/sensor/enrollment";
+import { resolveSftpConfig } from "@/lib/ingest/settings";
+import { DeploySensor } from "./deploy-sensor";
 
 export default async function SchoolPage({
   params,
@@ -55,6 +60,42 @@ export default async function SchoolPage({
 
   const latestHealth = health.at(-1);
 
+  // PROV-2b: superadmin-only "Deploy a sensor here" (the provisioning block
+  // carries the bootstrap key + SFTP password, so it's gated).
+  const user = await getSessionUser();
+  let deploy: {
+    appOrigin: string;
+    bootstrapKey: string | null;
+    sftp: { host: string; port: number; user: string; password: string | null; remotePath: string } | null;
+  } | null = null;
+  if (user?.role === "superadmin") {
+    const [enrollment, sftpResolved, hdrs] = await Promise.all([
+      getEnrollmentView(),
+      resolveSftpConfig(),
+      headers(),
+    ]);
+    let appOrigin = (process.env.APP_ORIGIN ?? "").replace(/\/$/, "");
+    if (!appOrigin) {
+      const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
+      const proto = hdrs.get("x-forwarded-proto") ?? "https";
+      appOrigin = host ? `${proto}://${host}` : "";
+    }
+    const c = sftpResolved.config;
+    deploy = {
+      appOrigin,
+      bootstrapKey: enrollment.bootstrapKey,
+      sftp: c
+        ? {
+            host: c.host,
+            port: c.port,
+            user: c.username,
+            password: c.password ?? null,
+            remotePath: c.baseDir || "/",
+          }
+        : null,
+    };
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
@@ -63,6 +104,18 @@ export default async function SchoolPage({
         title={school.name || titleizeSlug(school.slug)}
         description={`${district.name} · last scan ${relativeTime(stats.lastScanAt)}`}
       />
+
+      {deploy && (
+        <DeploySensor
+          appOrigin={deploy.appOrigin}
+          bootstrapKey={deploy.bootstrapKey}
+          sftp={deploy.sftp}
+          districtName={district.name}
+          districtSlug={district.slug}
+          schoolName={school.name || titleizeSlug(school.slug)}
+          schoolSlug={school.slug}
+        />
+      )}
 
       {/* Primary metrics — the at-a-glance health of the site */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
