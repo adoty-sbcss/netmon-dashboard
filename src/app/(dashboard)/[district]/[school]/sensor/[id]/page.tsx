@@ -112,6 +112,7 @@ export default async function SensorDetailPage({
       typeof dcfg.speedtest_providers === "string" ? dcfg.speedtest_providers : "ookla,cloudflare",
     scheduleSec:
       typeof dcfg.speedtest_schedule_sec === "number" ? dcfg.speedtest_schedule_sec : 6 * 3600,
+    latencyEnabled: Boolean(dcfg.latency_enabled),
   };
   const basePath = `/${district.slug}/${school.slug}`;
 

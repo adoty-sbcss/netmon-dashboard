@@ -37,6 +37,7 @@ export interface SpeedtestSchedule {
   enabled: boolean;
   providers: string; // csv of ookla,cloudflare
   scheduleSec: number;
+  latencyEnabled: boolean;
 }
 
 const f1 = (v: number | null) => (v == null ? "—" : v.toFixed(1));
@@ -100,7 +101,18 @@ export function SpeedtestPanel({
               defaultChecked={schedule.enabled}
               className="size-4 rounded border-input accent-primary"
             />
-            <span className="text-sm font-medium">Run on a schedule</span>
+            <span className="text-sm font-medium">Run speed tests on a schedule</span>
+          </label>
+          <label className="flex items-center gap-2.5">
+            <input
+              type="checkbox"
+              name="latencyEnabled"
+              defaultChecked={schedule.latencyEnabled}
+              className="size-4 rounded border-input accent-primary"
+            />
+            <span className="text-sm font-medium">
+              Collect latency / jitter / loss each check-in
+            </span>
           </label>
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1">

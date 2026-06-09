@@ -75,12 +75,15 @@ export async function saveSpeedtestScheduleAction(
   const enabled = formData.get("speedtestEnabled") === "on";
   const providers = providersFromForm(formData);
   const sched = Number(formData.get("scheduleSec"));
+  // PERF-4: latency probing rides the same form (it's cheap — runs each check-in).
+  const latencyEnabled = formData.get("latencyEnabled") === "on";
 
   const cfg = {
     speedtest_enabled: enabled,
     speedtest_providers: providers,
     // 15-min floor (speed tests use real bandwidth); default 6h.
     speedtest_schedule_sec: Number.isInteger(sched) && sched >= 900 ? sched : 6 * 3600,
+    latency_enabled: latencyEnabled,
   };
 
   // Merge into the existing desired config (don't clobber SNMP/SFTP/iperf), bump version.

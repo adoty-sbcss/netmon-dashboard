@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
-import { AlertTriangle, Gauge, Globe, ServerCog } from "lucide-react";
+import { Activity, AlertTriangle, Gauge, Globe, ServerCog } from "lucide-react";
 
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import {
   getDistrictIperf,
   listSchoolIperfResults,
   listSchoolSpeedtests,
+  listSchoolLatency,
   type SchoolIperfRow,
+  type SchoolLatencyRow,
 } from "@/lib/iperf";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -51,11 +53,22 @@ export default async function IperfPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [cfg, rows, speedtests] = await Promise.all([
+  const [cfg, rows, speedtests, latencyRows] = await Promise.all([
     getDistrictIperf(district.id),
     listSchoolIperfResults(school.id, 300),
     listSchoolSpeedtests(school.id, 200),
+    listSchoolLatency(school.id, 400),
   ]);
+
+  // Latest latency probe per target (internet / gateway / dns), newest-first input.
+  const latencyLatest = new Map<string, SchoolLatencyRow>();
+  for (const r of latencyRows) {
+    const k = r.label ?? "other";
+    if (!latencyLatest.has(k)) latencyLatest.set(k, r);
+  }
+  const latencyCards = ["internet", "gateway", "dns"]
+    .filter((k) => latencyLatest.has(k))
+    .map((k) => latencyLatest.get(k)!);
 
   const schoolName = school.name || titleizeSlug(school.slug);
 
@@ -194,6 +207,57 @@ export default async function IperfPage({
           )}
         </CardContent>
       </Card>
+
+      {/* --- Latency / jitter / loss (latest per target) --- */}
+      {latencyCards.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Activity className="size-4 text-primary" /> Latency &amp; loss (latest)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-0 sm:px-6">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Target</TableHead>
+                    <TableHead className="hidden sm:table-cell">Host</TableHead>
+                    <TableHead>Latency</TableHead>
+                    <TableHead>Jitter</TableHead>
+                    <TableHead>Loss</TableHead>
+                    <TableHead className="hidden lg:table-cell">When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {latencyCards.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-medium capitalize">{r.label ?? "—"}</TableCell>
+                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">
+                        {r.target ?? "—"}
+                      </TableCell>
+                      <TableCell>{r.latencyMs == null ? "—" : `${f1(r.latencyMs)} ms`}</TableCell>
+                      <TableCell>{r.jitterMs == null ? "—" : `${f1(r.jitterMs)} ms`}</TableCell>
+                      <TableCell
+                        className={
+                          r.lossPct != null && r.lossPct > 0
+                            ? "font-medium text-[var(--warning)]"
+                            : ""
+                        }
+                      >
+                        {r.lossPct == null ? "—" : `${r.lossPct.toFixed(1)}%`}
+                      </TableCell>
+                      <TableCell className="hidden text-muted-foreground lg:table-cell">
+                        {relativeTime(r.createdAt)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* --- Internal throughput (iperf to the district's own server) --- */}
       <div className="flex items-center gap-2 pt-2 text-sm font-semibold text-muted-foreground">

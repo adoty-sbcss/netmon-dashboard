@@ -281,6 +281,13 @@
       "when": 1781016392955,
       "tag": "0039_perf2_speedtest_results",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1781030071437,
+      "tag": "0040_perf4_latency_results",
+      "breakpoints": true
     }
   ]
 }

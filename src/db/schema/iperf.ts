@@ -104,3 +104,32 @@ export const speedtestResults = pgTable(
   },
   (t) => [index("idx_speedtest_results_sensor").on(t.sensorId, t.createdAt)],
 );
+
+/**
+ * A single latency/jitter/loss probe reported by a sensor (PERF-4). One row per
+ * target per cycle; `label` is 'internet' | 'gateway' | 'dns'.
+ */
+export const latencyResults = pgTable(
+  "latency_results",
+  {
+    id: serial("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    /** 'manual' | 'scheduled'. */
+    trigger: text("trigger"),
+    /** 'internet' | 'gateway' | 'dns'. */
+    label: text("label"),
+    target: text("target"),
+    latencyMs: doublePrecision("latency_ms"),
+    jitterMs: doublePrecision("jitter_ms"),
+    lossPct: doublePrecision("loss_pct"),
+    ok: boolean("ok").notNull().default(true),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("idx_latency_results_sensor").on(t.sensorId, t.createdAt)],
+);

@@ -7,7 +7,7 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { districtIperf, iperfResults, speedtestResults } from "@/db/schema/iperf";
+import { districtIperf, iperfResults, speedtestResults, latencyResults } from "@/db/schema/iperf";
 import { sensors } from "@/db/schema/app";
 
 export interface DistrictIperfView {
@@ -199,6 +199,46 @@ export async function listSpeedtestResults(
     .from(speedtestResults)
     .where(eq(speedtestResults.sensorId, sensorId))
     .orderBy(desc(speedtestResults.createdAt))
+    .limit(limit);
+}
+
+// --- latency / jitter / loss (PERF-4) --------------------------------------
+
+export interface SchoolLatencyRow {
+  id: number;
+  sensorSlug: string;
+  sensorName: string | null;
+  label: string | null;
+  target: string | null;
+  latencyMs: number | null;
+  jitterMs: number | null;
+  lossPct: number | null;
+  ok: boolean;
+  createdAt: Date;
+}
+
+/** Recent latency probes across a school's sensors (newest first). */
+export async function listSchoolLatency(
+  schoolId: number,
+  limit = 400,
+): Promise<SchoolLatencyRow[]> {
+  return db
+    .select({
+      id: latencyResults.id,
+      sensorSlug: sensors.slug,
+      sensorName: sensors.name,
+      label: latencyResults.label,
+      target: latencyResults.target,
+      latencyMs: latencyResults.latencyMs,
+      jitterMs: latencyResults.jitterMs,
+      lossPct: latencyResults.lossPct,
+      ok: latencyResults.ok,
+      createdAt: latencyResults.createdAt,
+    })
+    .from(latencyResults)
+    .innerJoin(sensors, eq(latencyResults.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(desc(latencyResults.createdAt))
     .limit(limit);
 }
 
