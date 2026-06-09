@@ -39,6 +39,19 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 CMD ["npm", "run", "ingest:sync"]
 
+# ---- maintenance: one-shot image for the daily cleanup Container Apps Job ----
+# Reuses the builder layer (tsx + source + drizzle ORM + ssh2-sftp-client).
+# Purges per-scan time-series past RETENTION_DAYS, VACUUM (ANALYZE)s, and prunes
+# already-ingested SFTP bundles past SFTP_GRACE_DAYS. DATABASE_URL + AUTH_SECRET
+# (to decrypt the SFTP creds) are injected as env (Key Vault secret refs).
+# Built/pushed separately as netmon-dashboard-maintenance:latest. See
+# src/jobs/maintenance.ts.
+FROM builder AS maintenance
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+CMD ["npm", "run", "maintenance"]
+
 # ---- runner: minimal runtime image (web app) ----
 # IMPORTANT: this MUST be the LAST stage in the Dockerfile. `az acr build` /
 # `docker build` with no --target builds the final stage, and that default build

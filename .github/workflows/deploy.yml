@@ -75,6 +75,18 @@ jobs:
             --target migrator \
             .
 
+      # The maintenance Job (daily cleanup) runs its own image (Dockerfile
+      # --target maintenance): purge old time-series, VACUUM, prune SFTP. Rebuild
+      # on every deploy so its code stays in lockstep with main.
+      - name: Build maintenance image in ACR
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE-maintenance:${{ github.sha }}" \
+            --image "$IMAGE-maintenance:latest" \
+            --target maintenance \
+            .
+
       # The tunnel-broker is a SEPARATE tiny Node service (broker/) with its own
       # Dockerfile + context — not part of the Next build. Build it here so its
       # image stays in lockstep with main; the broker Container App is rolled at
@@ -116,6 +128,17 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --image "$ACR_NAME.azurecr.io/$IMAGE-migrator:${{ github.sha }}" \
             || echo "enrich job not provisioned yet — apply infra/main.bicep to create it"
+
+      - name: Point maintenance Job at the new image
+        # Daily cleanup job (maintenance image). Guarded so the deploy still
+        # succeeds before the job is provisioned (created out-of-band via az /
+        # infra/main.bicep).
+        run: |
+          az containerapp job update \
+            --name w2-sbcss-netmon-maintenance \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_NAME.azurecr.io/$IMAGE-maintenance:${{ github.sha }}" \
+            || echo "maintenance job not provisioned yet — create it via az / infra/main.bicep"
 
       - name: Apply DB migrations (in-VNet job) before rolling
         # Migrations run INSIDE the VNet (private Postgres has no public endpoint),

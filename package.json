@@ -15,6 +15,7 @@
     "ingest": "tsx src/ingest/run.ts",
     "ingest:sync": "tsx src/ingest/sync.ts",
     "enrich": "tsx src/ingest/enrich.ts",
+    "maintenance": "tsx src/jobs/maintenance.ts",
     "ai:analyze": "tsx --conditions=react-server src/ai/run.ts",
     "oui:refresh": "tsx src/lib/oui/refresh-oui.ts"
   },

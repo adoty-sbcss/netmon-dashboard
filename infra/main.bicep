@@ -134,6 +134,28 @@ param enableEnrichJob bool = true
 @description('Cron (UTC) for the nightly device-classification enrich pass. Default 08:00 UTC (~1 AM Pacific).')
 param enrichCron string = '0 8 * * *'
 
+// ---- Maintenance Job (daily cleanup) ----
+// Purges per-scan time-series past the retention window, VACUUM (ANALYZE)s, and
+// prunes already-ingested bundles from the SFTP server. Reads DATABASE_URL +
+// AUTH_SECRET (AUTH_SECRET decrypts the SFTP creds) from Key Vault. Runs the
+// Dockerfile "maintenance" target (`npm run maintenance`). NOTE: the live job was
+// first created out-of-band via `az containerapp job create`; this block keeps
+// the IaC in sync. Windows are env-tunable without a redeploy.
+@description('Provision the daily maintenance Job — purge old time-series, VACUUM, prune SFTP bundles.')
+param enableMaintenanceJob bool = true
+
+@description('Image the maintenance Job runs. Built from the Dockerfile "maintenance" target.')
+param maintenanceImage string = '${acrName}.azurecr.io/netmon-dashboard-maintenance:latest'
+
+@description('Cron (UTC) for the daily maintenance Job. Default 04:00 UTC (~9 PM Pacific).')
+param maintenanceCron string = '0 4 * * *'
+
+@description('Days to keep per-scan time-series before the maintenance Job purges it.')
+param maintenanceRetentionDays int = 30
+
+@description('Min age in days (after parse) before the maintenance Job prunes a bundle from SFTP.')
+param maintenanceSftpGraceDays int = 7
+
 @description('Azure OpenAI endpoint, e.g. https://<resource>.openai.azure.com. Empty = GPT column stays "not configured".')
 param azureOpenAiEndpoint string = ''
 
@@ -558,6 +580,71 @@ resource ingestJob 'Microsoft.App/jobs@2024-03-01' = if (enableIngestJob) {
             { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'NODE_ENV', value: 'production' }
+          ]
+        }
+      ]
+    }
+  }
+  dependsOn: assignRoles
+    ? [ kvDatabaseUrl, acrPullAssignment, kvSecretsUserAssignment ]
+    : [ kvDatabaseUrl ]
+}
+
+// ---- Maintenance Job (daily cleanup: time-series purge + VACUUM + SFTP prune) ----
+resource maintenanceJob 'Microsoft.App/jobs@2024-03-01' = if (enableMaintenanceJob) {
+  name: 'w2-sbcss-netmon-maintenance'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerEnv.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 3600
+      replicaRetryLimit: 1
+      scheduleTriggerConfig: {
+        cronExpression: maintenanceCron
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: appIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'auth-secret'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${authSecretName}'
+          identity: appIdentity.id
+        }
+        {
+          name: 'database-url'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${databaseUrlSecretName}'
+          identity: appIdentity.id
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'maintenance'
+          image: maintenanceImage
+          resources: {
+            cpu: json(containerCpu)
+            memory: containerMemory
+          }
+          env: [
+            { name: 'AUTH_SECRET', secretRef: 'auth-secret' }
+            { name: 'DATABASE_URL', secretRef: 'database-url' }
+            { name: 'NODE_ENV', value: 'production' }
+            { name: 'RETENTION_DAYS', value: string(maintenanceRetentionDays) }
+            { name: 'SFTP_GRACE_DAYS', value: string(maintenanceSftpGraceDays) }
           ]
         }
       ]
