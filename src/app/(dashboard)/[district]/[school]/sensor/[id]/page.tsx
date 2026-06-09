@@ -15,7 +15,6 @@ import { sensors as sensorsTable } from "@/db/schema/app";
 import { getDistrictIperf, listIperfResults, listSpeedtestResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
-import { SchoolDataReset } from "./sensor-reset";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { SpeedtestPanel } from "./speedtest-panel";
@@ -332,14 +331,6 @@ export default async function SensorDetailPage({
         </Card>
       )}
 
-      {isAdmin && (
-        <SchoolDataReset
-          schoolId={school.id}
-          basePath={basePath}
-          schoolSlug={school.slug}
-          schoolName={school.name || titleizeSlug(school.slug)}
-        />
-      )}
     </div>
   );
 }
