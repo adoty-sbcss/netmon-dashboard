@@ -23,18 +23,35 @@ export function StatCard({
   href?: string;
 }) {
   const toneRing: Record<string, string> = {
-    default: "text-muted-foreground",
+    default: "text-primary",
     success: "text-[var(--success)]",
     warning: "text-[var(--warning)]",
     destructive: "text-destructive",
     info: "text-[var(--info)]",
   };
+  // A thin status-colored left edge + a tinted icon chip — keeps the slate base
+  // but gives each tile a touch of color (neutral tiles read as brand blue).
+  const toneBorder: Record<string, string> = {
+    default: "border-l-primary/60",
+    success: "border-l-[var(--success)]",
+    warning: "border-l-[var(--warning)]",
+    destructive: "border-l-destructive",
+    info: "border-l-[var(--info)]",
+  };
+  const toneIconBg: Record<string, string> = {
+    default: "bg-primary/10",
+    success: "bg-[var(--success)]/10",
+    warning: "bg-[var(--warning)]/10",
+    destructive: "bg-destructive/10",
+    info: "bg-[var(--info)]/10",
+  };
 
   const card = (
     <Card
       className={cn(
-        "gap-0 py-0",
-        href && "h-full transition-colors hover:border-primary/40 hover:bg-accent/40",
+        "gap-0 border-l-4 py-0",
+        toneBorder[tone],
+        href && "h-full transition-colors hover:bg-accent/40",
         className,
       )}
     >
@@ -49,7 +66,7 @@ export function StatCard({
           )}
         </div>
         {Icon && (
-          <div className="shrink-0 rounded-lg bg-muted p-2">
+          <div className={cn("shrink-0 rounded-lg p-2", toneIconBg[tone])}>
             <Icon className={cn("size-5", toneRing[tone])} />
           </div>
         )}

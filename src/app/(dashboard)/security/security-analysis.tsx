@@ -5,7 +5,7 @@ import { Loader2, ShieldAlert, AlertTriangle, KeyRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SeverityBadge } from "@/components/severity-badge";
+import { SeverityBadge, severityBorderClass } from "@/components/severity-badge";
 import { relativeTime } from "@/lib/format";
 import type { ProviderDescriptor } from "@/lib/ai/providers/registry";
 import type { SecurityAnalysisRun, SecurityAnalysisRow } from "@/lib/ai/security-queries";
@@ -178,7 +178,10 @@ function ModelColumn({
                   {row.findings.length} finding{row.findings.length === 1 ? "" : "s"}
                 </p>
                 {row.findings.map((f, i) => (
-                  <div key={i} className="rounded-lg border bg-muted/30 p-3">
+                  <div
+                    key={i}
+                    className={`rounded-lg border border-l-4 ${severityBorderClass(f.severity)} bg-muted/30 p-3`}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       <SeverityBadge severity={f.severity} />
                       <span className="text-[11px] uppercase tracking-wide text-muted-foreground">

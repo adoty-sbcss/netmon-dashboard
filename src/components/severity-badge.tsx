@@ -10,6 +10,20 @@ const STYLES: Record<string, string> = {
   info: "border-transparent bg-muted text-muted-foreground",
 };
 
+// Status-colored left border for finding / issue cards — matches the badge hues.
+const BORDERS: Record<string, string> = {
+  critical: "border-l-destructive",
+  high: "border-l-destructive",
+  medium: "border-l-[var(--warning)]",
+  low: "border-l-[var(--info)]",
+  info: "border-l-muted-foreground/30",
+};
+
+/** A `border-l-*` class for the given severity (pair with `border-l-4`). */
+export function severityBorderClass(severity: string): string {
+  return BORDERS[severity?.toLowerCase() ?? "info"] ?? BORDERS.info;
+}
+
 export function SeverityBadge({ severity }: { severity: string }) {
   const key = severity?.toLowerCase() ?? "info";
   const style = STYLES[key] ?? STYLES.info;
