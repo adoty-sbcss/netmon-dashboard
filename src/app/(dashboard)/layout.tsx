@@ -39,6 +39,10 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0.5 bg-gradient-to-r from-[var(--brand-b)] via-primary to-[var(--brand-a)]"
+      />
       <AppSidebar
         tree={tree}
         isAdmin={user.role === "superadmin"}

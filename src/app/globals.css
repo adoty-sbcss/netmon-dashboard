@@ -96,13 +96,14 @@
 
   --radius: 0.625rem;
 
-  --sidebar: oklch(0.984 0.003 247.858);
+  /* Subtle cool slate-blue chrome — restrained brand presence in the nav. */
+  --sidebar: oklch(0.975 0.013 252);
   --sidebar-foreground: oklch(0.129 0.042 264.695);
   --sidebar-primary: oklch(0.546 0.245 262.881);
   --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.968 0.007 247.896);
+  --sidebar-accent: oklch(0.95 0.02 254);
   --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.929 0.013 255.508);
+  --sidebar-border: oklch(0.9 0.018 254);
   --sidebar-ring: oklch(0.546 0.245 262.881);
 }
 
