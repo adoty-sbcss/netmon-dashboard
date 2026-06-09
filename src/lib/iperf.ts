@@ -7,7 +7,7 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { districtIperf, iperfResults } from "@/db/schema/iperf";
+import { districtIperf, iperfResults, speedtestResults } from "@/db/schema/iperf";
 import { sensors } from "@/db/schema/app";
 
 export interface DistrictIperfView {
@@ -97,6 +97,62 @@ export interface SchoolIperfRow extends IperfResultRow {
   sensorId: number;
   sensorSlug: string;
   sensorName: string | null;
+}
+
+// --- public speed tests (PERF-2) -------------------------------------------
+
+export interface SchoolSpeedtestRow {
+  id: number;
+  sensorId: number;
+  sensorSlug: string;
+  sensorName: string | null;
+  trigger: string | null;
+  provider: string | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  latencyMs: number | null;
+  jitterMs: number | null;
+  lossPct: number | null;
+  server: string | null;
+  isp: string | null;
+  resultUrl: string | null;
+  ok: boolean;
+  error: string | null;
+  startedAt: Date | null;
+  createdAt: Date;
+}
+
+/** Every public speed-test result across a school's sensors (newest first). */
+export async function listSchoolSpeedtests(
+  schoolId: number,
+  limit = 200,
+): Promise<SchoolSpeedtestRow[]> {
+  return db
+    .select({
+      id: speedtestResults.id,
+      sensorId: speedtestResults.sensorId,
+      sensorSlug: sensors.slug,
+      sensorName: sensors.name,
+      trigger: speedtestResults.trigger,
+      provider: speedtestResults.provider,
+      downloadMbps: speedtestResults.downloadMbps,
+      uploadMbps: speedtestResults.uploadMbps,
+      latencyMs: speedtestResults.latencyMs,
+      jitterMs: speedtestResults.jitterMs,
+      lossPct: speedtestResults.lossPct,
+      server: speedtestResults.server,
+      isp: speedtestResults.isp,
+      resultUrl: speedtestResults.resultUrl,
+      ok: speedtestResults.ok,
+      error: speedtestResults.error,
+      startedAt: speedtestResults.startedAt,
+      createdAt: speedtestResults.createdAt,
+    })
+    .from(speedtestResults)
+    .innerJoin(sensors, eq(speedtestResults.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(desc(speedtestResults.createdAt))
+    .limit(limit);
 }
 
 /** Every iperf result across a school's sensors (newest first), with the sensor

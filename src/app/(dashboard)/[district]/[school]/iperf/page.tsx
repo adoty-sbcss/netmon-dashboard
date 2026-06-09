@@ -1,8 +1,13 @@
 import { notFound } from "next/navigation";
-import { AlertTriangle, Gauge, ServerCog } from "lucide-react";
+import { AlertTriangle, Gauge, Globe, ServerCog } from "lucide-react";
 
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
-import { getDistrictIperf, listSchoolIperfResults, type SchoolIperfRow } from "@/lib/iperf";
+import {
+  getDistrictIperf,
+  listSchoolIperfResults,
+  listSchoolSpeedtests,
+  type SchoolIperfRow,
+} from "@/lib/iperf";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
@@ -46,9 +51,10 @@ export default async function IperfPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [cfg, rows] = await Promise.all([
+  const [cfg, rows, speedtests] = await Promise.all([
     getDistrictIperf(district.id),
     listSchoolIperfResults(school.id, 300),
+    listSchoolSpeedtests(school.id, 200),
   ]);
 
   const schoolName = school.name || titleizeSlug(school.slug);
@@ -105,13 +111,94 @@ export default async function IperfPage({
     <div className="flex flex-col gap-6">
       <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
-        title="iPerf bandwidth"
-        description={
-          configured
-            ? `${schoolName} · server ${cfg.serverHost}:${cfg.serverPort}`
-            : `${schoolName} · throughput tests`
-        }
+        title="Speed & Bandwidth"
+        description={`${schoolName} · internet speed tests + internal throughput`}
       />
+
+      {/* --- Internet speed (public speed tests: Ookla + Cloudflare) --- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Globe className="size-4 text-primary" /> Internet speed (public tests)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-0 sm:px-6">
+          {speedtests.length === 0 ? (
+            <p className="px-6 text-sm text-muted-foreground sm:px-0">
+              No public speed tests yet. Enable scheduled speed tests for this site
+              to measure the internet circuit (download / upload / latency to Ookla
+              + Cloudflare).
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>When</TableHead>
+                    <TableHead>Sensor</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead>↓ Down</TableHead>
+                    <TableHead>↑ Up</TableHead>
+                    <TableHead className="hidden sm:table-cell">Latency</TableHead>
+                    <TableHead className="hidden md:table-cell">Jitter</TableHead>
+                    <TableHead className="hidden lg:table-cell">Server / ISP</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {speedtests.slice(0, 50).map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell
+                        className="whitespace-nowrap text-muted-foreground"
+                        title={dateTime(r.startedAt ?? r.createdAt)}
+                      >
+                        {relativeTime(r.startedAt ?? r.createdAt)}
+                      </TableCell>
+                      <TableCell>{r.sensorName || r.sensorSlug}</TableCell>
+                      <TableCell className="capitalize">{r.provider ?? "—"}</TableCell>
+                      <TableCell>
+                        {!r.ok ? (
+                          <Badge variant="outline" className="gap-1 text-destructive">
+                            <AlertTriangle className="size-3" /> failed
+                          </Badge>
+                        ) : (
+                          `${f1(r.downloadMbps)} Mbps`
+                        )}
+                      </TableCell>
+                      <TableCell>{r.ok ? `${f1(r.uploadMbps)} Mbps` : "—"}</TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        {r.latencyMs == null ? "—" : `${f1(r.latencyMs)} ms`}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {r.jitterMs == null ? "—" : `${f1(r.jitterMs)} ms`}
+                      </TableCell>
+                      <TableCell className="hidden text-muted-foreground lg:table-cell">
+                        {r.resultUrl ? (
+                          <a
+                            href={r.resultUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                          >
+                            {r.server || "result"}
+                          </a>
+                        ) : (
+                          r.server || "—"
+                        )}
+                        {r.isp ? ` · ${r.isp}` : ""}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* --- Internal throughput (iperf to the district's own server) --- */}
+      <div className="flex items-center gap-2 pt-2 text-sm font-semibold text-muted-foreground">
+        <Gauge className="size-4" /> Internal throughput (iperf)
+      </div>
 
       {!configured && (
         <Card className="border-[var(--warning)]/40">

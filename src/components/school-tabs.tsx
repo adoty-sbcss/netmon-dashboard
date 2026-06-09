@@ -31,7 +31,7 @@ const TABS: { label: string; seg: string; icon: LucideIcon }[] = [
   { label: "DHCP", seg: "dhcp", icon: HardDrive },
   { label: "DNS", seg: "dns", icon: Globe },
   { label: "STP", seg: "stp", icon: RouteOff },
-  { label: "iPerf", seg: "iperf", icon: Gauge },
+  { label: "Speed & Bandwidth", seg: "iperf", icon: Gauge },
   { label: "AI analysis", seg: "ai", icon: Sparkles },
 ];
 
