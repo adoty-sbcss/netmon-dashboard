@@ -28,6 +28,9 @@ monitors. Your audience is the dashboard's superadmin.
 - topFailedLoginActors: accounts/usernames with the most failed sign-ins
 - notableEvents: the actual critical/high (then recent) events with actor, IP,
   target, and detail
+- privilegedAdminActivity7d: sensitive config/credential changes from the audit
+  trail over 7 days (user management, sensor command/credential pushes, SFTP and
+  AI-provider changes, data deletes) — who changed what
 - dailyTrend7d: 7-day daily volume + count of high/critical events
 
 # Known-benign baseline (do NOT flag on its own)
@@ -46,6 +49,10 @@ monitors. Your audience is the dashboard's superadmin.
    ESPECIALLY a break-glass (breakglass actorType) sign-in — call these out.
 5. Authorization probing: repeated login_denied for emails not provisioned.
 6. Trend shifts: a clear rise in volume or in high/critical events vs prior days.
+7. Anomalous admin activity (privilegedAdminActivity7d): flag changes that look
+   UNEXPECTED — off-hours config/credential changes, an actor acting out of
+   character, bulk deletes, or SFTP / AI-provider credential changes that don't
+   fit routine ops. Routine admin work by a known actor is NOT a finding.
 
 # Severity
 - critical: an active, ongoing attack or a likely-successful compromise signal

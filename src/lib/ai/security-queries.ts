@@ -96,10 +96,13 @@ export interface SecurityEventItem {
   actorType: string | null;
   actor: string | null;
   sourceIp: string | null;
+  userAgent: string | null;
   target: string | null;
+  detail: unknown;
 }
 
-/** The most recent raw security events — the feed the analysis reads. */
+/** The most recent raw security events — the feed the analysis reads. Carries the
+ *  full detail + user-agent so the events table can expand each row. */
 export async function getRecentSecurityEvents(limit = 40): Promise<SecurityEventItem[]> {
   return db
     .select({
@@ -111,7 +114,9 @@ export async function getRecentSecurityEvents(limit = 40): Promise<SecurityEvent
       actorType: securityEvents.actorType,
       actor: securityEvents.actor,
       sourceIp: securityEvents.sourceIp,
+      userAgent: securityEvents.userAgent,
       target: securityEvents.target,
+      detail: securityEvents.detail,
     })
     .from(securityEvents)
     .orderBy(desc(securityEvents.at))

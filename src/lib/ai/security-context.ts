@@ -7,10 +7,10 @@
  * Relative imports + no `server-only` so the cron Job can import this under tsx
  * (mirrors orchestrator.ts / context.ts).
  */
-import { and, gte, lte, desc, sql } from "drizzle-orm";
+import { and, gte, lte, desc, inArray, sql } from "drizzle-orm";
 
 import { db } from "../../db";
-import { securityEvents } from "../../db/schema/app";
+import { securityEvents, auditLog } from "../../db/schema/app";
 import type { AnalysisWindow } from "./types";
 
 // Cap the detailed fetch so a flood can't blow up the prompt; the COUNTS remain
@@ -20,6 +20,29 @@ const MAX_SOURCE_IPS = 15;
 const MAX_ACTIONS = 20;
 const MAX_FAILED_ACTORS = 10;
 const MAX_NOTABLE = 60;
+
+// Privileged audit actions surfaced as insider-risk signal — config/credential
+// changes and destructive ops, so the analysis sees "who changed what," not just
+// inbound attacks. Routine for an admin; suspicious if unexpected or off-hours.
+const PRIVILEGED_ACTIONS = [
+  "user_added",
+  "user_updated",
+  "user_disabled",
+  "user_enabled",
+  "user_deleted",
+  "user_password_set",
+  "user_password_cleared",
+  "sensor_enrolled",
+  "sensor_config_saved",
+  "sensor_command_queued",
+  "sensor_bulk_update_queued",
+  "sensor_bulk_sftp_set",
+  "data_delete",
+  "data_purge_scans",
+  "data_reset_sensor",
+  "ingest_settings_saved",
+  "ai_provider_settings_saved",
+];
 
 export interface SecurityContextResult {
   context: string;
@@ -130,6 +153,32 @@ export async function buildSecurityContext(
     .groupBy(sql`date_trunc('day', ${securityEvents.at})`)
     .orderBy(sql`date_trunc('day', ${securityEvents.at})`);
 
+  // Privileged admin activity over the last 7 days (insider-risk signal).
+  const adminSince = new Date(window.end.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const adminRows = await db
+    .select({
+      at: auditLog.at,
+      actor: auditLog.actor,
+      action: auditLog.action,
+      target: auditLog.target,
+    })
+    .from(auditLog)
+    .where(and(gte(auditLog.at, adminSince), inArray(auditLog.action, PRIVILEGED_ACTIONS)))
+    .orderBy(desc(auditLog.at))
+    .limit(60);
+  const adminByAction: Record<string, number> = {};
+  for (const a of adminRows) inc(adminByAction, a.action);
+  const privilegedAdminActivity7d = {
+    total: adminRows.length,
+    byAction: adminByAction,
+    recent: adminRows.slice(0, 30).map((a) => ({
+      at: a.at.toISOString(),
+      actor: a.actor ?? undefined,
+      action: a.action,
+      target: a.target ?? undefined,
+    })),
+  };
+
   const snapshot = {
     window: {
       start: window.start.toISOString(),
@@ -147,6 +196,7 @@ export async function buildSecurityContext(
       count,
     })),
     notableEvents,
+    privilegedAdminActivity7d,
     dailyTrend7d: trendRows,
   };
 
