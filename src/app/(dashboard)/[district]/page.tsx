@@ -30,7 +30,6 @@ import {
 } from "@/components/ui/card";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { AddLandingSpot } from "@/components/admin/add-landing-spot";
-import { DeleteLandingSpot } from "@/components/admin/delete-landing-spot";
 
 export default async function DistrictPage({
   params,
@@ -96,12 +95,6 @@ export default async function DistrictPage({
           href={`/${district.slug}/hosts`}
         />
       </div>
-
-      <AiFindingsCard
-        summary={aiSummary}
-        href={`/${district.slug}/ai`}
-        title="AI health summary"
-      />
 
       <div id="schools" className="scroll-mt-20">
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -174,12 +167,11 @@ export default async function DistrictPage({
         )}
       </div>
 
-      {user?.role === "superadmin" && (
-        <div className="mt-2 border-t pt-4">
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Danger zone</p>
-          <DeleteLandingSpot kind="district" slug={district.slug} />
-        </div>
-      )}
+      <AiFindingsCard
+        summary={aiSummary}
+        href={`/${district.slug}/ai`}
+        title="AI health summary"
+      />
     </div>
   );
 }

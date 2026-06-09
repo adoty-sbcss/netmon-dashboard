@@ -124,6 +124,19 @@ export async function deleteEntityAction(
     return { error: `Type the ${kind} slug “${slug}” exactly to confirm deletion.` };
   }
 
+  // Deleting a district must also tear down its depot SFTP user + folder on Azure
+  // — the DB cascade can't reach Azure, and the teardown needs the district_sftp
+  // row that the cascade is about to remove, so do it FIRST. Best-effort: an Azure
+  // hiccup must not block the DB delete. Mirrors deleteDistrictAction.
+  if (kind === "district") {
+    try {
+      const { deleteDistrictSftp } = await import("@/lib/admin/sftp-provision");
+      await deleteDistrictSftp(id, slug);
+    } catch (e) {
+      console.error(`[data-delete] sftp teardown ${slug} failed:`, e);
+    }
+  }
+
   await db.transaction(async (tx) => {
     if (kind === "district") {
       const schoolRows = await tx
