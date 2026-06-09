@@ -15,7 +15,7 @@ import { sensors as sensorsTable } from "@/db/schema/app";
 import { getDistrictIperf, listIperfResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
-import { SensorReset } from "./sensor-reset";
+import { SchoolDataReset } from "./sensor-reset";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
@@ -310,7 +310,12 @@ export default async function SensorDetailPage({
       )}
 
       {isAdmin && (
-        <SensorReset sensorId={sensor.id} basePath={basePath} sensorSlug={sensor.slug} />
+        <SchoolDataReset
+          schoolId={school.id}
+          basePath={basePath}
+          schoolSlug={school.slug}
+          schoolName={school.name || titleizeSlug(school.slug)}
+        />
       )}
     </div>
   );

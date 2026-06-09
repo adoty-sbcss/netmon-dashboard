@@ -22,7 +22,6 @@ import {
   schools,
   sensors,
   auditLog,
-  ingestedBundles,
 } from "@/db/schema/app";
 import { scanRuns } from "@/db/schema/netmon";
 import {
@@ -30,7 +29,12 @@ import {
   topologyPositions,
   entitiesSwitch,
   entitiesHost,
+  healthRollupDaily,
 } from "@/db/schema/entities";
+import { registryDevices, deviceAcks } from "@/db/schema/registry";
+import { iperfResults } from "@/db/schema/iperf";
+import { aiAnalyses } from "@/db/schema/ai";
+import { issues } from "@/db/schema/issues";
 import { getSessionUser } from "@/lib/auth/current-user";
 
 const DATA_PATH = "/settings/data";
@@ -228,67 +232,109 @@ export async function purgeScansAction(
 }
 
 /**
- * Reset a sensor: wipe ALL its collected data (every scan + the cascaded
- * time-series, plus the discovered devices, topology and saved map positions for
- * its school) while KEEPING the sensor enrolled with its config. For the
- * office-bench-test → field-deploy workflow: prove it works, then start clean.
+ * Reset a SCHOOL's data: wipe everything the dashboard knows about the school's
+ * network — every scan + cascaded time-series, discovered devices, topology, the
+ * saved map layout, daily rollups, throughput history, manually-entered/imported
+ * devices, AI reports and the issues list — while KEEPING the sensor(s) enrolled
+ * with their config and all settings. Collection continues and fresh data
+ * rebuilds. For the office-bench-test → field-deploy workflow, or to clear an
+ * accumulated mess and start over.
  *
- * NOTE: discovered devices/topology are school-scoped (not per-sensor), so this
- * clears the whole school's discovered view — intended for a single-sensor test
- * school. Manually-registered devices are NOT touched.
+ * Discovered devices/topology are school-scoped (deduped across the school's
+ * sensors), so the unit of reset is the SCHOOL, not a single sensor.
+ *
+ * DURABILITY: the `ingested_bundles` ledger is deliberately NOT cleared. The
+ * nightly SFTP sync skips bundles already in that ledger (sync-core.ts); if we
+ * dropped those rows, any old bundles still on the depot would be re-pulled and
+ * rebuild the very data we just purged. Keeping the ledger makes the reset stick
+ * (and repeatable) — new bundles still ingest normally.
  */
-export async function resetSensorDataAction(
+export async function resetSchoolDataAction(
   _prev: DataActionState,
   formData: FormData,
 ): Promise<DataActionState> {
   const user = await requireAdmin();
   if (!user) return { error: "Not authorized." };
 
-  const sensorId = Number(formData.get("sensorId"));
+  const schoolId = Number(formData.get("schoolId"));
   const basePath = String(formData.get("basePath") ?? "");
-  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+  const confirm = String(formData.get("confirm") ?? "").trim();
+  if (!Number.isInteger(schoolId)) return { error: "Invalid school." };
 
-  const [sensor] = await db
-    .select({ id: sensors.id, slug: sensors.slug, schoolId: sensors.schoolId })
+  const [school] = await db
+    .select({ id: schools.id, slug: schools.slug, districtId: schools.districtId })
+    .from(schools)
+    .where(eq(schools.id, schoolId));
+  if (!school) return { error: "That school no longer exists." };
+  if (confirm !== school.slug) {
+    return { error: `Type the school slug “${school.slug}” exactly to confirm the reset.` };
+  }
+
+  const sensorRows = await db
+    .select({ id: sensors.id })
     .from(sensors)
-    .where(eq(sensors.id, sensorId));
-  if (!sensor) return { error: "That sensor no longer exists." };
+    .where(eq(sensors.schoolId, schoolId));
+  const sensorIds = sensorRows.map((s) => s.id);
 
   let deletedScans = 0;
   await db.transaction(async (tx) => {
-    const bundleRows = await tx
-      .select({ bundleId: scanRuns.bundleId })
-      .from(scanRuns)
-      .where(eq(scanRuns.sensorId, sensorId));
-    const bundleIds = [
-      ...new Set(bundleRows.map((b) => b.bundleId).filter((x): x is number => x != null)),
+    // MACs of this school's discovered hosts — used to clear just this school's
+    // entries from the district-scoped "newly discovered" ack feed.
+    const hostMacRows = await tx
+      .select({ mac: entitiesHost.mac })
+      .from(entitiesHost)
+      .where(eq(entitiesHost.schoolId, schoolId));
+    const macs = [
+      ...new Set(hostMacRows.map((h) => h.mac).filter((m): m is string => !!m)),
     ];
 
-    const del = await tx
-      .delete(scanRuns)
-      .where(eq(scanRuns.sensorId, sensorId))
-      .returning({ id: scanRuns.id });
-    deletedScans = del.length;
-
-    if (bundleIds.length > 0) {
-      await tx.delete(ingestedBundles).where(inArray(ingestedBundles.id, bundleIds));
+    if (sensorIds.length > 0) {
+      // Scan history + all cascaded per-scan time-series (devices/neighbors/dhcp/
+      // stp/traffic/snmp/findings). ingested_bundles is KEPT (see fn doc).
+      const del = await tx
+        .delete(scanRuns)
+        .where(inArray(scanRuns.sensorId, sensorIds))
+        .returning({ id: scanRuns.id });
+      deletedScans = del.length;
+      await tx.delete(iperfResults).where(inArray(iperfResults.sensorId, sensorIds));
     }
-    if (sensor.schoolId != null) {
-      const sid = sensor.schoolId;
-      await tx.delete(entitiesSwitch).where(eq(entitiesSwitch.schoolId, sid));
-      await tx.delete(entitiesHost).where(eq(entitiesHost.schoolId, sid));
+
+    // Discovered / derived knowledge for the school.
+    await tx.delete(entitiesSwitch).where(eq(entitiesSwitch.schoolId, schoolId));
+    await tx.delete(entitiesHost).where(eq(entitiesHost.schoolId, schoolId));
+    await tx
+      .delete(topologySnapshots)
+      .where(and(eq(topologySnapshots.scopeType, "school"), eq(topologySnapshots.scopeId, schoolId)));
+    await tx.delete(topologyPositions).where(eq(topologyPositions.schoolId, schoolId));
+    // schoolId is nullable (district-level rollups have null) — eq() matches only
+    // the school-scoped rows, leaving district rollups intact.
+    await tx.delete(healthRollupDaily).where(eq(healthRollupDaily.schoolId, schoolId));
+
+    // Curated + AI layers for the school (full clean slate per the chosen scope).
+    await tx.delete(registryDevices).where(eq(registryDevices.schoolId, schoolId));
+    await tx
+      .delete(aiAnalyses)
+      .where(and(eq(aiAnalyses.scopeType, "school"), eq(aiAnalyses.scopeId, schoolId)));
+    await tx
+      .delete(issues)
+      .where(and(eq(issues.scopeType, "school"), eq(issues.scopeId, schoolId)));
+    if (macs.length > 0) {
       await tx
-        .delete(topologySnapshots)
-        .where(and(eq(topologySnapshots.scopeType, "school"), eq(topologySnapshots.scopeId, sid)));
-      await tx.delete(topologyPositions).where(eq(topologyPositions.schoolId, sid));
+        .delete(deviceAcks)
+        .where(and(eq(deviceAcks.districtId, school.districtId), inArray(deviceAcks.mac, macs)));
     }
   });
 
-  await audit(user.email, "data_reset_sensor", { sensorId, slug: sensor.slug, deletedScans });
-  if (basePath) revalidatePath(basePath);
+  await audit(user.email, "data_reset_school", {
+    schoolId,
+    slug: school.slug,
+    sensorIds,
+    deletedScans,
+  });
+  if (basePath) revalidatePath(basePath, "layout");
   revalidatePath(DATA_PATH);
   return {
     ok: true,
-    message: `Reset “${sensor.slug}” — purged ${deletedScans} scan${deletedScans === 1 ? "" : "s"}, plus discovered devices, topology and saved map layout for its school. The sensor stays enrolled and keeps its config.`,
+    message: `Reset school “${school.slug}” — purged ${deletedScans} scan${deletedScans === 1 ? "" : "s"} plus discovered devices, topology, saved map layout, manual devices, AI reports and issues. Sensor enrollment and all settings were kept, and the SFTP ledger is preserved so old bundles won't re-import.`,
   };
 }

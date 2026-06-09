@@ -3,39 +3,52 @@
 import { useActionState, useState } from "react";
 import { AlertCircle, CheckCircle2, Eraser } from "lucide-react";
 
-import { resetSensorDataAction, type DataActionState } from "@/lib/admin/actions";
+import { resetSchoolDataAction, type DataActionState } from "@/lib/admin/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
-export function SensorReset({
-  sensorId,
+export function SchoolDataReset({
+  schoolId,
   basePath,
-  sensorSlug,
+  schoolSlug,
+  schoolName,
 }: {
-  sensorId: number;
+  schoolId: number;
   basePath: string;
-  sensorSlug: string;
+  schoolSlug: string;
+  schoolName: string;
 }) {
   const [state, action, pending] = useActionState<DataActionState, FormData>(
-    resetSensorDataAction,
+    resetSchoolDataAction,
     {},
   );
-  const [confirm, setConfirm] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
 
   return (
     <Card className="border-destructive/30">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Eraser className="size-4 text-destructive" />
-          Reset / purge data
+          Reset school data
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <p className="text-sm text-muted-foreground">
-          Wipes <strong>all collected data</strong> for this sensor — every scan and the
-          discovered devices, topology and saved map layout for its school — while keeping
-          the sensor enrolled with its config. Use it after bench-testing a new sensor so it
-          starts clean in the field. Manually-registered devices are not touched.
+          Wipes <strong>all collected and curated data</strong> for{" "}
+          <strong>{schoolName || schoolSlug}</strong> and starts it over clean: every
+          scan and its history, discovered devices &amp; topology, the saved map
+          layout, daily rollups, throughput history, manually-entered/imported
+          devices, AI reports and the issues list.{" "}
+          <strong>Kept:</strong> the sensor(s), their enrollment and all settings — so
+          collection continues and fresh data rebuilds automatically. The SFTP ledger
+          is preserved, so previously-imported bundles won&apos;t be re-imported and
+          rebuild the old data.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Discovered data is shared per school, so this affects every sensor at the
+          school. This cannot be undone.
         </p>
 
         {state.error && (
@@ -49,24 +62,57 @@ export function SensorReset({
           </p>
         )}
 
-        {confirm ? (
-          <form action={action} className="flex flex-wrap items-center gap-2">
-            <input type="hidden" name="sensorId" value={sensorId} />
+        {open ? (
+          <form action={action} className="flex flex-col gap-2">
+            <input type="hidden" name="schoolId" value={schoolId} />
             <input type="hidden" name="basePath" value={basePath} />
-            <span className="text-sm">
-              Permanently purge all data for <span className="font-mono">{sensorSlug}</span>?
-            </span>
-            <Button type="submit" variant="destructive" size="sm" disabled={pending}>
-              {pending ? "Purging…" : "Yes, purge everything"}
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => setConfirm(false)}>
-              Cancel
-            </Button>
+            <label htmlFor="reset-confirm" className="text-sm">
+              Type <span className="font-mono font-semibold">{schoolSlug}</span> to
+              confirm:
+            </label>
+            <Input
+              id="reset-confirm"
+              name="confirm"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={schoolSlug}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              className="max-w-xs font-mono"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="submit"
+                variant="destructive"
+                size="sm"
+                disabled={pending || typed.trim() !== schoolSlug}
+              >
+                {pending ? "Purging…" : "Permanently reset this school"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setOpen(false);
+                  setTyped("");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
           </form>
         ) : (
           <div>
-            <Button type="button" variant="outline" size="sm" className="text-destructive" onClick={() => setConfirm(true)}>
-              <Eraser className="size-4" /> Reset this sensor&apos;s data
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-destructive"
+              onClick={() => setOpen(true)}
+            >
+              <Eraser className="size-4" /> Reset this school&apos;s data
             </Button>
           </div>
         )}
