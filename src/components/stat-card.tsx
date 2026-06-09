@@ -51,7 +51,8 @@ export function StatCard({
       className={cn(
         "gap-0 border-l-4 py-0",
         toneBorder[tone],
-        href && "h-full transition-colors hover:bg-accent/40",
+        href &&
+          "h-full transition-all duration-200 ease-out hover:-translate-y-0.5 hover:bg-accent/40 hover:shadow-md",
         className,
       )}
     >

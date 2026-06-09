@@ -76,8 +76,10 @@ export default async function OverviewPage() {
         </div>
         {districts.length === 0 ? (
           <Card>
-            <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
-              <Building2 className="size-8 text-muted-foreground" />
+            <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+              <span className="flex size-12 items-center justify-center rounded-full bg-primary/10">
+                <Building2 className="size-6 text-primary" />
+              </span>
               <p className="font-medium">No districts yet</p>
               <p className="max-w-sm text-sm text-muted-foreground">
                 Ingest a NetMon bundle to populate the dashboard.
@@ -92,7 +94,7 @@ export default async function OverviewPage() {
                 href={`/${d.slug}`}
                 className="group rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Card className="h-full transition-colors hover:border-primary/40 hover:bg-accent/40">
+                <Card className="lift h-full hover:bg-accent/40">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-base">
                       <Building2 className="size-4 text-primary" />

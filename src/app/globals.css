@@ -9,7 +9,8 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-geist-sans);
+  /* Distinct display face for headings/brand; falls back to the body sans. */
+  --font-heading: var(--font-jakarta, var(--font-geist-sans));
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -96,15 +97,17 @@
 
   --radius: 0.625rem;
 
-  /* Subtle cool slate-blue chrome — restrained brand presence in the nav. */
-  --sidebar: oklch(0.975 0.013 252);
-  --sidebar-foreground: oklch(0.129 0.042 264.695);
-  --sidebar-primary: oklch(0.546 0.245 262.881);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.95 0.02 254);
-  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.9 0.018 254);
-  --sidebar-ring: oklch(0.546 0.245 262.881);
+  /* Brand-blue nav chrome — the same blue as the login panel (a matching
+     gradient is painted on [data-slot=sidebar-inner] in light mode below).
+     White text, translucent hover, SBCSS-gold active indicator. */
+  --sidebar: oklch(0.44 0.17 264);
+  --sidebar-foreground: oklch(0.985 0.003 248);
+  --sidebar-primary: oklch(0.82 0.16 84);
+  --sidebar-primary-foreground: oklch(0.2 0.05 264);
+  --sidebar-accent: oklch(1 0 0 / 14%);
+  --sidebar-accent-foreground: oklch(0.985 0.003 248);
+  --sidebar-border: oklch(1 0 0 / 16%);
+  --sidebar-ring: oklch(0.82 0.16 84);
 }
 
 /* ---- Dark theme: slate-900 base, brighter blue primary ---- */
@@ -165,4 +168,42 @@
   html {
     @apply font-sans;
   }
+  /* Headings carry the display face + tighter tracking for a confident voice. */
+  h1, h2, h3, .font-heading {
+    font-family: var(--font-heading);
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer components {
+  /* Tactile lift for clickable cards/tiles — the difference between "static
+     admin tool" and "finished product". Pair with a wrapping <Link>. */
+  .lift {
+    @apply transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out;
+  }
+  .lift:hover {
+    @apply -translate-y-0.5 border-primary/40 shadow-md;
+  }
+
+  /* A soft brand wash for hero/section surfaces — restrained, never noisy. */
+  .brand-wash {
+    background-image: radial-gradient(
+      120% 100% at 100% 0%,
+      color-mix(in oklch, var(--primary) 7%, transparent),
+      transparent 60%
+    );
+  }
+}
+
+/* Light-mode left menu uses the SAME brand-blue gradient as the login panel
+   (shares --primary + the login's deep-blue end), so the two read as one brand.
+   Dark mode keeps its slate sidebar (defined in .dark above). */
+html:not(.dark) [data-slot="sidebar-inner"],
+html:not(.dark) [data-slot="sidebar"][data-mobile="true"] {
+  background-image: linear-gradient(
+    180deg,
+    var(--brand-b),
+    var(--primary) 32%,
+    oklch(0.32 0.13 265)
+  );
 }

@@ -54,21 +54,21 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/">
-                <div className="flex aspect-square size-8 items-center justify-center">
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                   {branding.hasLogo ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={`/branding/logo?v=${branding.version}`}
                       alt={branding.appName}
-                      className="size-8 object-contain"
+                      className="size-6 object-contain"
                     />
                   ) : (
-                    <BrandLogo className="size-8" />
+                    <BrandLogo className="size-6" />
                   )}
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">{branding.appName}</span>
-                  <span className="truncate text-xs text-muted-foreground">
+                  <span className="truncate font-heading font-semibold">{branding.appName}</span>
+                  <span className="truncate text-xs text-sidebar-foreground/60">
                     {branding.tagline}
                   </span>
                 </div>
@@ -155,107 +155,121 @@ export function AppSidebar({
         </SidebarGroup>
 
         {isAdmin && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Administration</SidebarGroupLabel>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="Security analysis"
-                  isActive={pathname === "/security"}
-                >
-                  <Link href="/security">
-                    <ShieldAlert />
-                    <span>Security</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="All sensors"
-                  isActive={pathname === "/sensors"}
-                >
-                  <Link href="/sensors">
-                    <Radio />
-                    <span>Sensors</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="SFTP ingestion"
-                  isActive={pathname === "/settings/ingestion"}
-                >
-                  <Link href="/settings/ingestion">
-                    <DownloadCloud />
-                    <span>SFTP ingestion</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="AI settings"
-                  isActive={pathname === "/settings/ai"}
-                >
-                  <Link href="/settings/ai">
-                    <Sparkles />
-                    <span>AI settings</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="Email & alerts"
-                  isActive={pathname === "/settings/notifications"}
-                >
-                  <Link href="/settings/notifications">
-                    <Bell />
-                    <span>Notifications</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="Branding"
-                  isActive={pathname === "/settings/branding"}
-                >
-                  <Link href="/settings/branding">
-                    <Palette />
-                    <span>Branding</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="Data management"
-                  isActive={pathname === "/settings/data"}
-                >
-                  <Link href="/settings/data">
-                    <DatabaseZap />
-                    <span>Data management</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  tooltip="Users"
-                  isActive={pathname === "/settings/users"}
-                >
-                  <Link href="/settings/users">
-                    <Users />
-                    <span>Users</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroup>
+          <>
+            <SidebarGroup>
+              <SidebarGroupLabel>Monitoring</SidebarGroupLabel>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Security analysis"
+                    isActive={pathname === "/security"}
+                  >
+                    <Link href="/security">
+                      <ShieldAlert />
+                      <span>Security</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="All sensors"
+                    isActive={pathname === "/sensors"}
+                  >
+                    <Link href="/sensors">
+                      <Radio />
+                      <span>Sensors</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel>Data</SidebarGroupLabel>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="SFTP ingestion"
+                    isActive={pathname === "/settings/ingestion"}
+                  >
+                    <Link href="/settings/ingestion">
+                      <DownloadCloud />
+                      <span>SFTP ingestion</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Data management"
+                    isActive={pathname === "/settings/data"}
+                  >
+                    <Link href="/settings/data">
+                      <DatabaseZap />
+                      <span>Data management</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel>Configuration</SidebarGroupLabel>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="AI settings"
+                    isActive={pathname === "/settings/ai"}
+                  >
+                    <Link href="/settings/ai">
+                      <Sparkles />
+                      <span>AI settings</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Email & alerts"
+                    isActive={pathname === "/settings/notifications"}
+                  >
+                    <Link href="/settings/notifications">
+                      <Bell />
+                      <span>Notifications</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Branding"
+                    isActive={pathname === "/settings/branding"}
+                  >
+                    <Link href="/settings/branding">
+                      <Palette />
+                      <span>Branding</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Users"
+                    isActive={pathname === "/settings/users"}
+                  >
+                    <Link href="/settings/users">
+                      <Users />
+                      <span>Users</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroup>
+          </>
         )}
 
         <SidebarGroup>

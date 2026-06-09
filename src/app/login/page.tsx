@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
+import { Lock, Network, ShieldCheck, Sparkles } from "lucide-react";
 
 import { enabledProviders } from "@/lib/auth/oidc";
 import { getBranding } from "@/lib/branding";
 import { BrandLogo } from "@/components/logo";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { LoginForm } from "./login-form";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -20,6 +27,13 @@ const ERRORS: Record<string, string> = {
   state: "Your sign-in session expired. Please try again.",
   provider: "That sign-in method isn't available.",
 };
+
+// Product value props shown on the brand panel — the marketing "why".
+const HIGHLIGHTS = [
+  { icon: Network, text: "Continuous discovery of every device on your network" },
+  { icon: Sparkles, text: "AI-assisted health checks and clear recommendations" },
+  { icon: ShieldCheck, text: "Role-based access, scoped to your district" },
+] as const;
 
 export default async function LoginPage({
   searchParams,
@@ -46,20 +60,40 @@ export default async function LoginPage({
         <div className="pointer-events-none absolute -bottom-28 -left-20 size-96 rounded-full bg-[var(--brand-a)]/25 blur-3xl" />
 
         <div className="relative flex items-center gap-3">
-          <div className="rounded-xl bg-white/15 p-2 backdrop-blur-sm">{logo}</div>
-          <span className="text-lg font-semibold tracking-tight">{b.appName}</span>
+          <div className="rounded-xl bg-white/15 p-2 ring-1 ring-white/20 backdrop-blur-sm">
+            {logo}
+          </div>
+          <span className="font-heading text-lg font-semibold tracking-tight">{b.appName}</span>
         </div>
 
         <div className="relative max-w-md">
-          <h1 className="text-3xl font-semibold leading-tight tracking-tight">{b.tagline}</h1>
+          <h1 className="text-balance text-4xl font-semibold leading-[1.1] tracking-tight">
+            {b.tagline}
+          </h1>
           {b.description && (
-            <p className="mt-3 text-sm leading-relaxed text-white/80">{b.description}</p>
+            <p className="mt-4 text-sm leading-relaxed text-white/80">{b.description}</p>
           )}
+
+          <ul className="mt-8 space-y-3.5">
+            {HIGHLIGHTS.map(({ icon: Icon, text }) => (
+              <li key={text} className="flex items-start gap-3 text-sm text-white/90">
+                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-white/15 ring-1 ring-white/20">
+                  <Icon className="size-3.5 text-[var(--brand-a)]" />
+                </span>
+                {text}
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <p className="relative text-xs text-white/60">
-          San Bernardino County Superintendent of Schools
-        </p>
+        <div className="relative space-y-1">
+          <p className="text-xs font-medium text-white/80">
+            San Bernardino County Superintendent of Schools
+          </p>
+          <p className="text-xs text-white/55">
+            Authorized use only · Activity is monitored and logged
+          </p>
+        </div>
       </div>
 
       {/* Sign-in */}
@@ -68,14 +102,18 @@ export default async function LoginPage({
           <div className="mb-6 flex flex-col items-center gap-2 lg:hidden">
             {logo}
             <div className="text-center leading-tight">
-              <p className="text-lg font-semibold">{b.appName}</p>
+              <p className="font-heading text-lg font-semibold">{b.appName}</p>
               <p className="text-xs text-muted-foreground">{b.tagline}</p>
             </div>
           </div>
 
-          <Card>
+          <Card className="shadow-md">
             <CardHeader>
               <CardTitle className="text-xl">Sign in</CardTitle>
+              <CardDescription className="flex items-center gap-1.5">
+                <Lock className="size-3.5" />
+                Secure access for authorized staff
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <LoginForm providers={providers} errorMessage={errorMessage} />
@@ -83,7 +121,7 @@ export default async function LoginPage({
           </Card>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            {b.appName} · secure access for authorized staff
+            Need access? Contact your district administrator.
           </p>
         </div>
       </div>

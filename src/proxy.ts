@@ -23,6 +23,13 @@ export async function proxy(req: NextRequest) {
   // session. These serve only public branding.
   if (pathname.startsWith("/branding/")) return NextResponse.next();
 
+  // Dev-only design harness (mock data, no DB). Compiled out of the production
+  // build (NODE_ENV is statically inlined), and the page itself 404s in prod —
+  // this just lets it past the auth gate during local development.
+  if (process.env.NODE_ENV !== "production" && pathname.startsWith("/preview")) {
+    return NextResponse.next();
+  }
+
   // Sensor check-in endpoints authenticate with an enrollment token (Bearer),
   // not a user session — let them through; they guard themselves. (Other
   // /api/sensor/* routes, like config-backup download, still require a session.)

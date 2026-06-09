@@ -114,10 +114,13 @@ export function GlobalSearch() {
         <button
           type="button"
           aria-label="Search"
-          className="inline-flex h-9 items-center gap-2 rounded-lg border px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border bg-background px-2.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground sm:w-60 sm:justify-start"
         >
-          <Search className="size-4" />
+          <Search className="size-4 shrink-0" />
           <span className="hidden sm:inline">Search…</span>
+          <kbd className="ml-auto hidden items-center rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium sm:inline-flex">
+            ⌘K
+          </kbd>
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>

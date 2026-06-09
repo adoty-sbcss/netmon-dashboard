@@ -105,8 +105,10 @@ export default async function DistrictPage({
         </div>
         {schools.length === 0 ? (
           <Card>
-            <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
-              <School className="size-8 text-muted-foreground" />
+            <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+              <span className="flex size-12 items-center justify-center rounded-full bg-primary/10">
+                <School className="size-6 text-primary" />
+              </span>
               <p className="font-medium">No schools yet</p>
               <p className="max-w-sm text-sm text-muted-foreground">
                 Schools appear here once a sensor at this district reports a scan.
@@ -121,7 +123,7 @@ export default async function DistrictPage({
                 href={`/${district.slug}/${s.slug}`}
                 className="group rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Card className="h-full transition-colors hover:border-primary/40 hover:bg-accent/40">
+                <Card className="lift h-full hover:bg-accent/40">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-base">
                       <School className="size-4 text-primary" />
