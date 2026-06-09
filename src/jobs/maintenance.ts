@@ -70,10 +70,12 @@ const pathKey = (p: string) => p.split("/").filter(Boolean).slice(-4).join("/");
 /** Step 1: delete scan_runs (+ cascaded per-scan time-series) past the window. */
 async function purgeTimeSeries(): Promise<void> {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * DAY_MS);
-  // Use the scan's own time, falling back to ingest time when started_at is null.
-  // Built as a raw sql fragment so the Date binds as a parameter — lt(sql`…`, value)
-  // does not reliably bind a raw-SQL left operand.
-  const where = sql`coalesce(${scanRuns.startedAt}, ${scanRuns.ingestedAt}) < ${cutoff}`;
+  // Retention clock = ingested_at (NOT NULL, monotonic — when the data entered our
+  // system). A TYPED column comparison so the Date binds via the column's mapper;
+  // a bare Date embedded in a raw sql fragment fails (postgres-js can't serialize
+  // it without the column type). started_at is nullable, ingested_at isn't, and
+  // for hourly-ingested bundles the two are within minutes anyway.
+  const where = lt(scanRuns.ingestedAt, cutoff);
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(scanRuns).where(where);
   const n = row?.n ?? 0;
   if (DRY_RUN) {
