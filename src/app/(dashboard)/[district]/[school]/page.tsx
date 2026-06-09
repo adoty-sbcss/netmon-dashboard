@@ -39,7 +39,6 @@ import { getEnrollmentView } from "@/lib/sensor/enrollment";
 import { resolveSftpConfig } from "@/lib/ingest/settings";
 import { getDistrictSftpCreds } from "@/lib/admin/sftp-provision";
 import { DeploySensor } from "./deploy-sensor";
-import { SchoolDataReset } from "./school-reset";
 import { DeleteLandingSpot } from "@/components/admin/delete-landing-spot";
 
 export default async function SchoolPage({
@@ -284,14 +283,8 @@ export default async function SchoolPage({
       )}
 
       {user?.role === "superadmin" && (
-        <div className="mt-2 flex flex-col gap-4 border-t pt-4">
-          <p className="text-xs font-medium text-muted-foreground">Danger zone</p>
-          <SchoolDataReset
-            schoolId={school.id}
-            basePath={`/${district.slug}/${school.slug}`}
-            schoolSlug={school.slug}
-            schoolName={school.name || titleizeSlug(school.slug)}
-          />
+        <div className="mt-2 border-t pt-4">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Danger zone</p>
           <DeleteLandingSpot kind="school" slug={school.slug} districtSlug={district.slug} />
         </div>
       )}

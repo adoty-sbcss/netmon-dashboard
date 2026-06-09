@@ -181,17 +181,24 @@ export async function deleteEntityAction(
   return { ok: true, message: `Deleted ${kind} “${slug}” and all of its data.` };
 }
 
-export async function purgeScansAction(
+/**
+ * The SCALPEL counterpart to resetSchoolDataAction: trim raw scan history for a
+ * school over a date window. Deletes `scan_runs` (+ cascaded per-scan time-series)
+ * for ALL the school's sensors within [from, to], but KEEPS the canonical layer —
+ * discovered entities, topology, saved map, settings — and the ingest ledger. Use
+ * it to drop a bad window or reclaim hot-table rows without disturbing inventory.
+ */
+export async function purgeSchoolScansAction(
   _prev: DataActionState,
   formData: FormData,
 ): Promise<DataActionState> {
   const user = await requireAdmin();
   if (!user) return { error: "Not authorized." };
 
-  const sensorId = Number(formData.get("sensorId"));
+  const schoolId = Number(formData.get("schoolId"));
   const fromRaw = String(formData.get("from") ?? "").trim();
   const toRaw = String(formData.get("to") ?? "").trim();
-  if (!Number.isFinite(sensorId)) return { error: "Invalid sensor." };
+  if (!Number.isInteger(schoolId)) return { error: "Invalid school." };
 
   const from = fromRaw ? new Date(fromRaw) : null;
   // Treat the "to" date as inclusive of that whole day.
@@ -205,29 +212,41 @@ export async function purgeScansAction(
     return { error: "Start date must be before end date." };
   }
 
-  const slug = await getSlug("sensor", sensorId);
-  if (!slug) return { error: "That sensor no longer exists." };
+  const [school] = await db
+    .select({ id: schools.id, slug: schools.slug })
+    .from(schools)
+    .where(eq(schools.id, schoolId));
+  if (!school) return { error: "That school no longer exists." };
 
-  const clauses = [eq(scanRuns.sensorId, sensorId)];
-  if (from) clauses.push(gte(scanRuns.startedAt, from));
-  if (to) clauses.push(lte(scanRuns.startedAt, to));
+  const sensorRows = await db
+    .select({ id: sensors.id })
+    .from(sensors)
+    .where(eq(sensors.schoolId, schoolId));
+  const sensorIds = sensorRows.map((s) => s.id);
 
-  const deleted = await db
-    .delete(scanRuns)
-    .where(and(...clauses))
-    .returning({ id: scanRuns.id });
+  let deleted = 0;
+  if (sensorIds.length > 0) {
+    const clauses = [inArray(scanRuns.sensorId, sensorIds)];
+    if (from) clauses.push(gte(scanRuns.startedAt, from));
+    if (to) clauses.push(lte(scanRuns.startedAt, to));
+    const del = await db
+      .delete(scanRuns)
+      .where(and(...clauses))
+      .returning({ id: scanRuns.id });
+    deleted = del.length;
+  }
 
-  await audit(user.email, "data_purge_scans", {
-    sensorId,
-    slug,
+  await audit(user.email, "data_purge_school_scans", {
+    schoolId,
+    slug: school.slug,
     from: from?.toISOString() ?? null,
     to: to?.toISOString() ?? null,
-    deleted: deleted.length,
+    deleted,
   });
   revalidatePath(DATA_PATH);
   return {
     ok: true,
-    message: `Purged ${deleted.length} scan${deleted.length === 1 ? "" : "s"} (and their captured data) from “${slug}”.`,
+    message: `Purged ${deleted} scan${deleted === 1 ? "" : "s"} (and their captured data) from school “${school.slug}”. Inventory, map and settings were kept.`,
   };
 }
 

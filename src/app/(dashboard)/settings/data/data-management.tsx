@@ -6,6 +6,7 @@ import {
   Building2,
   CalendarX2,
   CheckCircle2,
+  Eraser,
   Pencil,
   Radio,
   School,
@@ -15,7 +16,8 @@ import {
 import {
   renameEntityAction,
   deleteEntityAction,
-  purgeScansAction,
+  purgeSchoolScansAction,
+  resetSchoolDataAction,
   type DataActionState,
 } from "@/lib/admin/actions";
 import type { ManagedDistrict } from "@/db/queries";
@@ -26,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
 type Kind = "district" | "school" | "sensor";
-type Action = "rename" | "delete" | "purge";
+type Action = "rename" | "delete" | "purge" | "reset";
 
 interface EditorTarget {
   action: Action;
@@ -66,7 +68,11 @@ export function DataManagement({ tree }: { tree: ManagedDistrict[] }) {
     {},
   );
   const [purgeState, purgeAction, purging] = useActionState<DataActionState, FormData>(
-    purgeScansAction,
+    purgeSchoolScansAction,
+    {},
+  );
+  const [resetState, resetAction, resetting] = useActionState<DataActionState, FormData>(
+    resetSchoolDataAction,
     {},
   );
 
@@ -102,16 +108,27 @@ export function DataManagement({ tree }: { tree: ManagedDistrict[] }) {
         >
           <Pencil className="size-3.5" /> Rename
         </Button>
-        {kind === "sensor" && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => open("purge", kind, e)}
-          >
-            <CalendarX2 className="size-3.5" /> Purge
-          </Button>
+        {kind === "school" && (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => open("purge", kind, e)}
+            >
+              <CalendarX2 className="size-3.5" /> Purge
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-amber-600 hover:text-amber-600 dark:text-amber-500"
+              onClick={() => open("reset", kind, e)}
+            >
+              <Eraser className="size-3.5" /> Reset
+            </Button>
+          </>
         )}
         <Button
           type="button"
@@ -166,11 +183,16 @@ export function DataManagement({ tree }: { tree: ManagedDistrict[] }) {
     if (isOpen("purge", kind, e.id)) {
       return (
         <form action={purgeAction} className="mt-2 flex flex-col gap-2 rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/5 p-3">
-          <input type="hidden" name="sensorId" value={e.id} />
-          <p className="text-sm">
-            Delete collected scans (and their captured hosts/DHCP/STP/etc.) from{" "}
-            <span className="font-mono">{e.slug}</span> in a date window. Canonical inventory is
-            kept. Leave one side blank for an open-ended bound.
+          <input type="hidden" name="schoolId" value={e.id} />
+          <p className="flex items-center gap-1.5 text-sm font-medium">
+            <CalendarX2 className="size-4" /> Purge scan history — the scalpel
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Deletes raw scan records (and their captured hosts/DHCP/STP/etc.) for{" "}
+            <span className="font-mono">{e.slug}</span> in a date window. Your{" "}
+            <strong>inventory, map and settings stay</strong> — only the time-series history is
+            trimmed. Leave one side blank for an open-ended bound. For a full clean slate, use{" "}
+            <strong>Reset</strong> instead.
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-col gap-1">
@@ -186,6 +208,32 @@ export function DataManagement({ tree }: { tree: ManagedDistrict[] }) {
             </Button>
           </div>
           <Notice state={purgeState} />
+        </form>
+      );
+    }
+    if (isOpen("reset", kind, e.id)) {
+      return (
+        <form action={resetAction} className="mt-2 flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <input type="hidden" name="schoolId" value={e.id} />
+          <p className="flex items-center gap-1.5 text-sm font-medium">
+            <Eraser className="size-4" /> Reset school data — the clean slate
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Wipes <strong>everything the dashboard derived</strong> for{" "}
+            <span className="font-mono">{e.slug}</span>: discovered devices, topology, the saved
+            map layout, daily rollups, throughput history, manually-entered devices, AI reports
+            and issues. The <strong>sensor(s) and all settings stay</strong>, and collection
+            rebuilds from the next upload. To only trim history by date, use <strong>Purge</strong>{" "}
+            instead. Type the slug{" "}
+            <span className="font-mono font-semibold">{e.slug}</span> to confirm.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Input name="confirm" placeholder={e.slug} className="max-w-xs" autoComplete="off" autoFocus />
+            <Button type="submit" size="sm" variant="destructive" disabled={resetting}>
+              {resetting ? "Resetting…" : "Reset school data"}
+            </Button>
+          </div>
+          <Notice state={resetState} />
         </form>
       );
     }
