@@ -155,6 +155,53 @@ export async function listSchoolSpeedtests(
     .limit(limit);
 }
 
+export interface SpeedtestResultRow {
+  id: number;
+  trigger: string | null;
+  provider: string | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  latencyMs: number | null;
+  jitterMs: number | null;
+  lossPct: number | null;
+  server: string | null;
+  isp: string | null;
+  resultUrl: string | null;
+  ok: boolean;
+  error: string | null;
+  startedAt: Date | null;
+  createdAt: Date;
+}
+
+/** Recent public speed-test results for one sensor (for its panel). */
+export async function listSpeedtestResults(
+  sensorId: number,
+  limit = 20,
+): Promise<SpeedtestResultRow[]> {
+  return db
+    .select({
+      id: speedtestResults.id,
+      trigger: speedtestResults.trigger,
+      provider: speedtestResults.provider,
+      downloadMbps: speedtestResults.downloadMbps,
+      uploadMbps: speedtestResults.uploadMbps,
+      latencyMs: speedtestResults.latencyMs,
+      jitterMs: speedtestResults.jitterMs,
+      lossPct: speedtestResults.lossPct,
+      server: speedtestResults.server,
+      isp: speedtestResults.isp,
+      resultUrl: speedtestResults.resultUrl,
+      ok: speedtestResults.ok,
+      error: speedtestResults.error,
+      startedAt: speedtestResults.startedAt,
+      createdAt: speedtestResults.createdAt,
+    })
+    .from(speedtestResults)
+    .where(eq(speedtestResults.sensorId, sensorId))
+    .orderBy(desc(speedtestResults.createdAt))
+    .limit(limit);
+}
+
 /** Every iperf result across a school's sensors (newest first), with the sensor
  *  identity attached so the school view can compare bandwidth by IDF. */
 export async function listSchoolIperfResults(

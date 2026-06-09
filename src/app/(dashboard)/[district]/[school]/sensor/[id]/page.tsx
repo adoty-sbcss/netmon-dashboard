@@ -12,12 +12,13 @@ import {
 } from "@/db/queries";
 import { db } from "@/db";
 import { sensors as sensorsTable } from "@/db/schema/app";
-import { getDistrictIperf, listIperfResults } from "@/lib/iperf";
+import { getDistrictIperf, listIperfResults, listSpeedtestResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { SensorManagementPanel } from "./sensor-management";
 import { SchoolDataReset } from "./sensor-reset";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
+import { SpeedtestPanel } from "./speedtest-panel";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -90,9 +91,13 @@ export default async function SensorDetailPage({
         .where(eq(sensorsTable.id, sensor.id))
         .limit(1)
     : [null];
-  const [iperfCfg, iperfRuns] = isAdmin
-    ? await Promise.all([getDistrictIperf(district.id), listIperfResults(sensor.id)])
-    : [{ serverHost: "", serverPort: 5201, enabled: false }, []];
+  const [iperfCfg, iperfRuns, speedtestRuns] = isAdmin
+    ? await Promise.all([
+        getDistrictIperf(district.id),
+        listIperfResults(sensor.id),
+        listSpeedtestResults(sensor.id),
+      ])
+    : [{ serverHost: "", serverPort: 5201, enabled: false }, [], []];
   const dcfg = (mgmt?.config ?? {}) as Record<string, unknown>;
   const iperfSchedule = {
     enabled: Boolean(dcfg.iperf_enabled),
@@ -100,6 +105,13 @@ export default async function SensorDetailPage({
     duration: typeof dcfg.iperf_duration === "number" ? dcfg.iperf_duration : 10,
     direction: typeof dcfg.iperf_direction === "string" ? dcfg.iperf_direction : "down",
     protocol: typeof dcfg.iperf_protocol === "string" ? dcfg.iperf_protocol : "tcp",
+  };
+  const speedtestSchedule = {
+    enabled: Boolean(dcfg.speedtest_enabled),
+    providers:
+      typeof dcfg.speedtest_providers === "string" ? dcfg.speedtest_providers : "ookla,cloudflare",
+    scheduleSec:
+      typeof dcfg.speedtest_schedule_sec === "number" ? dcfg.speedtest_schedule_sec : 6 * 3600,
   };
   const basePath = `/${district.slug}/${school.slug}`;
 
@@ -230,6 +242,16 @@ export default async function SensorDetailPage({
       {/* Management (admin): enrollment, config push, commands */}
       {isAdmin && mgmt && (
         <SensorManagementPanel sensorId={sensor.id} basePath={basePath} mgmt={mgmt} />
+      )}
+
+      {/* Internet speed test (admin) */}
+      {isAdmin && (
+        <SpeedtestPanel
+          sensorId={sensor.id}
+          basePath={basePath}
+          schedule={speedtestSchedule}
+          results={speedtestRuns}
+        />
       )}
 
       {/* iperf3 throughput (admin) */}
