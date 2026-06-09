@@ -10,3 +10,4 @@ export * from "./iperf";
 export * from "./registry";
 export * from "./issues";
 export * from "./chat";
+export * from "./notifications";

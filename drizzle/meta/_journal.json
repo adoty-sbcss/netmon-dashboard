@@ -267,6 +267,13 @@
       "when": 1780960454163,
       "tag": "0037_ing1_bundle_identity_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1781006884548,
+      "tag": "0038_purple_nico_minoru",
+      "breakpoints": true
     }
   ]
 }

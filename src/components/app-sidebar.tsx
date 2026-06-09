@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, ShieldAlert, Sparkles, Users } from "lucide-react";
+import { Bell, Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, ShieldAlert, Sparkles, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -203,6 +203,18 @@ export function AppSidebar({
                   <Link href="/settings/ai">
                     <Sparkles />
                     <span>AI settings</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Email & alerts"
+                  isActive={pathname === "/settings/notifications"}
+                >
+                  <Link href="/settings/notifications">
+                    <Bell />
+                    <span>Notifications</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
