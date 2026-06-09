@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Boxes,
+  Gauge,
   Globe,
   HardDrive,
   LayoutDashboard,
@@ -30,6 +31,7 @@ const TABS: { label: string; seg: string; icon: LucideIcon }[] = [
   { label: "DHCP", seg: "dhcp", icon: HardDrive },
   { label: "DNS", seg: "dns", icon: Globe },
   { label: "STP", seg: "stp", icon: RouteOff },
+  { label: "iPerf", seg: "iperf", icon: Gauge },
   { label: "AI analysis", seg: "ai", icon: Sparkles },
 ];
 

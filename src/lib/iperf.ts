@@ -8,6 +8,7 @@ import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { districtIperf, iperfResults } from "@/db/schema/iperf";
+import { sensors } from "@/db/schema/app";
 
 export interface DistrictIperfView {
   serverHost: string;
@@ -88,6 +89,46 @@ export async function listIperfResults(
     })
     .from(iperfResults)
     .where(eq(iperfResults.sensorId, sensorId))
+    .orderBy(desc(iperfResults.createdAt))
+    .limit(limit);
+}
+
+export interface SchoolIperfRow extends IperfResultRow {
+  sensorId: number;
+  sensorSlug: string;
+  sensorName: string | null;
+}
+
+/** Every iperf result across a school's sensors (newest first), with the sensor
+ *  identity attached so the school view can compare bandwidth by IDF. */
+export async function listSchoolIperfResults(
+  schoolId: number,
+  limit = 300,
+): Promise<SchoolIperfRow[]> {
+  return db
+    .select({
+      id: iperfResults.id,
+      trigger: iperfResults.trigger,
+      serverHost: iperfResults.serverHost,
+      serverPort: iperfResults.serverPort,
+      protocol: iperfResults.protocol,
+      direction: iperfResults.direction,
+      durationSec: iperfResults.durationSec,
+      throughputMbps: iperfResults.throughputMbps,
+      retransmits: iperfResults.retransmits,
+      jitterMs: iperfResults.jitterMs,
+      lossPct: iperfResults.lossPct,
+      ok: iperfResults.ok,
+      error: iperfResults.error,
+      startedAt: iperfResults.startedAt,
+      createdAt: iperfResults.createdAt,
+      sensorId: iperfResults.sensorId,
+      sensorSlug: sensors.slug,
+      sensorName: sensors.name,
+    })
+    .from(iperfResults)
+    .innerJoin(sensors, eq(iperfResults.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
     .orderBy(desc(iperfResults.createdAt))
     .limit(limit);
 }
