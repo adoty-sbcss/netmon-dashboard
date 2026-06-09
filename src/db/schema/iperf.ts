@@ -66,3 +66,41 @@ export const iperfResults = pgTable(
   },
   (t) => [index("idx_iperf_results_sensor").on(t.sensorId, t.createdAt)],
 );
+
+/**
+ * A single PUBLIC internet speed test reported by a sensor (PERF-2) — the WAN
+ * counterpart to iperf's internal throughput. Separate table (iperf_results has
+ * no type discriminator); `provider` distinguishes Ookla vs Cloudflare.
+ */
+export const speedtestResults = pgTable(
+  "speedtest_results",
+  {
+    id: serial("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    /** 'manual' | 'scheduled'. */
+    trigger: text("trigger"),
+    /** 'ookla' | 'cloudflare'. */
+    provider: text("provider"),
+    downloadMbps: doublePrecision("download_mbps"),
+    uploadMbps: doublePrecision("upload_mbps"),
+    latencyMs: doublePrecision("latency_ms"),
+    jitterMs: doublePrecision("jitter_ms"),
+    lossPct: doublePrecision("loss_pct"),
+    /** Test server name/location (Ookla) or "Cloudflare". */
+    server: text("server"),
+    isp: text("isp"),
+    /** Shareable result page (Ookla). */
+    resultUrl: text("result_url"),
+    externalIp: text("external_ip"),
+    ok: boolean("ok").notNull().default(true),
+    error: text("error"),
+    raw: jsonb("raw"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("idx_speedtest_results_sensor").on(t.sensorId, t.createdAt)],
+);
