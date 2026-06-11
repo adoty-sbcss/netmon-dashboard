@@ -50,6 +50,8 @@ const ALLOWED_CMDS = new Set([
   "diag-disk",
   "diag-uptime",
   "diag-dns",
+  "diag-ping",
+  "diag-sftp-test",
   "diag-selftest",
   // state-changing controls (CON-5) — in-container scope; dashboard confirms + audits
   "ctl-flush-arp",

@@ -253,7 +253,145 @@ const fixEnrollment: HelpArticle = {
   ],
 };
 
-export const HELP_ARTICLES: HelpArticle[] = [fixEnrollment];
+const fixSftpUpload: HelpArticle = {
+  slug: "fix-automatic-sftp-upload",
+  title: "Fix automatic SFTP upload (sensor shows up but no data)",
+  summary:
+    "A sensor enrolls and checks in fine, but no scans/devices ever appear. Usually the SFTP credentials are valid but uploads are switched OFF. Turn them on from the dashboard or on the box.",
+  category: "Sensors",
+  updated: "2026-06-11",
+  blocks: [
+    {
+      kind: "callout",
+      tone: "info",
+      text: (
+        <>
+          <strong>Symptom:</strong> the sensor is listed and{" "}
+          <strong>Last check-in</strong> is recent, but its school stays empty —
+          no devices, no scans, no network map. On the box, {C("upload-test")}{" "}
+          <em>passes</em> while {C("upload-now")} says{" "}
+          <strong>&ldquo;SFTP disabled.&rdquo;</strong> The bundles are being
+          built but never shipped, so nothing reaches the dashboard to ingest.
+        </>
+      ),
+    },
+    {
+      kind: "p",
+      text: (
+        <>
+          <strong>Why this happens.</strong> A sensor needs two things to upload:
+          valid SFTP <em>credentials</em> AND the upload <em>switch</em> turned
+          on ({C("NETMON_SFTP_ENABLED=true")}). The switch defaults to{" "}
+          <strong>off</strong>. Boxes deployed before 2026-06-11 got working
+          credentials but never had the switch flipped, so they sit there
+          &ldquo;connected but silent.&rdquo; The confusing part:{" "}
+          {C("upload-test")} only checks the credentials — it deliberately
+          ignores the switch — so a green test does <em>not</em> mean uploads
+          work.
+        </>
+      ),
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      text: (
+        <>
+          A passing <strong>Test SFTP</strong> / {C("upload-test")} is{" "}
+          <strong>not</strong> proof that data is flowing. The real check is{" "}
+          {C("upload-now")} reporting {C("status: uploaded")} (not{" "}
+          {C("saved_only")}), or the dashboard showing{" "}
+          <strong>Reported config → SFTP uploads: enabled</strong> with bundles
+          actually arriving.
+        </>
+      ),
+    },
+
+    { kind: "h", text: "Fix it from the dashboard (no SSH — preferred)" },
+    {
+      kind: "steps",
+      items: [
+        <>Open the sensor: <strong>Sensors</strong> → click the box (or go to its school → the sensor).</>,
+        <>In the <strong>Configuration</strong> card, tick <strong>Manage SFTP upload</strong> to reveal the fields.</>,
+        <>Check <strong>Enable SFTP upload</strong>. The host/user/path should already be filled in from deployment — leave the password blank to keep the current one. Click <strong>Save</strong>.</>,
+        <>The box applies it on its next check-in (every ~3 minutes) and recreates the collector so the new setting takes effect — no manual restart needed.</>,
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "info",
+      text: (
+        <>
+          <strong>Many boxes at once?</strong> Use{" "}
+          <strong>Sensors → Apply recommended defaults</strong> (turns on speed
+          tests + SNMP spine crawl fleet-wide) or{" "}
+          <strong>Sensors → SFTP rotation</strong> (push the same SFTP
+          destination, with <em>Enable</em> checked, to every box). Both merge
+          into each sensor&apos;s config and roll out on the next check-in.
+        </>
+      ),
+    },
+
+    { kind: "h", text: "Fix it on the box (if you have SSH)" },
+    {
+      kind: "code",
+      caption: "Flip the switch in the env file, then recreate the collector so it reloads the env.",
+      code: [
+        "sudo sed -i 's/^NETMON_SFTP_ENABLED=.*/NETMON_SFTP_ENABLED=true/' /etc/netmon/netmon.env",
+        "# (if the line is missing entirely, add it:)",
+        "grep -q '^NETMON_SFTP_ENABLED=' /etc/netmon/netmon.env || echo 'NETMON_SFTP_ENABLED=true' | sudo tee -a /etc/netmon/netmon.env",
+        "",
+        "# compose only injects the env file at container-CREATE, so recreate (not restart):",
+        "cd /opt/netmon && docker compose up -d --force-recreate collector",
+      ].join("\n"),
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      text: (
+        <>
+          Use {C("--force-recreate")}, not {C("docker compose restart")}. A plain
+          restart reuses the old container and the rewritten env file is{" "}
+          <strong>not</strong> picked up — the box would stay disabled.
+        </>
+      ),
+    },
+
+    { kind: "h", text: "Verify it's actually uploading" },
+    {
+      kind: "steps",
+      items: [
+        <>On the sensor page, click <strong>Test SFTP</strong> (Remote console → Queued diagnostics). On the next check-in the result should read <strong>uploads: ENABLED</strong>.</>,
+        <>Click <strong>Force upload</strong> (Commands). The result status should be {C("uploaded")} — not {C("saved_only")}.</>,
+        <>Within a few minutes the school fills in with devices/scans, and the sensor&apos;s <strong>Reported config</strong> shows <strong>SFTP uploads: enabled</strong>.</>,
+        <>From the box, the one-shot check is: {C("docker compose exec collector python -m collector upload-test")} — it now prints whether uploads are enabled.</>,
+      ],
+    },
+
+    { kind: "h", text: "Troubleshooting" },
+    {
+      kind: "steps",
+      items: [
+        <>{C("upload-now")} says {C("saved_only")} → the switch is still off; the env edit didn&apos;t land or the collector wasn&apos;t recreated. Redo the fix and {C("--force-recreate")}.</>,
+        <>{C("upload-test")} FAILS (not just disabled) → it&apos;s a credentials/reachability problem, not the switch. Recheck host/port/user/password and that the box can reach the SFTP host on port 22.</>,
+        <>Test passes + uploads enabled, but the dashboard still looks empty → the bundles are arriving but ingestion hasn&apos;t run or is pointed elsewhere. Check <strong>Settings → SFTP ingestion</strong>.</>,
+        <>An overnight auto-update did <em>not</em> fix it → correct: auto-update only refreshes the container code, it never re-runs the installer or rewrites a box&apos;s env. Each affected box must be remediated as above.</>,
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "success",
+      text: (
+        <>
+          New deployments now set {C("NETMON_SFTP_ENABLED=true")} automatically,
+          so freshly installed sensors upload out of the box — this fix is only
+          for boxes deployed before that change.
+        </>
+      ),
+    },
+  ],
+};
+
+export const HELP_ARTICLES: HelpArticle[] = [fixEnrollment, fixSftpUpload];
 
 export function getArticle(slug: string): HelpArticle | undefined {
   return HELP_ARTICLES.find((a) => a.slug === slug);

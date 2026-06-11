@@ -68,6 +68,19 @@ export function DeploySensor({
     `NETMON_SCHOOL_SLUG=${schoolSlug}`,
     `NETMON_DEVICE=${deviceName}`,
     `NETMON_DEVICE_SLUG=${effectiveSlug}`,
+    // --- Recommended defaults for a fresh box (enabled out of the box; all are
+    // changeable later from the dashboard settings). The collector ships these
+    // OFF by default, so baking them in here is what makes a new sensor actually
+    // crawl topology + run speed tests without a tech remembering to flip them.
+    // SNMP spine crawl: needs a community to do anything; "public" is a benign
+    // read-only starting point — set the district's real community in settings.
+    `NETMON_SNMP_ENABLED=true`,
+    `NETMON_SNMP_COMMUNITIES=public`,
+    `NETMON_SNMP_TOPOLOGY_ENABLED=true`,
+    `NETMON_SNMP_TOPOLOGY_SCOPE=spine`,
+    // Public internet speed tests — both probes (Ookla CLI + Cloudflare).
+    `NETMON_SPEEDTEST_ENABLED=true`,
+    `NETMON_SPEEDTEST_PROVIDERS=ookla,cloudflare`,
   ];
   if (sftp) {
     provLines.push(

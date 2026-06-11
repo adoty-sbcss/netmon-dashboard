@@ -59,7 +59,26 @@ const SAFE_COMMANDS = new Set([
   "diag-disk",
   "diag-uptime",
   "diag-dns",
+  "diag-ping",
+  // "Test SFTP": connects/auths/lists the remote path (read-only) AND reports
+  // whether uploads are actually enabled — a green connection test alone does
+  // not mean bundles ship (the NETMON_SFTP_ENABLED footgun).
+  "diag-sftp-test",
   "diag-selftest",
+]);
+
+/**
+ * HOST-LEVEL maintenance actions (run OUTSIDE the container by the host wrapper).
+ * Kept separate from SAFE_COMMANDS because they are state-changing + privileged
+ * and must only be queued via queueHostActionAction (typed confirm + audit +
+ * security event). Mirrors collector checkin.py:_HOST_ACTIONS, scripts/
+ * host-action.sh, and console-config.ts HOST_ACTION_COMMANDS.
+ */
+const HOST_ACTION_COMMANDS = new Set([
+  "host-restart",
+  "host-rebuild",
+  "host-rollback",
+  "host-reboot",
 ]);
 
 async function requireAdmin() {
@@ -252,6 +271,59 @@ export async function queueCommandAction(
 }
 
 /**
+ * Queue a HOST-LEVEL maintenance action (restart / rebuild / rollback / reboot)
+ * that the in-container agent can't perform itself — the host wrapper drains +
+ * runs it (collector checkin.py exit 12 -> scripts/host-action.sh). State-
+ * changing + privileged, so it's gated behind a TYPE-TO-CONFIRM word (the
+ * operator must type e.g. "REBOOT") + audit + a 'medium'/'high' security event.
+ * NOTE: no second-approver flow yet (see console-config.ts) — vet with security.
+ */
+export async function queueHostActionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sensorId = Number(formData.get("sensorId"));
+  const command = String(formData.get("command") ?? "");
+  const confirm = String(formData.get("confirm") ?? "").trim();
+  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+  if (!HOST_ACTION_COMMANDS.has(command)) return { error: "Unknown host action." };
+
+  // Defense in depth: the operator must type the action's confirm word. The UI
+  // shows it; this re-checks server-side so a stray click can't fire it.
+  const expectWord = command.replace(/^host-/, "").toUpperCase();
+  if (confirm.toUpperCase() !== expectWord) {
+    return { error: `Type ${expectWord} to confirm this action.` };
+  }
+
+  const heavy = command === "host-reboot" || command === "host-rollback";
+  await db.insert(commandQueue).values({
+    sensorId,
+    command,
+    status: "pending",
+    // Dispatched on the next check-in. There is no second-approver UI yet, so
+    // requiresApproval stays false; the typed confirm above is the gate.
+    requiresApproval: false,
+    createdBy: admin.id,
+  });
+
+  await audit(admin.email, "sensor_host_action_queued", { sensorId, command });
+  await adminEvent(
+    admin.email,
+    "sensor_host_action_queued",
+    { sensorId, command },
+    heavy ? "medium" : "low",
+    `sensor:${sensorId}`,
+  );
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Queued “${command}” — the box runs it on its next check-in (watch the command history below).`,
+  };
+}
+
+/**
  * Queue a code update for EVERY sensor (fleet-wide). Each box updates on its
  * next check-in; the ~10-min check-in timing + the collector's per-box jitter
  * stagger the rollout naturally so the fleet doesn't all rebuild at once. The
@@ -412,6 +484,74 @@ export async function bulkSetCrawlScopeAction(
   return {
     ok: true,
     message: `Pushed crawl scope "${scope}" to ${rows.length} sensor(s) — each applies on its next check-in (watch the rollout below).`,
+  };
+}
+
+/**
+ * Push the RECOMMENDED DEFAULTS to every existing sensor in one shot: enable the
+ * SNMP spine crawl and both public speed tests. Merges into each box's existing
+ * desired config (SFTP/iperf/etc. preserved) and bumps each version; every box
+ * applies on its next check-in. This is the fleet-wide companion to the
+ * new-install defaults baked into the deploy installer (deploy-sensor.tsx).
+ *
+ * NOTE: SNMP needs a community to actually crawl. We do NOT overwrite a box's
+ * existing community here (that's district-specific) — boxes with none set get
+ * the spine flags but won't crawl until a community is provided in settings.
+ */
+export async function bulkApplyRecommendedDefaultsAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const defaults: Record<string, unknown> = {
+    snmp_enabled: true,
+    snmp_topology_enabled: true,
+    snmp_topology_scope: "spine",
+    speedtest_enabled: true,
+    speedtest_providers: "ookla,cloudflare",
+  };
+
+  const rows = await db
+    .select({
+      sensorId: sensors.id,
+      v: desiredConfig.configVersion,
+      config: desiredConfig.config,
+    })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id));
+  if (rows.length === 0) return { error: "No sensors to push to." };
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      // Box config wins over defaults for any key already set, EXCEPT the enable
+      // flags + scope we explicitly want to turn on. So spread existing first,
+      // then our defaults — turning the features on without clobbering tuning
+      // (community, schedule interval, providers a box already customized).
+      const existing = (row.config as Record<string, unknown>) ?? {};
+      const merged = { ...existing, ...defaults };
+      // Preserve a box's own custom speedtest provider list if it set one.
+      if (typeof existing.speedtest_providers === "string" && existing.speedtest_providers) {
+        merged.speedtest_providers = existing.speedtest_providers;
+      }
+      const nextV = (row.v ?? 0) + 1;
+      await tx
+        .insert(desiredConfig)
+        .values({ sensorId: row.sensorId, configVersion: nextV, config: merged, updatedBy: admin.id })
+        .onConflictDoUpdate({
+          target: desiredConfig.sensorId,
+          set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+        });
+    }
+  });
+
+  await audit(admin.email, "sensor_bulk_recommended_defaults", { count: rows.length });
+  await adminEvent(admin.email, "fleet_recommended_defaults_pushed", { count: rows.length }, "low");
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Enabled SNMP spine crawl + speed tests on ${rows.length} sensor(s) — each applies on its next check-in. Set each district's SNMP community in settings if not already.`,
   };
 }
 

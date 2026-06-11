@@ -11,14 +11,17 @@ import {
   Settings2,
   Terminal,
   UploadCloud,
+  Wrench,
 } from "lucide-react";
 
 import {
   enrollSensorAction,
   saveSensorConfigAction,
   queueCommandAction,
+  queueHostActionAction,
   type SensorActionState,
 } from "@/lib/admin/sensor-actions";
+import { HOST_ACTION_COMMANDS } from "@/lib/admin/console-config";
 import type { SensorManagement } from "@/db/queries";
 import { RemoteConsoleLive } from "./console-live";
 import { dateTime, relativeTime } from "@/lib/format";
@@ -85,6 +88,89 @@ function renderResult(result: Record<string, unknown>) {
     <pre className="overflow-auto rounded bg-background p-2 text-[11px]">
       {JSON.stringify(result, null, 2)}
     </pre>
+  );
+}
+
+/**
+ * Host-level maintenance & recovery actions (restart / rebuild / rollback /
+ * reboot). These run OUTSIDE the container via the host wrapper, so they're the
+ * "things we usually need SSH for" surfaced as buttons + a recommendation of
+ * when to reach for each. Each is type-to-confirm gated (the operator must type
+ * the action word) + audited server-side; queued on the next check-in.
+ */
+function HostMaintenanceCard({ sensorId, basePath }: { sensorId: number; basePath: string }) {
+  const [state, action, pending] = useActionState<SensorActionState, FormData>(
+    queueHostActionAction,
+    {},
+  );
+  const [confirmWord, setConfirmWord] = useState<Record<string, string>>({});
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Wrench className="size-4 text-primary" />
+          Maintenance &amp; recovery
+          <span className="text-xs font-normal text-muted-foreground">host-level — usually needs SSH</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <p className="text-xs text-muted-foreground">
+          These run on the box itself (outside the collector container) on the next check-in.
+          Type the highlighted word to confirm — there&apos;s no undo. When in doubt, start with
+          the lightest fix (restart) and escalate only if it doesn&apos;t help.
+        </p>
+        <div className="flex flex-col gap-2">
+          {HOST_ACTION_COMMANDS.map((a) => {
+            const typed = confirmWord[a.id] ?? "";
+            const armed = typed.toUpperCase() === a.confirmWord;
+            const tone =
+              a.danger === "red"
+                ? "border-destructive/40"
+                : "border-amber-500/40";
+            return (
+              <form
+                action={action}
+                key={a.id}
+                className={`flex flex-wrap items-center gap-3 rounded-lg border p-3 ${tone}`}
+              >
+                <input type="hidden" name="sensorId" value={sensorId} />
+                <input type="hidden" name="basePath" value={basePath} />
+                <input type="hidden" name="command" value={a.id} />
+                <div className="flex min-w-[14rem] flex-1 flex-col gap-0.5">
+                  <span className="text-sm font-medium">{a.label}</span>
+                  <span className="text-xs text-muted-foreground">{a.when}</span>
+                </div>
+                <Input
+                  name="confirm"
+                  value={typed}
+                  onChange={(e) =>
+                    setConfirmWord((m) => ({ ...m, [a.id]: e.target.value }))
+                  }
+                  placeholder={`type ${a.confirmWord}`}
+                  className="h-9 w-36 font-mono text-xs"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant={a.danger === "red" ? "destructive" : "outline"}
+                  disabled={pending || !armed}
+                >
+                  {a.label}
+                </Button>
+              </form>
+            );
+          })}
+        </div>
+        <Notice state={state} />
+        <p className="text-[11px] text-muted-foreground">
+          ⚠ Privileged actions — every run is audited and shows on the security feed. The outcome
+          appears on the next check-in (uptime, version, or a recreated container).
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -345,8 +431,10 @@ export function SensorManagementPanel({
                 { cmd: "diag-routes", label: "Routes" },
                 { cmd: "diag-arp", label: "ARP table" },
                 { cmd: "diag-dns", label: "DNS check" },
+                { cmd: "diag-ping", label: "Ping internet" },
                 { cmd: "diag-disk", label: "Disk" },
                 { cmd: "diag-uptime", label: "Uptime" },
+                { cmd: "diag-sftp-test", label: "Test SFTP" },
                 { cmd: "diag-selftest", label: "Selftest" },
               ].map(({ cmd, label }) => (
                 <form action={cmdAction} key={cmd}>
@@ -462,6 +550,9 @@ export function SensorManagementPanel({
           )}
         </CardContent>
       </Card>
+
+      {/* Host-level maintenance & recovery (restart/rebuild/rollback/reboot) */}
+      <HostMaintenanceCard sensorId={sensorId} basePath={basePath} />
     </div>
   );
 }

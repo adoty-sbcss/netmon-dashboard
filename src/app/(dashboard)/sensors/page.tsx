@@ -8,6 +8,7 @@ import { num, relativeTime, titleizeSlug } from "@/lib/format";
 import { Radar, Rocket } from "lucide-react";
 
 import { FleetUpdateAll } from "./fleet-update-all";
+import { FleetApplyDefaults } from "./fleet-apply-defaults";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ export default async function FleetSensorsPage() {
               <Button asChild variant="outline" size="sm">
                 <Link href="/sensors/releases"><Rocket className="size-4" /> Releases</Link>
               </Button>
+              <FleetApplyDefaults />
               <FleetUpdateAll />
             </div>
           ) : undefined

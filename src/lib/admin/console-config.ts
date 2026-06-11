@@ -21,8 +21,10 @@ export const CONSOLE_COMMANDS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "diag-routes", label: "Routes" },
   { id: "diag-arp", label: "ARP table" },
   { id: "diag-dns", label: "DNS check" },
+  { id: "diag-ping", label: "Ping internet" },
   { id: "diag-disk", label: "Disk" },
   { id: "diag-uptime", label: "Uptime" },
+  { id: "diag-sftp-test", label: "Test SFTP" },
   { id: "diag-selftest", label: "Selftest" },
 ];
 
@@ -45,6 +47,60 @@ export const CONSOLE_CONTROL_COMMANDS: ReadonlyArray<{
     label: "Flush ARP cache",
     confirm:
       "Flush the sensor's ARP/neighbor cache? Stale entries are cleared and re-learned on the next scan.",
+  },
+];
+
+/**
+ * HOST-LEVEL maintenance actions (CON-5 host-execution path). Unlike the
+ * diagnostics + in-container controls above, these run OUTSIDE the collector
+ * container — the in-container agent records the request to a shared bind mount
+ * and the host wrapper (scripts/host-action.sh) executes it. They are queued
+ * (NOT sent over the live broker) and gated behind a TYPE-TO-CONFIRM prompt +
+ * audit + a 'medium'/'high' security-feed event. Mirrors the collector's
+ * checkin.py:_HOST_ACTIONS and scripts/host-action.sh allow-list.
+ *
+ * SECURITY: there is no second-approver flow yet (the check-in route only
+ * dispatches requiresApproval=false commands and no approve-UI exists), so the
+ * gate today is the typed confirm + audit. A real step-up/approver flow is a
+ * security-chat follow-up (registry CON-5 / CON-7). Vet additions with security.
+ */
+export const HOST_ACTION_COMMANDS: ReadonlyArray<{
+  id: string;
+  label: string;
+  /** Plain-language "when you'd use this" shown in the recommendations card. */
+  when: string;
+  /** Operator must type this exact word to arm the action. */
+  confirmWord: string;
+  /** Visual weight: 'reboot'/'rollback' are the heaviest. */
+  danger: "amber" | "red";
+}> = [
+  {
+    id: "host-restart",
+    label: "Restart containers",
+    when: "Collector is stuck/unresponsive but the code is fine — a quick `docker compose restart`. No rebuild, no data loss.",
+    confirmWord: "RESTART",
+    danger: "amber",
+  },
+  {
+    id: "host-rebuild",
+    label: "Rebuild containers",
+    when: "After a bad image, a dependency change, or 'works on a fresh box but not this one'. Rebuilds the collector image and recreates it; keeps the database, config, and logs.",
+    confirmWord: "REBUILD",
+    danger: "amber",
+  },
+  {
+    id: "host-rollback",
+    label: "Roll back release",
+    when: "A recent update made the box worse. Reverts code to the last-known-good commit + image + DB snapshot (scripts/rollback.sh).",
+    confirmWord: "ROLLBACK",
+    danger: "red",
+  },
+  {
+    id: "host-reboot",
+    label: "Reboot the box",
+    when: "Last resort — kernel/driver/NIC weirdness that a container restart can't fix. The box goes down for a minute and comes back on its own.",
+    confirmWord: "REBOOT",
+    danger: "red",
   },
 ];
 
