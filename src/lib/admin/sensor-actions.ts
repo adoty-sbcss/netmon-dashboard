@@ -11,7 +11,7 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { sensors, auditLog, releaseSettings } from "@/db/schema/app";
+import { sensors, schools, auditLog, releaseSettings } from "@/db/schema/app";
 import {
   desiredConfig,
   commandQueue,
@@ -552,6 +552,140 @@ export async function bulkApplyRecommendedDefaultsAction(
   return {
     ok: true,
     message: `Enabled SNMP spine crawl + speed tests on ${rows.length} sensor(s) — each applies on its next check-in. Set each district's SNMP community in settings if not already.`,
+  };
+}
+
+/**
+ * Capability keys the consolidated settings matrix toggles per sensor. Each is a
+ * desired_config boolean; enabling "spine crawl" also pins the scope to 'spine'.
+ */
+const CAPABILITY_KEYS = [
+  "snmp_enabled",
+  "snmp_topology_enabled",
+  "sftp_enabled",
+  "iperf_enabled",
+  "speedtest_enabled",
+  "latency_enabled",
+] as const;
+
+/**
+ * Save the per-sensor capability matrix from the consolidated /settings/network
+ * page. The form posts a checkbox per (sensor, capability) as `cap-<id>-<key>`
+ * plus a hidden `sensorIds` CSV. For each sensor we read its current desired
+ * config, recompute the six booleans, and ONLY push (merge + version bump) the
+ * sensors whose flags actually changed — so an unrelated box isn't churned into
+ * a needless check-in recreate. Enabling spine crawl also sets scope='spine'.
+ */
+export async function saveSensorCapabilitiesAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const ids = String(formData.get("sensorIds") ?? "")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) return { error: "No sensors to update." };
+
+  const rows = await db
+    .select({ sensorId: sensors.id, v: desiredConfig.configVersion, config: desiredConfig.config })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id));
+  const byId = new Map(rows.map((r) => [r.sensorId, r]));
+
+  let changed = 0;
+  await db.transaction(async (tx) => {
+    for (const id of ids) {
+      const row = byId.get(id);
+      const current = (row?.config as Record<string, unknown>) ?? {};
+      const patch: Record<string, unknown> = {};
+      let differs = false;
+      for (const key of CAPABILITY_KEYS) {
+        const want = formData.get(`cap-${id}-${key}`) === "on";
+        const have = current[key] === true || current[key] === "true";
+        if (want !== have) differs = true;
+        patch[key] = want;
+      }
+      if (!differs) continue;
+      // Enabling the topology crawl is only useful on the spine path; pin it so
+      // the box doesn't fall back to a heavy full-network crawl.
+      if (patch.snmp_topology_enabled === true && !current.snmp_topology_scope) {
+        patch.snmp_topology_scope = "spine";
+      }
+      const merged = { ...current, ...patch };
+      const nextV = (row?.v ?? 0) + 1;
+      await tx
+        .insert(desiredConfig)
+        .values({ sensorId: id, configVersion: nextV, config: merged, updatedBy: admin.id })
+        .onConflictDoUpdate({
+          target: desiredConfig.sensorId,
+          set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+        });
+      changed += 1;
+    }
+  });
+
+  await audit(admin.email, "sensor_capabilities_saved", { count: changed });
+  if (changed > 0) {
+    await adminEvent(admin.email, "sensor_capabilities_saved", { count: changed }, "info");
+  }
+  revalidatePath(basePathFor(formData));
+  return changed === 0
+    ? { ok: true, message: "No changes to save." }
+    : {
+        ok: true,
+        message: `Updated ${changed} sensor(s) — each applies on its next check-in.`,
+      };
+}
+
+/**
+ * Push an SNMP community string to every sensor in ONE district (merge + bump).
+ * SNMP discovery is inert without a community, so this is the companion to
+ * enabling the SNMP capability in the matrix. Scoped to the district so one
+ * district's community can't leak to another.
+ */
+export async function bulkSetSnmpCommunityAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const districtId = Number(formData.get("districtId"));
+  if (!Number.isInteger(districtId)) return { error: "Invalid district." };
+  const community = String(formData.get("snmpCommunities") ?? "").trim();
+  if (!community) return { error: "Enter at least one community string." };
+
+  const rows = await db
+    .select({ sensorId: sensors.id, v: desiredConfig.configVersion, config: desiredConfig.config })
+    .from(sensors)
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(eq(schools.districtId, districtId));
+  if (rows.length === 0) return { error: "No sensors in this district." };
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const merged = { ...((row.config as Record<string, unknown>) ?? {}), snmp_communities: community };
+      const nextV = (row.v ?? 0) + 1;
+      await tx
+        .insert(desiredConfig)
+        .values({ sensorId: row.sensorId, configVersion: nextV, config: merged, updatedBy: admin.id })
+        .onConflictDoUpdate({
+          target: desiredConfig.sensorId,
+          set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+        });
+    }
+  });
+
+  await audit(admin.email, "district_snmp_community_set", { districtId, count: rows.length });
+  await adminEvent(admin.email, "district_snmp_community_set", { districtId, count: rows.length }, "low");
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: `Pushed SNMP community to ${rows.length} sensor(s) in this district — applies on next check-in.`,
   };
 }
 

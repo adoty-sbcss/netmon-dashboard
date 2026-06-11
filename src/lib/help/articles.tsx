@@ -310,9 +310,9 @@ const fixSftpUpload: HelpArticle = {
     {
       kind: "steps",
       items: [
-        <>Open the sensor: <strong>Sensors</strong> → click the box (or go to its school → the sensor).</>,
-        <>In the <strong>Configuration</strong> card, tick <strong>Manage SFTP upload</strong> to reveal the fields.</>,
-        <>Check <strong>Enable SFTP upload</strong>. The host/user/path should already be filled in from deployment — leave the password blank to keep the current one. Click <strong>Save</strong>.</>,
+        <>Open <strong>Network settings</strong> (left sidebar, under Monitoring) and pick the district at the top.</>,
+        <>In the <strong>Per-sensor capabilities</strong> table, find the sensor&apos;s row and tick the <strong>SFTP upload</strong> box.</>,
+        <>Click <strong>Save capabilities</strong>. (The destination host/user/path was already set at deployment — this just switches uploading on.)</>,
         <>The box applies it on its next check-in (every ~3 minutes) and recreates the collector so the new setting takes effect — no manual restart needed.</>,
       ],
     },
@@ -322,11 +322,11 @@ const fixSftpUpload: HelpArticle = {
       text: (
         <>
           <strong>Many boxes at once?</strong> Use{" "}
-          <strong>Sensors → Apply recommended defaults</strong> (turns on speed
-          tests + SNMP spine crawl fleet-wide) or{" "}
-          <strong>Sensors → SFTP rotation</strong> (push the same SFTP
-          destination, with <em>Enable</em> checked, to every box). Both merge
-          into each sensor&apos;s config and roll out on the next check-in.
+          <strong>Sensors → SFTP rotation</strong> to push the same SFTP
+          destination (with <em>Enable</em> checked) to every box, or tick the
+          SFTP column for several rows in the capabilities table before saving.
+          Both merge into each sensor&apos;s config and roll out on the next
+          check-in.
         </>
       ),
     },

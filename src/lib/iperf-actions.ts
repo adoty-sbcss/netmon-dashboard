@@ -70,6 +70,7 @@ export async function saveDistrictIperfAction(
   await saveDistrictIperf(district.id, { serverHost, serverPort, enabled }, user.id);
   await audit(user.email, "iperf_server_saved", { districtSlug: district.slug, serverHost, serverPort, enabled });
   revalidatePath(`/${district.slug}/settings`);
+  revalidatePath("/settings/network");
   return { ok: true, message: "iperf server saved." };
 }
 

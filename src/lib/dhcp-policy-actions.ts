@@ -71,6 +71,7 @@ export async function addAuthorizedDhcpServerAction(
     })
     .catch(() => {});
   revalidatePath(`/${district.slug}/settings`);
+  revalidatePath("/settings/network");
   return { ok: true, message: `Authorized ${serverIp}.` };
 }
 
@@ -98,5 +99,6 @@ export async function removeAuthorizedDhcpServerAction(
     })
     .catch(() => {});
   revalidatePath(`/${district.slug}/settings`);
+  revalidatePath("/settings/network");
   return { ok: true, message: "Removed." };
 }

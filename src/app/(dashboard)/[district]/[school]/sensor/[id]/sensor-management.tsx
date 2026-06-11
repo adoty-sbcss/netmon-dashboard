@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useActionState, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   ArrowUpCircle,
@@ -16,7 +17,6 @@ import {
 
 import {
   enrollSensorAction,
-  saveSensorConfigAction,
   queueCommandAction,
   queueHostActionAction,
   type SensorActionState,
@@ -187,34 +187,18 @@ export function SensorManagementPanel({
     enrollSensorAction,
     {},
   );
-  const [cfgState, cfgAction, savingCfg] = useActionState<SensorActionState, FormData>(
-    saveSensorConfigAction,
-    {},
-  );
   const [cmdState, cmdAction, queuing] = useActionState<SensorActionState, FormData>(
     queueCommandAction,
     {},
   );
 
-  const [manageSftp, setManageSftp] = useState(false);
   const [openCmd, setOpenCmd] = useState<number | null>(null);
 
-  const cfg = mgmt.config ?? {};
-  const snmpCommunities = String((cfg.snmp_communities as string) ?? "");
-  const snmpEnabled = Boolean(cfg.snmp_enabled);
-  const rescan = cfg.rescan_interval as number | undefined;
-  // Topology crawl (so 'spine' / 'full' + tuning flip from here — no SSH).
-  const topoScope = String((cfg.snmp_topology_scope as string) ?? "full");
-  const topoEnabled = Boolean(cfg.snmp_topology_enabled);
-  const topoIntervalHours =
-    cfg.snmp_topology_interval != null
-      ? Math.round(Number(cfg.snmp_topology_interval) / 3600)
-      : undefined;
-  const topoMaxNodes = cfg.snmp_topology_max_nodes as number | undefined;
-  const topoFanoutCap = cfg.snmp_topology_fanout_cap as number | undefined;
-  const selectCls =
-    "h-9 max-w-[18rem] rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[2px] focus-visible:ring-ring/50";
-  const labelCls = "text-sm font-medium";
+  // Per-sensor desired-config editing was consolidated into the global Network
+  // settings page (/settings/network); we link there now instead of duplicating
+  // the form here. districtSlug is the first path segment of basePath
+  // (/<district>/<school>/sensor/<id>).
+  const districtSlug = basePath.split("/").filter(Boolean)[0] ?? "";
 
   return (
     <div className="flex flex-col gap-6">
@@ -261,7 +245,7 @@ export function SensorManagementPanel({
         </CardContent>
       </Card>
 
-      {/* Desired config */}
+      {/* Configuration — consolidated into the global Network settings page */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -272,129 +256,20 @@ export function SensorManagementPanel({
             )}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <form action={cfgAction} className="flex flex-col gap-4">
-            <input type="hidden" name="sensorId" value={sensorId} />
-            <input type="hidden" name="basePath" value={basePath} />
-            <label className="flex items-center gap-2.5">
-              <input
-                type="checkbox"
-                name="snmpEnabled"
-                defaultChecked={snmpEnabled}
-                className="size-4 rounded border-input accent-primary"
-              />
-              <span className={labelCls}>SNMP enabled</span>
-            </label>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="snmpCommunities" className={labelCls}>SNMP community strings</label>
-              <Input
-                id="snmpCommunities"
-                name="snmpCommunities"
-                defaultValue={snmpCommunities}
-                placeholder="public, mystring2"
-                autoComplete="off"
-              />
-              <p className="text-xs text-muted-foreground">Comma-separated; tried in order during SNMP polling.</p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="rescanInterval" className={labelCls}>Scan interval (seconds, optional)</label>
-              <Input
-                id="rescanInterval"
-                name="rescanInterval"
-                type="number"
-                min={60}
-                defaultValue={rescan ?? ""}
-                placeholder="3600"
-                className="max-w-[12rem]"
-              />
-            </div>
-
-            {/* Topology crawl scope + tuning (pushed to the box) */}
-            <div className="rounded-lg border border-input p-3">
-              <span className={labelCls}>Topology crawl</span>
-              <div className="mt-3 flex flex-col gap-3">
-                <label className="flex items-center gap-2.5 text-sm">
-                  <input
-                    type="checkbox"
-                    name="topoEnabled"
-                    defaultChecked={topoEnabled}
-                    className="size-4 rounded border-input accent-primary"
-                  />
-                  SNMP topology crawl enabled
-                </label>
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="topoScope" className={labelCls}>Crawl scope</label>
-                  <select id="topoScope" name="topoScope" defaultValue={topoScope} className={selectCls}>
-                    <option value="full">Full — crawl every neighbor (legacy)</option>
-                    <option value="spine">Spine — follow only the path to the internet</option>
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    Spine follows the uplink toward the gateway and stops at the edge — much
-                    less clutter on multi-IDF sites. Switches a sensor isn&apos;t on the path
-                    to show as <em>uncovered</em> on the map (add a sensor there).
-                  </p>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="topoIntervalHours" className="text-xs text-muted-foreground">Re-crawl every (hours)</label>
-                    <Input id="topoIntervalHours" name="topoIntervalHours" type="number" min={0} defaultValue={topoIntervalHours ?? ""} placeholder="168" />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="topoMaxNodes" className="text-xs text-muted-foreground">Max nodes</label>
-                    <Input id="topoMaxNodes" name="topoMaxNodes" type="number" min={1} defaultValue={topoMaxNodes ?? ""} placeholder="600" />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="topoFanoutCap" className="text-xs text-muted-foreground">Fan-out / device</label>
-                    <Input id="topoFanoutCap" name="topoFanoutCap" type="number" min={1} defaultValue={topoFanoutCap ?? ""} placeholder="40" />
-                  </div>
-                </div>
-                <input type="hidden" name="topoManage" value="1" />
-                <p className="text-xs text-muted-foreground">
-                  Blank numeric fields keep the box&apos;s current value. Applies on the next
-                  check-in (the box restarts to load it).
-                </p>
-              </div>
-            </div>
-
-            {/* Push SFTP upload destination */}
-            <div className="rounded-lg border border-input p-3">
-              <label className="flex items-center gap-2.5">
-                <input
-                  type="checkbox"
-                  name="sftpManage"
-                  checked={manageSftp}
-                  onChange={(e) => setManageSftp(e.target.checked)}
-                  className="size-4 rounded border-input accent-primary"
-                />
-                <span className={labelCls}>Push SFTP upload settings to this box</span>
-              </label>
-              {manageSftp && (
-                <div className="mt-3 flex flex-col gap-3">
-                  <label className="flex items-center gap-2.5 text-sm">
-                    <input type="checkbox" name="sftpEnabled" defaultChecked={Boolean(cfg.sftp_enabled)} className="size-4 rounded border-input accent-primary" />
-                    SFTP uploads enabled
-                  </label>
-                  <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
-                    <Input name="sftpHost" defaultValue={String((cfg.sftp_host as string) ?? "")} placeholder="sftp host" autoComplete="off" />
-                    <Input name="sftpPort" type="number" defaultValue={Number((cfg.sftp_port as number) ?? 22)} placeholder="22" />
-                  </div>
-                  <Input name="sftpUser" defaultValue={String((cfg.sftp_user as string) ?? "")} placeholder="username" autoComplete="off" />
-                  <Input name="sftpPassword" type="password" placeholder="password (blank = keep current)" autoComplete="new-password" />
-                  <Input name="sftpRemotePath" defaultValue={String((cfg.sftp_remote_path as string) ?? "/")} placeholder="/" />
-                  <p className="text-xs text-muted-foreground">
-                    Pushed on the next check-in; the box restarts to apply. The password is stored in the control DB.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <Notice state={cfgState} />
-            <div>
-              <Button type="submit" disabled={savingCfg}>
-                {savingCfg ? "Saving…" : "Save configuration"}
-              </Button>
-            </div>
-          </form>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            This sensor&apos;s capabilities — SNMP, spine crawl, SFTP upload, iperf, speed tests,
+            latency — plus the district&apos;s shared settings (SNMP community, iperf server, DHCP
+            policy) now live on the single <strong>Network settings</strong> page, so everything is
+            in one place instead of scattered per district/school/sensor.
+          </p>
+          <div>
+            <Button asChild size="sm">
+              <Link href={`/settings/network?district=${districtSlug}`}>
+                <Settings2 className="size-4" /> Open Network settings
+              </Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
