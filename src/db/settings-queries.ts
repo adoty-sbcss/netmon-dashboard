@@ -11,11 +11,54 @@
  * can see a push is still pending.
  */
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 
 import { db } from "./index";
 import { districts, schools, sensors } from "./schema/app";
-import { desiredConfig } from "./schema/management";
+import { desiredConfig, shellSessions } from "./schema/management";
+
+export interface PendingConsoleApproval {
+  sid: string;
+  sensorId: number;
+  sensorName: string | null;
+  sensorSlug: string;
+  schoolName: string | null;
+  districtSlug: string;
+  districtName: string | null;
+  requestedByEmail: string | null;
+  createdAt: Date | null;
+  expiresAt: Date;
+}
+
+/** Console sessions awaiting super-admin approval (pending, not yet approved, not
+ *  expired). Backs the in-app approvals list — the email-independent approve path. */
+export async function listPendingConsoleApprovals(): Promise<PendingConsoleApproval[]> {
+  return db
+    .select({
+      sid: shellSessions.id,
+      sensorId: shellSessions.sensorId,
+      sensorName: sensors.name,
+      sensorSlug: sensors.slug,
+      schoolName: schools.name,
+      districtSlug: districts.slug,
+      districtName: districts.name,
+      requestedByEmail: shellSessions.openedByEmail,
+      createdAt: shellSessions.createdAt,
+      expiresAt: shellSessions.expiresAt,
+    })
+    .from(shellSessions)
+    .innerJoin(sensors, eq(shellSessions.sensorId, sensors.id))
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .innerJoin(districts, eq(schools.districtId, districts.id))
+    .where(
+      and(
+        eq(shellSessions.status, "pending"),
+        isNull(shellSessions.approvedAt),
+        gt(shellSessions.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(shellSessions.createdAt);
+}
 
 /** All districts (id/name/slug) for the settings-page district picker. */
 export async function listDistrictsForSettings(): Promise<

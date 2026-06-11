@@ -857,6 +857,16 @@ export async function openConsoleSessionAction(
       `Expires in ${windowMin} minutes if not approved.`,
   });
 
+  // Observability: the email transport is otherwise silent on success/failure,
+  // so log the outcome (provider/ok/recipients/error) to make "I didn't get the
+  // email" diagnosable from the container logs.
+  console.log(
+    `[console-approval] sid=${sid} sensor=${sensorId} provider=${emailRes.provider} ` +
+      `ok=${emailRes.ok} recipients=${to.length} [${to.join(", ")}]` +
+      (emailRes.id ? ` id=${emailRes.id}` : "") +
+      (emailRes.error ? ` error=${emailRes.error}` : ""),
+  );
+
   await audit(admin.email, "console_session_requested", { sensorId, sid, emailedTo: to.length });
   await adminEvent(
     admin.email,
@@ -868,8 +878,8 @@ export async function openConsoleSessionAction(
   revalidatePath(basePathFor(formData));
 
   const note = emailConfigured()
-    ? `Session requested — a super-admin must approve it (emailed ${to.length} admin${to.length === 1 ? "" : "s"}). It becomes ready once approved.`
-    : `Session requested, but email isn't configured (set ACS_CONNECTION_STRING). Approve it here: ${approveUrl}`;
+    ? `Session requested — a super-admin must approve it (emailed ${to.length} admin${to.length === 1 ? "" : "s"}, or they can approve from Console approvals). It becomes ready once approved.`
+    : `Session requested — a super-admin must approve it from Console approvals. (Email isn't configured; direct link: ${approveUrl})`;
   return {
     ok: true,
     message: note,
@@ -884,41 +894,27 @@ export async function openConsoleSessionAction(
 }
 
 /**
- * Approve a pending console session (the emailed "click here to approve" link).
- * Super-admin only AND must present the per-session approval token from the
- * email, so a logged-in admin can't approve an arbitrary session by guessing its
- * id. Mints the sensor's one-time token, queues the `open-console` command (the
- * box dials in on its next check-in), and starts the CONSOLE_TTL_MS clock.
- *
- * Interim control: there is no four-eyes enforcement yet (the requester, if a
- * super-admin, can approve their own) — a deeper SEC review owns the step-up
- * design. The email + audit + security event give oversight in the meantime.
+ * Shared approval finalizer: mints the sensor's one-time token, queues the
+ * `open-console` command (so the box dials in on its next check-in), and starts
+ * the CONSOLE_TTL_MS clock. Caller is responsible for authorization (super-admin)
+ * AND, for the email path, the per-session token check. Re-checks state so a
+ * double-click / race can't double-queue.
  */
-export async function approveConsoleSessionAction(
-  _prev: SensorActionState,
-  formData: FormData,
+async function finalizeConsoleApproval(
+  sid: string,
+  admin: { id: number; email: string },
 ): Promise<SensorActionState> {
-  const admin = await requireAdmin();
-  if (!admin) return { error: "Not authorized." };
-  const sid = String(formData.get("sid") ?? "").trim();
-  const token = String(formData.get("token") ?? "").trim();
-  if (!sid || !token) return { error: "Invalid approval link." };
-
   const [s] = await db
     .select({
       status: shellSessions.status,
       sensorId: shellSessions.sensorId,
       openedByEmail: shellSessions.openedByEmail,
-      approvalTokenHash: shellSessions.approvalTokenHash,
       approvedAt: shellSessions.approvedAt,
     })
     .from(shellSessions)
     .where(eq(shellSessions.id, sid))
     .limit(1);
   if (!s) return { error: "Session not found (it may have expired)." };
-  if (!s.approvalTokenHash || hashToken(token) !== s.approvalTokenHash) {
-    return { error: "Invalid or expired approval link." };
-  }
   if (s.approvedAt) return { ok: true, message: "Already approved — the session is on its way." };
   if (s.status !== "pending") return { error: `Session is ${s.status}; nothing to approve.` };
 
@@ -950,23 +946,67 @@ export async function approveConsoleSessionAction(
     })
     .where(and(eq(shellSessions.id, sid), eq(shellSessions.status, "pending")));
 
-  await audit(admin.email, "console_session_approved", {
+  const detail = {
     sid,
     sensorId: s.sensorId,
     requestedBy: s.openedByEmail,
     selfApproved: s.openedByEmail === admin.email,
-  });
-  await adminEvent(
-    admin.email,
-    "console_session_approved",
-    { sid, sensorId: s.sensorId, requestedBy: s.openedByEmail, selfApproved: s.openedByEmail === admin.email },
-    "medium",
-    `sensor:${s.sensorId}`,
-  );
+  };
+  await audit(admin.email, "console_session_approved", detail);
+  await adminEvent(admin.email, "console_session_approved", detail, "medium", `sensor:${s.sensorId}`);
   return {
     ok: true,
     message: `Approved. ${s.openedByEmail ?? "The requester"} can now connect — the box dials in on its next check-in.`,
   };
+}
+
+/**
+ * Approve a pending console session via the emailed "click here to approve" link.
+ * Super-admin only AND must present the per-session approval token from the email,
+ * so a logged-in admin can't approve an arbitrary session by guessing its id.
+ *
+ * Interim control: no four-eyes enforcement yet (the requester, if a super-admin,
+ * can approve their own) — a deeper SEC review owns the step-up design.
+ */
+export async function approveConsoleSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sid = String(formData.get("sid") ?? "").trim();
+  const token = String(formData.get("token") ?? "").trim();
+  if (!sid || !token) return { error: "Invalid approval link." };
+
+  const [s] = await db
+    .select({ approvalTokenHash: shellSessions.approvalTokenHash })
+    .from(shellSessions)
+    .where(eq(shellSessions.id, sid))
+    .limit(1);
+  if (!s) return { error: "Session not found (it may have expired)." };
+  if (!s.approvalTokenHash || hashToken(token) !== s.approvalTokenHash) {
+    return { error: "Invalid or expired approval link." };
+  }
+  return finalizeConsoleApproval(sid, admin);
+}
+
+/**
+ * Approve a pending console session from the IN-APP approvals list (no email
+ * token needed — being signed in as a super-admin IS the authorization). This is
+ * the email-independent path so console access isn't blocked when approval mail
+ * is filtered/quarantined.
+ */
+export async function approvePendingConsoleSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sid = String(formData.get("sid") ?? "").trim();
+  if (!sid) return { error: "Invalid session." };
+  const res = await finalizeConsoleApproval(sid, admin);
+  revalidatePath("/console/approvals");
+  return res;
 }
 
 /**

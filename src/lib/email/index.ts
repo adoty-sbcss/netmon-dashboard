@@ -82,8 +82,16 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
   }
   if (!emailConfigured()) return logEmail(msg);
   try {
-    return await sendViaAcs(msg);
+    const res = await sendViaAcs(msg);
+    if (!res.ok) {
+      console.warn(
+        `[email:acs] send FAILED tag=${msg.tag ?? "-"} to=${msg.to.length} recipient(s) error=${res.error ?? "unknown"}`,
+      );
+    }
+    return res;
   } catch (e) {
-    return { ok: false, provider: "acs", error: (e as Error).message };
+    const error = (e as Error).message;
+    console.warn(`[email:acs] send THREW tag=${msg.tag ?? "-"} to=${msg.to.length} recipient(s) error=${error}`);
+    return { ok: false, provider: "acs", error };
   }
 }

@@ -68,7 +68,7 @@ export function RemoteConsoleLive({
     setLiveExpiresAt(session.expiresAt);
     append("sys", `Opening session ${session.sid.slice(0, 8)}…`);
     if (session.awaitingApproval) {
-      append("sys", "Waiting for a super-admin to approve this session (emailed). It becomes ready once approved and the sensor dials in.");
+      append("sys", "Waiting for a super-admin to approve this session (emailed, or from Console approvals). It becomes ready once approved and the sensor dials in.");
     }
 
     const url = `${session.broker}?role=operator&token=${encodeURIComponent(
@@ -208,9 +208,10 @@ export function RemoteConsoleLive({
         {openState.error && <p className="text-xs text-destructive">{openState.error}</p>}
         <p className="text-xs text-muted-foreground">
           Opens a time-boxed (30 min), fully-recorded tunnel to the sensor.{" "}
-          <strong>A super-admin must approve the session</strong> — an email goes out with an
-          approve link. Once approved, the box connects out to the broker on its next check-in and
-          the session becomes ready. Only the allow-listed diagnostics below can be run.
+          <strong>A super-admin must approve the session</strong> — via the emailed approve link or
+          from <strong>Console approvals</strong> in the sidebar. Once approved, the box connects out
+          to the broker on its next check-in and the session becomes ready. Only the allow-listed
+          diagnostics below can be run.
         </p>
       </div>
     );
