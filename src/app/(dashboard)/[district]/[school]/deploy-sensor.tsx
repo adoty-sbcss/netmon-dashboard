@@ -71,6 +71,10 @@ export function DeploySensor({
   ];
   if (sftp) {
     provLines.push(
+      // Without this the box gets valid creds but uploads stay OFF (the flag
+      // defaults to false), so `upload-test` passes while real uploads no-op
+      // with "SFTP disabled". Mirrors the wizard (lib/sftp.sh sets it true too).
+      `NETMON_SFTP_ENABLED=true`,
       `NETMON_SFTP_HOST=${sftp.host}`,
       `NETMON_SFTP_PORT=${sftp.port}`,
       `NETMON_SFTP_USER=${sftp.user}`,
