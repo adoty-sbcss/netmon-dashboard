@@ -8,10 +8,11 @@
 import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { sensors, schools, auditLog, releaseSettings } from "@/db/schema/app";
+import { sensors, schools, users, auditLog, releaseSettings } from "@/db/schema/app";
+import { sendEmail, emailConfigured } from "@/lib/email";
 import {
   desiredConfig,
   commandQueue,
@@ -38,6 +39,8 @@ export interface SensorActionState {
     operatorToken: string;
     broker: string;
     expiresAt: number;
+    /** True until a super-admin approves; the operator waits, then auto-connects. */
+    awaitingApproval?: boolean;
   };
   /** Set by extendConsoleSessionAction — the new time-box (ms epoch). */
   extendedExpiresAt?: number;
@@ -794,18 +797,140 @@ export async function openConsoleSessionAction(
 
   const sid = randomBytes(16).toString("hex");
   const operatorToken = randomBytes(32).toString("hex");
-  const sensorToken = randomBytes(32).toString("hex");
+  const approvalToken = randomBytes(32).toString("hex");
   const recordKey = randomBytes(24).toString("hex");
-  const expiresAt = new Date(Date.now() + CONSOLE_TTL_MS);
+  // The window to get approved AND have the sensor dial in. The real per-session
+  // clock (CONSOLE_TTL_MS) is set at approval + reset at pairing. If never
+  // approved, the session simply expires at this ceiling.
+  const expiresAt = new Date(Date.now() + CONSOLE_ABS_MAX_MS);
 
-  // Queue the open-console command. 'approved' (not 'pending') because opening
-  // the session IS the superadmin's authorization — it dispatches at next check-in.
+  // The sensor's one-time token (and thus the `open-console` command) is NOT
+  // minted until a super-admin approves — so the box can't dial in beforehand.
+  // Store a throwaway hash for the NOT-NULL column; approval mints the real one.
+  const placeholderSensorHash = hashToken(randomBytes(32).toString("hex"));
+
+  await db.insert(shellSessions).values({
+    id: sid,
+    sensorId,
+    status: "pending",
+    operatorTokenHash: hashToken(operatorToken),
+    sensorTokenHash: placeholderSensorHash,
+    recordKey,
+    commandId: null,
+    openedBy: admin.id,
+    openedByEmail: admin.email,
+    approvalTokenHash: hashToken(approvalToken),
+    expiresAt,
+  });
+
+  // Build the approve link + notify every super-admin.
+  const [sensor] = await db
+    .select({ slug: sensors.slug, name: sensors.name })
+    .from(sensors)
+    .where(eq(sensors.id, sensorId))
+    .limit(1);
+  const sensorLabel = sensor?.name || sensor?.slug || `sensor #${sensorId}`;
+  const hdrs = await headers();
+  const origin =
+    process.env.APP_ORIGIN?.trim() ||
+    `${hdrs.get("x-forwarded-proto") ?? "https"}://${hdrs.get("host") ?? ""}`;
+  const approveUrl = `${origin}/console/approve/${sid}?token=${approvalToken}`;
+  const supers = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.role, "superadmin"));
+  const to = supers.map((s) => s.email).filter(Boolean);
+  const windowMin = Math.round(CONSOLE_ABS_MAX_MS / 60000);
+  const emailRes = await sendEmail({
+    to,
+    tag: "console-approval",
+    subject: `Console approval needed: ${admin.email} → ${sensorLabel}`,
+    html:
+      `<p><strong>${admin.email}</strong> is requesting a full SSH / live console session to ` +
+      `<strong>${sensorLabel}</strong>.</p>` +
+      `<p><a href="${approveUrl}">Click here to approve</a> — you must be signed in as a ` +
+      `super-admin. The request expires in ${windowMin} minutes if no one approves it.</p>` +
+      `<p>If you didn't expect this, ignore it: the session can't start until it's approved.</p>`,
+    text:
+      `${admin.email} is requesting a console session to ${sensorLabel}.\n` +
+      `Approve (super-admin sign-in required): ${approveUrl}\n` +
+      `Expires in ${windowMin} minutes if not approved.`,
+  });
+
+  await audit(admin.email, "console_session_requested", { sensorId, sid, emailedTo: to.length });
+  await adminEvent(
+    admin.email,
+    "console_session_requested",
+    { sensorId, sid, emailedTo: to.length, emailProvider: emailRes.provider },
+    "medium",
+    `sensor:${sensorId}`,
+  );
+  revalidatePath(basePathFor(formData));
+
+  const note = emailConfigured()
+    ? `Session requested — a super-admin must approve it (emailed ${to.length} admin${to.length === 1 ? "" : "s"}). It becomes ready once approved.`
+    : `Session requested, but email isn't configured (set ACS_CONNECTION_STRING). Approve it here: ${approveUrl}`;
+  return {
+    ok: true,
+    message: note,
+    session: {
+      sid,
+      operatorToken,
+      broker: BROKER_WSS_URL,
+      expiresAt: expiresAt.getTime(),
+      awaitingApproval: true,
+    },
+  };
+}
+
+/**
+ * Approve a pending console session (the emailed "click here to approve" link).
+ * Super-admin only AND must present the per-session approval token from the
+ * email, so a logged-in admin can't approve an arbitrary session by guessing its
+ * id. Mints the sensor's one-time token, queues the `open-console` command (the
+ * box dials in on its next check-in), and starts the CONSOLE_TTL_MS clock.
+ *
+ * Interim control: there is no four-eyes enforcement yet (the requester, if a
+ * super-admin, can approve their own) — a deeper SEC review owns the step-up
+ * design. The email + audit + security event give oversight in the meantime.
+ */
+export async function approveConsoleSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sid = String(formData.get("sid") ?? "").trim();
+  const token = String(formData.get("token") ?? "").trim();
+  if (!sid || !token) return { error: "Invalid approval link." };
+
+  const [s] = await db
+    .select({
+      status: shellSessions.status,
+      sensorId: shellSessions.sensorId,
+      openedByEmail: shellSessions.openedByEmail,
+      approvalTokenHash: shellSessions.approvalTokenHash,
+      approvedAt: shellSessions.approvedAt,
+    })
+    .from(shellSessions)
+    .where(eq(shellSessions.id, sid))
+    .limit(1);
+  if (!s) return { error: "Session not found (it may have expired)." };
+  if (!s.approvalTokenHash || hashToken(token) !== s.approvalTokenHash) {
+    return { error: "Invalid or expired approval link." };
+  }
+  if (s.approvedAt) return { ok: true, message: "Already approved — the session is on its way." };
+  if (s.status !== "pending") return { error: `Session is ${s.status}; nothing to approve.` };
+
+  const sensorToken = randomBytes(32).toString("hex");
+  const newExpires = new Date(Date.now() + CONSOLE_TTL_MS);
+
   const [cmd] = await db
     .insert(commandQueue)
     .values({
-      sensorId,
+      sensorId: s.sensorId,
       command: "open-console",
-      args: { sid, broker: BROKER_WSS_URL, token: sensorToken, expiresAt: expiresAt.getTime() },
+      args: { sid, broker: BROKER_WSS_URL, token: sensorToken, expiresAt: newExpires.getTime() },
       status: "approved",
       requiresApproval: false,
       approvedBy: admin.id,
@@ -814,32 +939,33 @@ export async function openConsoleSessionAction(
     })
     .returning({ id: commandQueue.id });
 
-  await db.insert(shellSessions).values({
-    id: sid,
-    sensorId,
-    status: "pending",
-    operatorTokenHash: hashToken(operatorToken),
-    sensorTokenHash: hashToken(sensorToken),
-    recordKey,
-    commandId: cmd?.id ?? null,
-    openedBy: admin.id,
-    openedByEmail: admin.email,
-    expiresAt,
-  });
+  await db
+    .update(shellSessions)
+    .set({
+      sensorTokenHash: hashToken(sensorToken),
+      approvedBy: admin.id,
+      approvedAt: new Date(),
+      commandId: cmd?.id ?? null,
+      expiresAt: newExpires,
+    })
+    .where(and(eq(shellSessions.id, sid), eq(shellSessions.status, "pending")));
 
-  await audit(admin.email, "console_session_opened", { sensorId, sid });
+  await audit(admin.email, "console_session_approved", {
+    sid,
+    sensorId: s.sensorId,
+    requestedBy: s.openedByEmail,
+    selfApproved: s.openedByEmail === admin.email,
+  });
   await adminEvent(
     admin.email,
-    "console_session_opened",
-    { sensorId, sid },
+    "console_session_approved",
+    { sid, sensorId: s.sensorId, requestedBy: s.openedByEmail, selfApproved: s.openedByEmail === admin.email },
     "medium",
-    `sensor:${sensorId}`,
+    `sensor:${s.sensorId}`,
   );
-  revalidatePath(basePathFor(formData));
   return {
     ok: true,
-    message: "Session opening — waiting for the sensor to connect on its next check-in.",
-    session: { sid, operatorToken, broker: BROKER_WSS_URL, expiresAt: expiresAt.getTime() },
+    message: `Approved. ${s.openedByEmail ?? "The requester"} can now connect — the box dials in on its next check-in.`,
   };
 }
 
@@ -895,7 +1021,7 @@ export async function extendConsoleSessionAction(
     `sensor:${s.sensorId}`,
   );
   revalidatePath(basePathFor(formData));
-  return { ok: true, message: "Session extended +15 min.", extendedExpiresAt: proposed };
+  return { ok: true, message: "Session extended +30 min.", extendedExpiresAt: proposed };
 }
 
 /** Kill-switch: mark a console session killed. The broker's /alive poll drops the tunnel within ~10s. */

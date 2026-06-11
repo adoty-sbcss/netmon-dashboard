@@ -110,7 +110,7 @@ export const HOST_ACTION_COMMANDS: ReadonlyArray<{
  * click) so the up-to-10-min wait for the sensor's next check-in doesn't erode
  * the usable session. Mirrored on the broker.
  */
-export const CONSOLE_TTL_MS = 15 * 60 * 1000;
+export const CONSOLE_TTL_MS = 30 * 60 * 1000;
 
 /**
  * Absolute ceiling measured from session creation. Extends (+CONSOLE_TTL_MS

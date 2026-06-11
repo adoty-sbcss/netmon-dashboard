@@ -195,6 +195,15 @@ export const shellSessions = pgTable(
     }),
     openedBy: integer("opened_by").references(() => users.id, { onDelete: "set null" }),
     openedByEmail: text("opened_by_email"),
+    /**
+     * Super-admin approval gate (interim control until a deeper security review).
+     * The session row is created but its `open-console` command is NOT queued
+     * until a super-admin clicks the emailed approve link. approvalTokenHash is
+     * the sha256 of the secret in that link (plaintext lives only in the email).
+     */
+    approvalTokenHash: text("approval_token_hash"),
+    approvedBy: integer("approved_by").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     /** Append-only recorded frames: [{t, dir, frame}]. */
     transcript: jsonb("transcript").notNull().default([]),
     eventCount: integer("event_count").notNull().default(0),

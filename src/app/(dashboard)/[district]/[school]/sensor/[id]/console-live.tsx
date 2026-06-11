@@ -67,6 +67,9 @@ export function RemoteConsoleLive({
     setConn("connecting");
     setLiveExpiresAt(session.expiresAt);
     append("sys", `Opening session ${session.sid.slice(0, 8)}…`);
+    if (session.awaitingApproval) {
+      append("sys", "Waiting for a super-admin to approve this session (emailed). It becomes ready once approved and the sensor dials in.");
+    }
 
     const url = `${session.broker}?role=operator&token=${encodeURIComponent(
       session.operatorToken,
@@ -132,7 +135,7 @@ export function RemoteConsoleLive({
     };
 
     // Keepalive so the broker's idle timer doesn't trip while the tab is open
-    // (the hard 15-min time-box still bounds the session).
+    // (the hard 30-min time-box still bounds the session).
     const ka = setInterval(() => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "ping" }));
     }, 45_000);
@@ -204,9 +207,10 @@ export function RemoteConsoleLive({
         </form>
         {openState.error && <p className="text-xs text-destructive">{openState.error}</p>}
         <p className="text-xs text-muted-foreground">
-          Opens a time-boxed (15 min), fully-recorded tunnel to the sensor. The box connects
-          out to the broker on its next check-in — there may be a short wait before it&apos;s
-          ready. Only the allow-listed diagnostics below can be run.
+          Opens a time-boxed (30 min), fully-recorded tunnel to the sensor.{" "}
+          <strong>A super-admin must approve the session</strong> — an email goes out with an
+          approve link. Once approved, the box connects out to the broker on its next check-in and
+          the session becomes ready. Only the allow-listed diagnostics below can be run.
         </p>
       </div>
     );
@@ -248,7 +252,7 @@ export function RemoteConsoleLive({
               ) : (
                 <Clock className="size-3" />
               )}
-              +15 min
+              +30 min
             </Button>
           </form>
           <form action={killAction}>
