@@ -9,10 +9,11 @@
  * user can see nothing — these return empty without touching the DB.
  */
 import "server-only";
-import { and, desc, eq, ilike, inArray, or, type Column, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql, type Column, type SQL } from "drizzle-orm";
 
 import { db } from "./index";
 import { districts, schools, sensors } from "./schema/app";
+import { desiredConfig } from "./schema/management";
 import { entitiesHost } from "./schema/entities";
 import { scanRuns, findings } from "./schema/netmon";
 import { titleizeSlug } from "../lib/format";
@@ -86,10 +87,31 @@ export interface FleetSensorRow {
   schoolName: string | null;
   districtSlug: string;
   districtName: string;
+  // --- health/observability (REL-4): so the fleet view can flag a box that's
+  //     silently behind (stale/blank SHA), failing to update, or checking in but
+  //     not producing fresh data — the signals that hid Trona's frozen state.
+  reportedSha: string | null;
+  reportedChannel: string | null;
+  lastUpdateStatus: string | null;
+  lastUpdateReason: string | null;
+  lastUpdateAt: string | null;
+  configVersion: number | null; // desired (vs reportedConfigVersion = applied)
+  lastScanAt: Date | null;
 }
 
 export async function listFleetSensors(scope: Scope): Promise<FleetSensorRow[]> {
   if (scopeIsEmpty(scope)) return [];
+  // Latest scan per sensor (ground-truth "is it producing data") in one grouped
+  // subquery so we don't N+1 across the fleet.
+  const lastScan = db
+    .select({
+      sensorId: scanRuns.sensorId,
+      last: sql<Date | null>`max(${scanRuns.startedAt})`.as("last_scan_at"),
+    })
+    .from(scanRuns)
+    .groupBy(scanRuns.sensorId)
+    .as("last_scan_sq");
+
   return db
     .select({
       id: sensors.id,
@@ -103,10 +125,19 @@ export async function listFleetSensors(scope: Scope): Promise<FleetSensorRow[]> 
       schoolName: schools.name,
       districtSlug: districts.slug,
       districtName: districts.name,
+      reportedSha: sensors.reportedSha,
+      reportedChannel: sensors.reportedChannel,
+      lastUpdateStatus: sensors.lastUpdateStatus,
+      lastUpdateReason: sensors.lastUpdateReason,
+      lastUpdateAt: sensors.lastUpdateAt,
+      configVersion: desiredConfig.configVersion,
+      lastScanAt: lastScan.last,
     })
     .from(sensors)
     .innerJoin(schools, eq(sensors.schoolId, schools.id))
     .innerJoin(districts, eq(schools.districtId, districts.id))
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .leftJoin(lastScan, eq(lastScan.sensorId, sensors.id))
     .where(scopeWhere(districts.id, scope))
     .orderBy(districts.name, schools.name, sensors.slug);
 }

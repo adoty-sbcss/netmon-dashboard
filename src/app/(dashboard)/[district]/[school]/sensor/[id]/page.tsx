@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Archive, ChevronDown, Download, Radio, Settings2, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Archive, ChevronDown, Download, Radio, Settings2, Wrench } from "lucide-react";
 import { eq } from "drizzle-orm";
 
 import {
@@ -15,6 +15,7 @@ import { db } from "@/db";
 import { sensors as sensorsTable } from "@/db/schema/app";
 import { getDistrictIperf, listIperfResults, listSpeedtestResults } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
+import { sensorHealthFlags, worstLevel } from "@/lib/sensor-health";
 import { SensorManagementPanel } from "./sensor-management";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
@@ -117,6 +118,22 @@ export default async function SensorDetailPage({
   };
   const basePath = `/${district.slug}/${school.slug}`;
 
+  // Attention flags — same logic as the fleet view. fleetTopSha isn't available
+  // here (single sensor), so the "behind the fleet" check is skipped; the rest
+  // (offline, update failing, no version, no fresh data, config stuck) all apply.
+  const healthFlags = sensorHealthFlags(
+    {
+      lastCheckinAt: sensor.lastCheckinAt,
+      reportedSha: sensor.reportedSha,
+      lastUpdateStatus: sensor.lastUpdateStatus,
+      lastUpdateReason: sensor.lastUpdateReason,
+      configVersion: mgmt?.configVersion ?? null,
+      reportedConfigVersion: sensor.reportedConfigVersion,
+      lastScanAt: sensor.lastScanAt,
+    },
+    { fleetTopSha: null },
+  );
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -135,6 +152,28 @@ export default async function SensorDetailPage({
           }
         />
       </div>
+
+      {healthFlags.length > 0 && (
+        <div
+          className={`rounded-lg border p-3 ${
+            worstLevel(healthFlags) === "error"
+              ? "border-destructive/40 bg-destructive/5"
+              : "border-[var(--warning)]/40 bg-[var(--warning)]/5"
+          }`}
+        >
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <AlertTriangle className="size-4" /> Needs attention
+          </div>
+          <ul className="mt-1.5 flex flex-col gap-1 text-xs">
+            {healthFlags.map((f) => (
+              <li key={f.code}>
+                <span className="font-medium">{f.label}</span>
+                {f.detail ? <span className="text-muted-foreground"> — {f.detail}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Status */}
       <Card>
