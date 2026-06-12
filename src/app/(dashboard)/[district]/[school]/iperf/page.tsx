@@ -139,8 +139,8 @@ export default async function IperfPage({
           {speedtests.length === 0 ? (
             <p className="px-6 text-sm text-muted-foreground sm:px-0">
               No public speed tests yet. Enable scheduled speed tests for this site
-              to measure the internet circuit (download / upload / latency to Ookla
-              + Cloudflare).
+              to measure the internet circuit (download / upload / latency via
+              Cloudflare).
             </p>
           ) : (
             <div className="overflow-x-auto">

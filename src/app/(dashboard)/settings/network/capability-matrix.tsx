@@ -17,7 +17,7 @@ const CAPABILITIES: { key: keyof SensorCapabilityRow; label: string; hint: strin
   { key: "snmp_topology_enabled", label: "Spine crawl", hint: "Map the path-to-internet via SNMP/CDP (spine scope)" },
   { key: "sftp_enabled", label: "SFTP upload", hint: "Ship hourly bundles to the dashboard depot" },
   { key: "iperf_enabled", label: "iperf", hint: "Scheduled internal throughput test (needs an iperf server below)" },
-  { key: "speedtest_enabled", label: "Speed tests", hint: "Public internet speed test (Ookla + Cloudflare)" },
+  { key: "speedtest_enabled", label: "Speed tests", hint: "Public internet speed test (Cloudflare)" },
   { key: "latency_enabled", label: "Latency", hint: "Latency/jitter/loss to internet + gateway + DNS each check-in" },
 ];
 

@@ -28,16 +28,12 @@ async function requireSuperadmin() {
   return u && u.role === "superadmin" ? u : null;
 }
 
-const VALID = new Set(["ookla", "cloudflare"]);
-
-function providersFromForm(formData: FormData): string {
-  const out: string[] = [];
-  if (formData.get("providerOokla") === "on") out.push("ookla");
-  if (formData.get("providerCloudflare") === "on") out.push("cloudflare");
-  return (out.length ? out : ["ookla"]).join(",");
+// Cloudflare is the only provider (Ookla removed).
+function providersFromForm(_formData: FormData): string {
+  return "cloudflare";
 }
 
-/** Queue an on-demand public speed test (runs the configured/given provider(s)). */
+/** Queue an on-demand public speed test (Cloudflare). */
 export async function runSpeedtestAction(
   _prev: SpeedtestActionState,
   formData: FormData,
@@ -47,17 +43,15 @@ export async function runSpeedtestAction(
   const sensorId = Number(formData.get("sensorId"));
   if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
 
-  const provider = String(formData.get("provider") ?? "");
   await db.insert(commandQueue).values({
     sensorId,
     command: "speedtest",
-    // No provider => the sensor runs whatever its config lists (both by default).
-    args: { provider: VALID.has(provider) ? provider : undefined, trigger: "manual" },
+    args: { provider: "cloudflare", trigger: "manual" },
     status: "pending",
     requiresApproval: false,
     createdBy: admin.id,
   });
-  await audit(admin.email, "speedtest_run_queued", { sensorId, provider: provider || "configured" });
+  await audit(admin.email, "speedtest_run_queued", { sensorId, provider: "cloudflare" });
   revalidatePath(String(formData.get("basePath") ?? "/"));
   return { ok: true, message: "Speed test queued — runs on the next check-in." };
 }

@@ -78,9 +78,10 @@ export function DeploySensor({
     `NETMON_SNMP_COMMUNITIES=public`,
     `NETMON_SNMP_TOPOLOGY_ENABLED=true`,
     `NETMON_SNMP_TOPOLOGY_SCOPE=spine`,
-    // Public internet speed tests — both probes (Ookla CLI + Cloudflare).
+    // Public internet speed test (Cloudflare — dependency-free, reliable on
+    // filtered school networks; Ookla was removed).
     `NETMON_SPEEDTEST_ENABLED=true`,
-    `NETMON_SPEEDTEST_PROVIDERS=ookla,cloudflare`,
+    `NETMON_SPEEDTEST_PROVIDERS=cloudflare`,
   ];
   if (sftp) {
     provLines.push(

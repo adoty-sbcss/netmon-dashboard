@@ -513,7 +513,7 @@ export async function bulkApplyRecommendedDefaultsAction(
     snmp_topology_enabled: true,
     snmp_topology_scope: "spine",
     speedtest_enabled: true,
-    speedtest_providers: "ookla,cloudflare",
+    speedtest_providers: "cloudflare",
   };
 
   const rows = await db
@@ -533,10 +533,10 @@ export async function bulkApplyRecommendedDefaultsAction(
       // then our defaults — turning the features on without clobbering tuning
       // (community, schedule interval, providers a box already customized).
       const existing = (row.config as Record<string, unknown>) ?? {};
-      // Force the recommended providers ("ookla,cloudflare") rather than
-      // preserving a box's existing list — an ookla-only box is exactly the
-      // broken case this button exists to fix (Cloudflare is the reliable,
-      // dependency-free probe).
+      // Force the recommended provider ("cloudflare") rather than preserving a
+      // box's existing list — an ookla-only box is exactly the broken case this
+      // button exists to fix (Cloudflare is the reliable, dependency-free probe;
+      // Ookla was removed).
       const merged = { ...existing, ...defaults };
       const nextV = (row.v ?? 0) + 1;
       await tx
@@ -611,15 +611,15 @@ export async function saveSensorCapabilitiesAction(
         if (want !== have) differs = true;
         patch[key] = want;
       }
-      // When speed tests are ON, make sure Cloudflare is one of the providers.
-      // It's dependency-free, so the box reports real numbers even if the Ookla
-      // CLI is missing/broken (the usual cause of "Speed test: failed"). This
-      // also fixes already-enabled boxes on the next save, no box code update
-      // needed. Runs even when the on/off checkbox didn't change.
+      // When speed tests are ON, pin the provider to Cloudflare (Ookla removed —
+      // its CLI is unreliable on filtered school networks). Cloudflare is
+      // dependency-free, so the box reports real numbers without any box code
+      // update. Runs even when the on/off checkbox didn't change, so re-saving
+      // the matrix migrates already-enabled (ookla) boxes.
       if (patch.speedtest_enabled === true) {
         const provs = String(current.speedtest_providers ?? "").toLowerCase();
-        if (!provs.includes("cloudflare")) {
-          patch.speedtest_providers = "ookla,cloudflare";
+        if (provs !== "cloudflare") {
+          patch.speedtest_providers = "cloudflare";
           differs = true;
         }
       }

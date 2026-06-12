@@ -30,12 +30,9 @@ function Notice({ state }: { state: SpeedtestActionState }) {
   return null;
 }
 
-const selectCls =
-  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
-
 export interface SpeedtestSchedule {
   enabled: boolean;
-  providers: string; // csv of ookla,cloudflare
+  providers: string; // retained for compatibility; Cloudflare-only now
   scheduleSec: number;
   latencyEnabled: boolean;
 }
@@ -61,8 +58,6 @@ export function SpeedtestPanel({
     saveSpeedtestScheduleAction,
     {},
   );
-  const provs = new Set(schedule.providers.split(",").map((p) => p.trim()));
-
   return (
     <Card>
       <CardHeader>
@@ -72,21 +67,14 @@ export function SpeedtestPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {/* Run now */}
-        <form action={runAction} className="flex flex-wrap items-end gap-2 border-b pb-4">
+        {/* Run now (Cloudflare) */}
+        <form action={runAction} className="flex flex-wrap items-center gap-2 border-b pb-4">
           <input type="hidden" name="sensorId" value={sensorId} />
           <input type="hidden" name="basePath" value={basePath} />
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-muted-foreground">Provider</label>
-            <select name="provider" defaultValue="" className={selectCls}>
-              <option value="">Configured (both)</option>
-              <option value="ookla">Ookla</option>
-              <option value="cloudflare">Cloudflare</option>
-            </select>
-          </div>
           <Button type="submit" disabled={running}>
-            <Play /> {running ? "Queuing…" : "Run now"}
+            <Play /> {running ? "Queuing…" : "Run speed test now"}
           </Button>
+          <span className="text-xs text-muted-foreground">Cloudflare · download / upload / latency</span>
           <Notice state={runState} />
         </form>
 
@@ -125,29 +113,6 @@ export function SpeedtestPanel({
                 className="w-28"
               />
             </div>
-            <fieldset className="flex flex-col gap-1">
-              <legend className="text-xs text-muted-foreground">Providers</legend>
-              <div className="flex items-center gap-3 pt-1">
-                <label className="flex items-center gap-1.5 text-sm">
-                  <input
-                    type="checkbox"
-                    name="providerOokla"
-                    defaultChecked={provs.has("ookla")}
-                    className="size-4 rounded border-input accent-primary"
-                  />
-                  Ookla
-                </label>
-                <label className="flex items-center gap-1.5 text-sm">
-                  <input
-                    type="checkbox"
-                    name="providerCloudflare"
-                    defaultChecked={provs.has("cloudflare")}
-                    className="size-4 rounded border-input accent-primary"
-                  />
-                  Cloudflare
-                </label>
-              </div>
-            </fieldset>
             <Button type="submit" variant="outline" disabled={savingSched}>
               {savingSched ? "Saving…" : "Save schedule"}
             </Button>
