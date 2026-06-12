@@ -533,11 +533,11 @@ export async function bulkApplyRecommendedDefaultsAction(
       // then our defaults — turning the features on without clobbering tuning
       // (community, schedule interval, providers a box already customized).
       const existing = (row.config as Record<string, unknown>) ?? {};
+      // Force the recommended providers ("ookla,cloudflare") rather than
+      // preserving a box's existing list — an ookla-only box is exactly the
+      // broken case this button exists to fix (Cloudflare is the reliable,
+      // dependency-free probe).
       const merged = { ...existing, ...defaults };
-      // Preserve a box's own custom speedtest provider list if it set one.
-      if (typeof existing.speedtest_providers === "string" && existing.speedtest_providers) {
-        merged.speedtest_providers = existing.speedtest_providers;
-      }
       const nextV = (row.v ?? 0) + 1;
       await tx
         .insert(desiredConfig)
@@ -610,6 +610,18 @@ export async function saveSensorCapabilitiesAction(
         const have = current[key] === true || current[key] === "true";
         if (want !== have) differs = true;
         patch[key] = want;
+      }
+      // When speed tests are ON, make sure Cloudflare is one of the providers.
+      // It's dependency-free, so the box reports real numbers even if the Ookla
+      // CLI is missing/broken (the usual cause of "Speed test: failed"). This
+      // also fixes already-enabled boxes on the next save, no box code update
+      // needed. Runs even when the on/off checkbox didn't change.
+      if (patch.speedtest_enabled === true) {
+        const provs = String(current.speedtest_providers ?? "").toLowerCase();
+        if (!provs.includes("cloudflare")) {
+          patch.speedtest_providers = "ookla,cloudflare";
+          differs = true;
+        }
       }
       if (!differs) continue;
       // Enabling the topology crawl is only useful on the spine path; pin it so
