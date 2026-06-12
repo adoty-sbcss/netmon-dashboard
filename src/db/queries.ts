@@ -2201,6 +2201,13 @@ export interface SensorDetail {
   localIp: string | null;
   iface: string | null;
   ifaceCidr: string | null;
+  reportedSha: string | null;
+  reportedChannel: string | null;
+  lastUpdateStatus: string | null;
+  lastUpdateReason: string | null;
+  lastUpdateFrom: string | null;
+  lastUpdateTo: string | null;
+  lastUpdateAt: string | null;
 }
 
 export async function getSensorDetail(
@@ -2231,6 +2238,13 @@ export async function getSensorDetail(
     localIp: s.localIp,
     iface: s.iface,
     ifaceCidr: s.ifaceCidr,
+    reportedSha: s.reportedSha,
+    reportedChannel: s.reportedChannel,
+    lastUpdateStatus: s.lastUpdateStatus,
+    lastUpdateReason: s.lastUpdateReason,
+    lastUpdateFrom: s.lastUpdateFrom,
+    lastUpdateTo: s.lastUpdateTo,
+    lastUpdateAt: s.lastUpdateAt,
   };
 }
 

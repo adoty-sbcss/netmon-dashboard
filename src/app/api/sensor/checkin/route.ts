@@ -41,6 +41,15 @@ export async function POST(req: NextRequest) {
     /** Release-channel rollout telemetry. */
     commitSha?: string;
     updateChannel?: string;
+    /** Outcome of the box's last host-side auto-update (auto-update.sh). */
+    lastUpdate?: {
+      status?: string;
+      reason?: string;
+      from?: string;
+      to?: string;
+      channel?: string;
+      at?: string;
+    } | null;
     localIp?: string;
     interface?: string;
     interfaceCidr?: string;
@@ -71,6 +80,18 @@ export async function POST(req: NextRequest) {
       ...(typeof body.interfaceCidr === "string" ? { ifaceCidr: body.interfaceCidr } : {}),
       ...(typeof body.commitSha === "string" ? { reportedSha: body.commitSha } : {}),
       ...(typeof body.updateChannel === "string" ? { reportedChannel: body.updateChannel } : {}),
+      ...(body.lastUpdate && typeof body.lastUpdate === "object"
+        ? {
+            lastUpdateStatus:
+              typeof body.lastUpdate.status === "string" ? body.lastUpdate.status : null,
+            lastUpdateReason:
+              typeof body.lastUpdate.reason === "string" ? body.lastUpdate.reason : null,
+            lastUpdateFrom:
+              typeof body.lastUpdate.from === "string" ? body.lastUpdate.from : null,
+            lastUpdateTo: typeof body.lastUpdate.to === "string" ? body.lastUpdate.to : null,
+            lastUpdateAt: typeof body.lastUpdate.at === "string" ? body.lastUpdate.at : null,
+          }
+        : {}),
       ...(body.hostMetrics && typeof body.hostMetrics === "object"
         ? { reportedHostMetrics: body.hostMetrics, reportedMetricsAt: sql`now()` }
         : {}),

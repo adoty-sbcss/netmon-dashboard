@@ -9,6 +9,7 @@ import {
   getSensorDetail,
   listConfigBackups,
   getSensorManagement,
+  type SensorDetail,
 } from "@/db/queries";
 import { db } from "@/db";
 import { sensors as sensorsTable } from "@/db/schema/app";
@@ -150,7 +151,11 @@ export default async function SensorDetailPage({
               label="Last scan"
               value={sensor.lastScanAt ? `${dateTime(sensor.lastScanAt)} (${relativeTime(sensor.lastScanAt)})` : "never"}
             />
-            <Field label="Agent version" value={sensor.agentVersion ?? "—"} mono />
+            <Field
+              label="Agent version"
+              value={`${sensor.agentVersion ?? "—"}${sensor.reportedSha ? ` · ${sensor.reportedSha.slice(0, 8)}` : ""}${sensor.reportedChannel ? ` (${sensor.reportedChannel})` : ""}`}
+              mono
+            />
             <Field
               label="Last check-in"
               value={sensor.lastCheckinAt ? relativeTime(sensor.lastCheckinAt) : "no check-in yet"}
@@ -164,6 +169,7 @@ export default async function SensorDetailPage({
             <Field label="Applied config version" value={sensor.reportedConfigVersion != null ? `v${sensor.reportedConfigVersion}` : "—"} />
             <Field label="First seen" value={sensor.createdAt ? dateTime(sensor.createdAt) : "—"} />
           </dl>
+          {sensor.lastUpdateStatus && <LastUpdateBanner sensor={sensor} />}
         </CardContent>
       </Card>
 
@@ -349,6 +355,49 @@ export default async function SensorDetailPage({
         </Card>
       )}
 
+    </div>
+  );
+}
+
+/**
+ * Banner showing the outcome of the box's last host-side auto-update. Turns a
+ * fire-and-forget update into a visible result — a failed/stuck update now shows
+ * WHY (e.g. "git fetch failed: dubious ownership") instead of looking like the
+ * update silently worked. Fed by sensors.last_update_* (reported at check-in).
+ */
+function LastUpdateBanner({ sensor }: { sensor: SensorDetail }) {
+  const status = sensor.lastUpdateStatus ?? "";
+  const tone =
+    status === "ok"
+      ? "border-[var(--success)]/40 bg-[var(--success)]/5"
+      : status === "rolled_back" || status === "skipped"
+        ? "border-amber-500/40 bg-amber-500/5"
+        : "border-destructive/40 bg-destructive/5";
+  const label =
+    status === "ok"
+      ? "✓ Last update OK"
+      : status === "rolled_back"
+        ? "⚠ Last update auto-rolled-back"
+        : status === "skipped"
+          ? "Last update skipped"
+          : "✗ Last update FAILED";
+  let when = "";
+  if (sensor.lastUpdateAt) {
+    const d = new Date(sensor.lastUpdateAt);
+    if (!Number.isNaN(d.getTime())) when = ` · ${relativeTime(d)}`;
+  }
+  return (
+    <div className={`mt-4 rounded-lg border p-3 text-xs ${tone}`}>
+      <span className="font-medium">
+        {label}
+        {when}
+      </span>
+      {sensor.lastUpdateReason && <span className="text-muted-foreground"> — {sensor.lastUpdateReason}</span>}
+      {(sensor.lastUpdateFrom || sensor.lastUpdateTo) && (
+        <span className="ml-1 font-mono text-[10px] text-muted-foreground">
+          ({sensor.lastUpdateFrom?.slice(0, 8) || "?"} → {sensor.lastUpdateTo?.slice(0, 8) || "?"})
+        </span>
+      )}
     </div>
   );
 }

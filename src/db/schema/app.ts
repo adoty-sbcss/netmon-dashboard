@@ -114,6 +114,15 @@ export const sensors = pgTable(
     //     See the collector's host_metrics.py.
     reportedHostMetrics: jsonb("reported_host_metrics"),
     reportedMetricsAt: timestamp("reported_metrics_at", { withTimezone: true }),
+    // --- last auto-update outcome (reported at check-in from the box's
+    //     /var/lib/netmon/last-update-result, written by scripts/auto-update.sh).
+    //     Turns the fire-and-forget update into a visible result so a failed/stuck
+    //     update shows WHY (e.g. "git fetch failed: dubious ownership").
+    lastUpdateStatus: text("last_update_status"), // ok | failed | skipped | rolled_back
+    lastUpdateReason: text("last_update_reason"),
+    lastUpdateFrom: text("last_update_from"),
+    lastUpdateTo: text("last_update_to"),
+    lastUpdateAt: text("last_update_at"), // box-local ISO timestamp of the update run
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -295,6 +295,13 @@
       "when": 1781193962519,
       "tag": "0041_youthful_morlocks",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1781295436010,
+      "tag": "0042_update_observability",
+      "breakpoints": true
     }
   ]
 }
