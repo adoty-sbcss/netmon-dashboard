@@ -18,6 +18,7 @@ import { SensorManagementPanel } from "./sensor-management";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { SpeedtestPanel } from "./speedtest-panel";
+import { VlanPanel } from "./vlan-panel";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -264,6 +265,17 @@ export default async function SensorDetailPage({
           serverLabel={`${iperfCfg.serverHost}:${iperfCfg.serverPort}`}
           schedule={iperfSchedule}
           results={iperfRuns}
+        />
+      )}
+
+      {/* VLAN trunk monitoring (admin) */}
+      {isAdmin && mgmt && (
+        <VlanPanel
+          sensorId={sensor.id}
+          basePath={basePath}
+          currentVlans={String((mgmt.config?.trunk_vlans as string) ?? "")}
+          currentParent={String((mgmt.config?.trunk_parent as string) ?? "")}
+          currentStatics={String((mgmt.config?.trunk_statics as string) ?? "")}
         />
       )}
 
