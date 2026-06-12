@@ -54,6 +54,12 @@ export function DeploySensor({
 }) {
   const [device, setDevice] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  // CIS hardening: on by default (applies the NetMon-vetted safe subset at install).
+  const [cisHarden, setCisHarden] = useState(true);
+  // Optional VLAN trunk monitoring (802.1Q sub-interfaces set up at install time).
+  const [vlanIds, setVlanIds] = useState("");
+  const [vlanParent, setVlanParent] = useState("");
+  const [vlanStatics, setVlanStatics] = useState("");
 
   const deviceSlug = device.trim() ? slugify(device) : "";
   const deviceName = device.trim() || "MAIN IDF";
@@ -82,7 +88,18 @@ export function DeploySensor({
     // filtered school networks; Ookla was removed).
     `NETMON_SPEEDTEST_ENABLED=true`,
     `NETMON_SPEEDTEST_PROVIDERS=cloudflare`,
+    // CIS hardening: install.sh applies the NetMon-vetted safe subset (SSH left
+    // untouched; reversible) — see docs/HARDENING.md.
+    `NETMON_CIS_HARDEN=${cisHarden ? "true" : "false"}`,
   ];
+  // VLAN trunk monitoring (optional): install.sh creates 802.1Q sub-interfaces
+  // (routes-off) so the collector scans these VLANs. Only emitted when set.
+  const vlanClean = vlanIds.replace(/[^0-9,]/g, "").replace(/,+/g, ",").replace(/^,|,$/g, "");
+  if (vlanClean) {
+    provLines.push(`NETMON_TRUNK_VLANS=${vlanClean}`);
+    if (vlanParent.trim()) provLines.push(`NETMON_TRUNK_PARENT=${vlanParent.trim()}`);
+    if (vlanStatics.trim()) provLines.push(`NETMON_TRUNK_STATICS=${vlanStatics.trim()}`);
+  }
   if (sftp) {
     provLines.push(
       // Without this the box gets valid creds but uploads stay OFF (the flag
@@ -189,6 +206,68 @@ exec ./install.sh
           <p className="text-xs text-muted-foreground">
             slug: <span className="font-mono">{effectiveSlug}</span>
           </p>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-lg border border-input p-3">
+          <span className="text-xs font-medium text-muted-foreground">Options</span>
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={cisHarden}
+              onChange={(e) => setCisHarden(e.target.checked)}
+              className="mt-0.5 size-4 rounded border-input accent-primary"
+            />
+            <span className="flex flex-col">
+              <span className="text-sm font-medium">Apply CIS hardening</span>
+              <span className="text-xs text-muted-foreground">
+                Installs the NetMon-vetted safe subset (firewall with SSH preserved, auto-updates
+                without auto-reboot, auditd, time sync…). SSH access is left untouched; reversible.
+              </span>
+            </span>
+          </label>
+          <div className="flex flex-col gap-2 border-t pt-3">
+            <span className="text-sm font-medium">
+              VLAN trunk monitoring <span className="font-normal text-muted-foreground">(optional)</span>
+            </span>
+            <p className="text-xs text-muted-foreground">
+              If this box is on a switch <strong>trunk (802.1Q)</strong> port, list the VLAN IDs to
+              monitor — the installer adds a sub-interface per VLAN (routes-off; your uplink is never
+              touched). Leave blank for a normal access-port deploy.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground">VLAN IDs (comma-separated)</label>
+                <Input
+                  value={vlanIds}
+                  onChange={(e) => setVlanIds(e.target.value)}
+                  placeholder="10,20,30"
+                  className="h-9 w-48 font-mono"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground">Parent NIC (optional)</label>
+                <Input
+                  value={vlanParent}
+                  onChange={(e) => setVlanParent(e.target.value)}
+                  placeholder="auto (uplink)"
+                  className="h-9 w-40 font-mono"
+                />
+              </div>
+            </div>
+            {vlanIds.trim() && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground">
+                  Static IPs for no-DHCP VLANs (optional) — vlan:cidr, comma-separated
+                </label>
+                <Input
+                  value={vlanStatics}
+                  onChange={(e) => setVlanStatics(e.target.value)}
+                  placeholder="30:10.0.30.9/24,40:10.0.40.9/24"
+                  className="h-9 w-full max-w-md font-mono text-xs"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col gap-1.5 rounded-lg border border-primary/30 bg-primary/5 p-3">
