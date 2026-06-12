@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { IperfChart } from "./iperf-chart";
+import { SpeedtestLatest } from "./speedtest-latest";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +119,33 @@ export default async function IperfPage({
   const series = [...seriesMap.values()].sort((a, b) => a.ts - b.ts);
   const keys = [...keySet];
 
+  // --- speed test: latest result per sensor + download/upload trend ---------
+  const stLatestMap = new Map<string, (typeof speedtests)[number]>();
+  for (const r of speedtests) {
+    if (!stLatestMap.has(r.sensorSlug)) stLatestMap.set(r.sensorSlug, r);
+  }
+  const stLatest = [...stLatestMap.values()];
+
+  const stSeriesMap = new Map<number, Record<string, number>>();
+  const stKeySet = new Set<string>();
+  for (const r of speedtests) {
+    if (!r.ok) continue;
+    const ts = (r.startedAt ?? r.createdAt).getTime();
+    const label = r.sensorName || r.sensorSlug;
+    const point = stSeriesMap.get(ts) ?? { ts };
+    if (r.downloadMbps != null) {
+      point[`${label} ↓`] = r.downloadMbps;
+      stKeySet.add(`${label} ↓`);
+    }
+    if (r.uploadMbps != null) {
+      point[`${label} ↑`] = r.uploadMbps;
+      stKeySet.add(`${label} ↑`);
+    }
+    stSeriesMap.set(ts, point);
+  }
+  const stSeries = [...stSeriesMap.values()].sort((a, b) => a.ts - b.ts);
+  const stKeys = [...stKeySet];
+
   const configured = Boolean(cfg.enabled && cfg.serverHost);
 
   return (
@@ -143,7 +171,20 @@ export default async function IperfPage({
               Cloudflare).
             </p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="flex flex-col gap-6">
+              <SpeedtestLatest items={stLatest} />
+              {stKeys.length > 0 && (
+                <div className="px-6 sm:px-0">
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">
+                    Download / upload over time
+                  </p>
+                  <IperfChart series={stSeries} keys={stKeys} />
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <p className="mb-2 px-6 text-xs font-medium text-muted-foreground sm:px-0">
+                  Recent runs
+                </p>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -215,6 +256,7 @@ export default async function IperfPage({
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </div>
           )}
         </CardContent>
