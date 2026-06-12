@@ -186,12 +186,12 @@ export function AppSidebar({
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
-                    tooltip="Network settings"
+                    tooltip="School & district settings"
                     isActive={pathname.startsWith("/settings/network")}
                   >
                     <Link href="/settings/network">
                       <SlidersHorizontal />
-                      <span>Network settings</span>
+                      <span>School &amp; district settings</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

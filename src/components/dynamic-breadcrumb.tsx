@@ -19,6 +19,7 @@ type Crumb = { label: string; href?: string };
 
 // Admin settings section — labels mirror the sidebar's "Administration" group.
 const SETTINGS_LABELS: Record<string, string> = {
+  network: "School & district settings",
   ingestion: "SFTP ingestion",
   ai: "AI settings",
   branding: "Branding",

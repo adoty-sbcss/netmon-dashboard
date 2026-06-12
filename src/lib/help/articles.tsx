@@ -310,7 +310,7 @@ const fixSftpUpload: HelpArticle = {
     {
       kind: "steps",
       items: [
-        <>Open <strong>Network settings</strong> (left sidebar, under Monitoring) and pick the district at the top.</>,
+        <>Open <strong>School &amp; district settings</strong> (left sidebar, under Monitoring) and pick the district at the top.</>,
         <>In the <strong>Per-sensor capabilities</strong> table, find the sensor&apos;s row and tick the <strong>SFTP upload</strong> box.</>,
         <>Click <strong>Save capabilities</strong>. (The destination host/user/path was already set at deployment — this just switches uploading on.)</>,
         <>The box applies it on its next check-in (every ~3 minutes) and recreates the collector so the new setting takes effect — no manual restart needed.</>,

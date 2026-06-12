@@ -87,8 +87,10 @@ export interface SensorCapabilityRow extends SensorCapabilities {
   schoolSlug: string;
   schoolName: string | null;
   lastCheckinAt: Date | null;
-  /** The community currently pushed (so the page can show if SNMP will work). */
+  /** The community currently pushed in desired config (what we want the box to use). */
   snmpCommunities: string;
+  /** The community the box last reported running (ground truth from check-in). */
+  reportedSnmpCommunities: string;
   /** Desired vs applied config version — a gap means a push is still pending. */
   configVersion: number | null;
   reportedConfigVersion: number | null;
@@ -110,6 +112,7 @@ export async function listDistrictSensorCapabilities(
       schoolName: schools.name,
       lastCheckinAt: sensors.lastCheckinAt,
       reportedConfigVersion: sensors.reportedConfigVersion,
+      reportedSnmpCommunities: sensors.reportedSnmpCommunities,
       configVersion: desiredConfig.configVersion,
       config: desiredConfig.config,
     })
@@ -131,6 +134,7 @@ export async function listDistrictSensorCapabilities(
       configVersion: r.configVersion,
       reportedConfigVersion: r.reportedConfigVersion,
       snmpCommunities: String(cfg.snmp_communities ?? ""),
+      reportedSnmpCommunities: String(r.reportedSnmpCommunities ?? ""),
       snmp_enabled: asBool(cfg.snmp_enabled),
       snmp_topology_enabled: asBool(cfg.snmp_topology_enabled),
       sftp_enabled: asBool(cfg.sftp_enabled),
