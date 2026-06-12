@@ -189,12 +189,18 @@ export function SensorManagementPanel({
   );
 
   const [openCmd, setOpenCmd] = useState<number | null>(null);
+  const [showAllCmds, setShowAllCmds] = useState(false);
 
   // Per-sensor desired-config editing was consolidated into the global Network
   // settings page (/settings/network); we link there now instead of duplicating
   // the form here. districtSlug is the first path segment of basePath
   // (/<district>/<school>/sensor/<id>).
   const districtSlug = basePath.split("/").filter(Boolean)[0] ?? "";
+  // Show the 5 most recent commands; collapse the rest behind a toggle.
+  const sortedCmds = [...mgmt.commands].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  const shownCmds = showAllCmds ? sortedCmds : sortedCmds.slice(0, 5);
 
   return (
     <div className="flex flex-col gap-6">
@@ -309,7 +315,12 @@ export function SensorManagementPanel({
                 <input type="hidden" name="sensorId" value={sensorId} />
                 <input type="hidden" name="basePath" value={basePath} />
                 <input type="hidden" name="command" value="update" />
-                <Button type="submit" variant="outline" size="sm" disabled={queuing}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="bg-blue-600 text-white hover:bg-blue-700"
+                  disabled={queuing}
+                >
                   <ArrowUpCircle className="size-4" /> Update now
                 </Button>
               </form>
@@ -325,7 +336,7 @@ export function SensorManagementPanel({
               check-in. Live diagnostics/operations stream into the session terminal above.
             </p>
 
-            {mgmt.commands.length > 0 && (
+            {sortedCmds.length > 0 && (
               <div className="mt-1 overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
                   <thead className="text-xs text-muted-foreground">
@@ -337,7 +348,7 @@ export function SensorManagementPanel({
                     </tr>
                   </thead>
                   <tbody>
-                    {mgmt.commands.map((c) => {
+                    {shownCmds.map((c) => {
                       const hasResult = c.result && Object.keys(c.result).length > 0;
                       const open = openCmd === c.id;
                       return (
@@ -371,6 +382,15 @@ export function SensorManagementPanel({
                   </tbody>
                 </table>
               </div>
+            )}
+            {sortedCmds.length > 5 && (
+              <button
+                type="button"
+                onClick={() => setShowAllCmds((v) => !v)}
+                className="self-start text-xs text-primary hover:underline"
+              >
+                {showAllCmds ? "Show fewer" : `Show ${sortedCmds.length - 5} older`}
+              </button>
             )}
           </div>
         </CardContent>

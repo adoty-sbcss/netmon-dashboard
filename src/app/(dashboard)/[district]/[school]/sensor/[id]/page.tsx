@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Archive, Download, Radio, Settings2, Wrench } from "lucide-react";
+import { ArrowLeft, Archive, ChevronDown, Download, Radio, Settings2, Wrench } from "lucide-react";
 import { eq } from "drizzle-orm";
 
 import {
@@ -109,7 +109,7 @@ export default async function SensorDetailPage({
   const speedtestSchedule = {
     enabled: Boolean(dcfg.speedtest_enabled),
     providers:
-      typeof dcfg.speedtest_providers === "string" ? dcfg.speedtest_providers : "ookla,cloudflare",
+      typeof dcfg.speedtest_providers === "string" ? dcfg.speedtest_providers : "cloudflare",
     scheduleSec:
       typeof dcfg.speedtest_schedule_sec === "number" ? dcfg.speedtest_schedule_sec : 6 * 3600,
     latencyEnabled: Boolean(dcfg.latency_enabled),
@@ -298,7 +298,12 @@ export default async function SensorDetailPage({
                 picks up the sensor&apos;s <code>_config</code> upload.
               </p>
             ) : (
-              <div className="overflow-x-auto">
+              <details className="group overflow-hidden rounded-lg border">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent/40">
+                  <span>View {backups.length} config backup{backups.length === 1 ? "" : "s"}</span>
+                  <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="overflow-x-auto border-t">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -332,7 +337,8 @@ export default async function SensorDetailPage({
                     ))}
                   </TableBody>
                 </Table>
-              </div>
+                </div>
+              </details>
             )}
             <p className="mt-3 flex items-center gap-1.5 px-6 text-xs text-muted-foreground sm:px-0">
               <Wrench className="size-3.5" />

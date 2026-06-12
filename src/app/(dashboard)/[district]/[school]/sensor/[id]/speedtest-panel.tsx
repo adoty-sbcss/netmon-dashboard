@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { CheckCircle2, AlertCircle, Globe, Play } from "lucide-react";
+import { CheckCircle2, AlertCircle, ChevronDown, Globe, Play } from "lucide-react";
 
 import {
   runSpeedtestAction,
@@ -63,7 +63,7 @@ export function SpeedtestPanel({
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           <Globe className="size-4 text-primary" /> Internet speed test
-          <span className="text-sm font-normal text-muted-foreground">Ookla + Cloudflare</span>
+          <span className="text-sm font-normal text-muted-foreground">Cloudflare</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -124,9 +124,14 @@ export function SpeedtestPanel({
           </p>
         </form>
 
-        {/* Results */}
+        {/* Results — collapsed history */}
         {results.length > 0 && (
-          <div className="overflow-x-auto rounded-lg border">
+          <details className="group rounded-lg border">
+            <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent/40">
+              <span>Recent speed tests ({results.length})</span>
+              <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="overflow-x-auto border-t">
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b">
@@ -168,7 +173,8 @@ export function SpeedtestPanel({
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </details>
         )}
       </CardContent>
     </Card>
