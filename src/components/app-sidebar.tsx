@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Users } from "lucide-react";
+import { Bell, Building2, ChevronRight, DatabaseZap, DownloadCloud, LifeBuoy, Palette, Radio, School, ShieldAlert, SlidersHorizontal, Sparkles, Users } from "lucide-react";
 
 import type { NavTree } from "@/db/queries";
 import { titleizeSlug } from "@/lib/format";
@@ -192,18 +192,6 @@ export function AppSidebar({
                     <Link href="/settings/network">
                       <SlidersHorizontal />
                       <span>School &amp; district settings</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    tooltip="Approve live console sessions"
-                    isActive={pathname === "/console/approvals"}
-                  >
-                    <Link href="/console/approvals">
-                      <ShieldCheck />
-                      <span>Console approvals</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

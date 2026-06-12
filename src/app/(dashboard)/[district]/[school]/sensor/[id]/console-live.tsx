@@ -71,9 +71,6 @@ export function RemoteConsoleLive({
     setConn("connecting");
     setLiveExpiresAt(session.expiresAt);
     append("sys", `Opening session ${session.sid.slice(0, 8)}…`);
-    if (session.awaitingApproval) {
-      append("sys", "Waiting for a super-admin to approve this session (emailed, or from Console approvals). It becomes ready once approved and the sensor dials in.");
-    }
 
     const url = `${session.broker}?role=operator&token=${encodeURIComponent(
       session.operatorToken,
@@ -211,10 +208,8 @@ export function RemoteConsoleLive({
         </form>
         {openState.error && <p className="text-xs text-destructive">{openState.error}</p>}
         <p className="text-xs text-muted-foreground">
-          Opens a time-boxed (30 min), fully-recorded tunnel to the sensor.{" "}
-          <strong>A super-admin must approve the session</strong> — via the emailed approve link or
-          from <strong>Console approvals</strong> in the sidebar. Once approved, the box connects out
-          to the broker on its next check-in and the session becomes ready. Only the allow-listed
+          Opens a time-boxed (30 min), fully-recorded tunnel to the sensor. The box connects out to
+          the broker on its next check-in and the session becomes ready. Only the allow-listed
           diagnostics and in-container commands below can be run — host actions stay on the
           maintenance panel.
         </p>
