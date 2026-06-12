@@ -170,7 +170,11 @@ export default async function IperfPage({
                       <TableCell className="capitalize">{r.provider ?? "—"}</TableCell>
                       <TableCell>
                         {!r.ok ? (
-                          <Badge variant="outline" className="gap-1 text-destructive">
+                          <Badge
+                            variant="outline"
+                            className="gap-1 text-destructive"
+                            title={r.error ?? undefined}
+                          >
                             <AlertTriangle className="size-3" /> failed
                           </Badge>
                         ) : (
@@ -185,19 +189,27 @@ export default async function IperfPage({
                         {r.jitterMs == null ? "—" : `${f1(r.jitterMs)} ms`}
                       </TableCell>
                       <TableCell className="hidden text-muted-foreground lg:table-cell">
-                        {r.resultUrl ? (
-                          <a
-                            href={r.resultUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline"
-                          >
-                            {r.server || "result"}
-                          </a>
+                        {!r.ok ? (
+                          <span className="text-destructive" title={r.error ?? undefined}>
+                            {r.error ?? "failed"}
+                          </span>
                         ) : (
-                          r.server || "—"
+                          <>
+                            {r.resultUrl ? (
+                              <a
+                                href={r.resultUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-primary hover:underline"
+                              >
+                                {r.server || "result"}
+                              </a>
+                            ) : (
+                              r.server || "—"
+                            )}
+                            {r.isp ? ` · ${r.isp}` : ""}
+                          </>
                         )}
-                        {r.isp ? ` · ${r.isp}` : ""}
                       </TableCell>
                     </TableRow>
                   ))}
