@@ -51,6 +51,22 @@ export const CONSOLE_CONTROL_COMMANDS: ReadonlyArray<{
 ];
 
 /**
+ * In-container OPERATIONAL commands runnable LIVE over the console (mirrors the
+ * collector's `_LIVE_OPS` + the broker allow-list). These used to be queued
+ * "Commands"; they now run inside the open session so the operator sees the
+ * result immediately instead of waiting for the next check-in. They're operational
+ * (kick a scan, ship a bundle, snapshot config, pull logs) — not destructive — so
+ * unlike the host actions they don't need a type-to-confirm gate. HOST actions +
+ * `update` are NOT here: they keep the queued near-live path (host wrapper).
+ */
+export const CONSOLE_OP_COMMANDS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "run-scan", label: "Force scan" },
+  { id: "upload-now", label: "Force upload" },
+  { id: "config-backup", label: "Back up config" },
+  { id: "collect-logs", label: "Collect logs" },
+];
+
+/**
  * HOST-LEVEL maintenance actions (CON-5 host-execution path). Unlike the
  * diagnostics + in-container controls above, these run OUTSIDE the collector
  * container — the in-container agent records the request to a shared bind mount

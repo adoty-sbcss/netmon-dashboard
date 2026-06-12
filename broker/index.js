@@ -55,6 +55,12 @@ const ALLOWED_CMDS = new Set([
   "diag-selftest",
   // state-changing controls (CON-5) — in-container scope; dashboard confirms + audits
   "ctl-flush-arp",
+  // in-container operational commands — run live via the sensor's _LIVE_OPS path.
+  // HOST actions + `update` stay OFF the live broker (queued near-live path).
+  "run-scan",
+  "upload-now",
+  "config-backup",
+  "collect-logs",
 ]);
 
 if (!DASHBOARD_URL) {

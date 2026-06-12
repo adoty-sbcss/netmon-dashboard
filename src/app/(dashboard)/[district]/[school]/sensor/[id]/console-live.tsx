@@ -18,7 +18,11 @@ import {
   extendConsoleSessionAction,
   type SensorActionState,
 } from "@/lib/admin/sensor-actions";
-import { CONSOLE_COMMANDS, CONSOLE_CONTROL_COMMANDS } from "@/lib/admin/console-config";
+import {
+  CONSOLE_COMMANDS,
+  CONSOLE_CONTROL_COMMANDS,
+  CONSOLE_OP_COMMANDS,
+} from "@/lib/admin/console-config";
 
 type Line = { kind: "cmd" | "out" | "err" | "sys"; text: string };
 type ConnState = "idle" | "connecting" | "waiting" | "ready" | "closed" | "error";
@@ -211,7 +215,8 @@ export function RemoteConsoleLive({
           <strong>A super-admin must approve the session</strong> — via the emailed approve link or
           from <strong>Console approvals</strong> in the sidebar. Once approved, the box connects out
           to the broker on its next check-in and the session becomes ready. Only the allow-listed
-          diagnostics below can be run.
+          diagnostics and in-container commands below can be run — host actions stay on the
+          maintenance panel.
         </p>
       </div>
     );
@@ -278,20 +283,43 @@ export function RemoteConsoleLive({
       </div>
       {extendState.error && <p className="text-xs text-destructive">{extendState.error}</p>}
 
-      <div className="flex flex-wrap gap-2">
-        {CONSOLE_COMMANDS.map(({ id, label }) => (
-          <Button
-            key={id}
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={conn !== "ready" || running !== null}
-            onClick={() => sendCmd(id)}
-          >
-            {label}
-          </Button>
-        ))}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted-foreground">Diagnostics (read-only)</span>
+        <div className="flex flex-wrap gap-2">
+          {CONSOLE_COMMANDS.map(({ id, label }) => (
+            <Button
+              key={id}
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={conn !== "ready" || running !== null}
+              onClick={() => sendCmd(id)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
+
+      {CONSOLE_OP_COMMANDS.length > 0 && (
+        <div className="flex flex-col gap-1 border-t pt-2">
+          <span className="text-xs font-medium text-muted-foreground">Run (live, in-container)</span>
+          <div className="flex flex-wrap gap-2">
+            {CONSOLE_OP_COMMANDS.map(({ id, label }) => (
+              <Button
+                key={id}
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={conn !== "ready" || running !== null}
+                onClick={() => sendCmd(id)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {CONSOLE_CONTROL_COMMANDS.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-t pt-2">

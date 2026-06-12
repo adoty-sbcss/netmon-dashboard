@@ -6,12 +6,10 @@ import {
   AlertCircle,
   ArrowUpCircle,
   CheckCircle2,
-  FileText,
   KeyRound,
   RefreshCw,
   Settings2,
   Terminal,
-  UploadCloud,
   Wrench,
 } from "lucide-react";
 
@@ -93,12 +91,13 @@ function renderResult(result: Record<string, unknown>) {
 
 /**
  * Host-level maintenance & recovery actions (restart / rebuild / rollback /
- * reboot). These run OUTSIDE the container via the host wrapper, so they're the
- * "things we usually need SSH for" surfaced as buttons + a recommendation of
- * when to reach for each. Each is type-to-confirm gated (the operator must type
- * the action word) + audited server-side; queued on the next check-in.
+ * reboot). These run OUTSIDE the container via the host wrapper, so they CAN'T
+ * stream over the live console — they take the queued "near-live" path: recorded
+ * now, executed by the host wrapper on the next check-in (within the poll
+ * interval). Each is type-to-confirm gated + audited server-side. Rendered as a
+ * section INSIDE the merged "Remote console and commands" card.
  */
-function HostMaintenanceCard({ sensorId, basePath }: { sensorId: number; basePath: string }) {
+function HostMaintenanceSection({ sensorId, basePath }: { sensorId: number; basePath: string }) {
   const [state, action, pending] = useActionState<SensorActionState, FormData>(
     queueHostActionAction,
     {},
@@ -106,21 +105,19 @@ function HostMaintenanceCard({ sensorId, basePath }: { sensorId: number; basePat
   const [confirmWord, setConfirmWord] = useState<Record<string, string>>({});
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Wrench className="size-4 text-primary" />
-          Maintenance &amp; recovery
-          <span className="text-xs font-normal text-muted-foreground">host-level — usually needs SSH</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <p className="text-xs text-muted-foreground">
-          These run on the box itself (outside the collector container) on the next check-in.
-          Type the highlighted word to confirm — there&apos;s no undo. When in doubt, start with
-          the lightest fix (restart) and escalate only if it doesn&apos;t help.
-        </p>
-        <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <Wrench className="size-4 text-primary" />
+        <span className="text-sm font-medium">Maintenance &amp; recovery</span>
+        <span className="text-xs text-muted-foreground">host-level — runs on next check-in</span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        These run on the box itself (outside the collector container), so they can&apos;t stream
+        live — they&apos;re recorded now and the host applies them on the next check-in (within the
+        poll interval). Type the highlighted word to confirm — there&apos;s no undo. When in doubt,
+        start with the lightest fix (restart) and escalate only if it doesn&apos;t help.
+      </p>
+      <div className="flex flex-col gap-2">
           {HOST_ACTION_COMMANDS.map((a) => {
             const typed = confirmWord[a.id] ?? "";
             const armed = typed.toUpperCase() === a.confirmWord;
@@ -164,13 +161,12 @@ function HostMaintenanceCard({ sensorId, basePath }: { sensorId: number; basePat
             );
           })}
         </div>
-        <Notice state={state} />
-        <p className="text-[11px] text-muted-foreground">
-          ⚠ Privileged actions — every run is audited and shows on the security feed. The outcome
-          appears on the next check-in (uptime, version, or a recreated container).
-        </p>
-      </CardContent>
-    </Card>
+      <Notice state={state} />
+      <p className="text-[11px] text-muted-foreground">
+        ⚠ Privileged actions — every run is audited and shows on the security feed. The outcome
+        appears on the next check-in (uptime, version, or a recreated container).
+      </p>
+    </div>
   );
 }
 
@@ -260,33 +256,36 @@ export function SensorManagementPanel({
           <p className="text-sm text-muted-foreground">
             This sensor&apos;s capabilities — SNMP, spine crawl, SFTP upload, iperf, speed tests,
             latency — plus the district&apos;s shared settings (SNMP community, iperf server, DHCP
-            policy) now live on the single <strong>Network settings</strong> page, so everything is
-            in one place instead of scattered per district/school/sensor.
+            policy) now live on the single <strong>School &amp; district settings</strong> page, so
+            everything is in one place instead of scattered per district/school/sensor.
           </p>
           <div>
             <Button asChild size="sm">
               <Link href={`/settings/network?district=${districtSlug}`}>
-                <Settings2 className="size-4" /> Open Network settings
+                <Settings2 className="size-4" /> Open School &amp; district settings
               </Link>
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Remote console — restricted, read-only diagnostics (no SSH). Each runs a
-          fixed allow-listed command on the box; output appears in the command
-          history below. State-changing actions are intentionally excluded. */}
+      {/* Remote console and commands — one card for everything you'd reach for
+          on a box. Diagnostics + in-container operations (force scan / upload /
+          backup / collect-logs) run LIVE over the approved, recorded session and
+          stream into the terminal. Host actions + code update take the queued
+          near-live path (host wrapper, next check-in) and land in the history. */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Terminal className="size-4 text-primary" />
-            Remote console
-            <span className="text-xs font-normal text-muted-foreground">restricted diagnostics</span>
+            Remote console and commands
+            <span className="text-xs font-normal text-muted-foreground">live session + maintenance</span>
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {/* Live session over the zero-secret tunnel broker (superadmin, time-boxed,
-              recorded, kill-switch). Restricted-command posture: allow-listed diag-* only. */}
+        <CardContent className="flex flex-col gap-6">
+          {/* Live session over the zero-secret tunnel broker (superadmin, approved,
+              time-boxed, recorded, kill-switch). Diagnostics + in-container ops +
+              controls all stream here. */}
           <div className="flex flex-col gap-2">
             <p className="text-xs font-medium text-muted-foreground">Live session</p>
             <RemoteConsoleLive sensorId={sensorId} basePath={basePath} />
@@ -294,140 +293,88 @@ export function SensorManagementPanel({
 
           <div className="border-t" />
 
-          {/* Fallback: fire-and-forget diagnostics over the command queue — no live
-              connection needed; output lands in the command history below. */}
-          <div className="flex flex-col gap-2">
-            <p className="text-xs font-medium text-muted-foreground">
-              Queued diagnostics <span className="font-normal">(run at next check-in)</span>
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {[
-                { cmd: "diag-interfaces", label: "Interfaces" },
-                { cmd: "diag-routes", label: "Routes" },
-                { cmd: "diag-arp", label: "ARP table" },
-                { cmd: "diag-dns", label: "DNS check" },
-                { cmd: "diag-ping", label: "Ping internet" },
-                { cmd: "diag-disk", label: "Disk" },
-                { cmd: "diag-uptime", label: "Uptime" },
-                { cmd: "diag-sftp-test", label: "Test SFTP" },
-                { cmd: "diag-selftest", label: "Selftest" },
-              ].map(({ cmd, label }) => (
-                <form action={cmdAction} key={cmd}>
-                  <input type="hidden" name="sensorId" value={sensorId} />
-                  <input type="hidden" name="basePath" value={basePath} />
-                  <input type="hidden" name="command" value={cmd} />
-                  <Button type="submit" variant="outline" size="sm" disabled={queuing}>{label}</Button>
-                </form>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Runs on the box at its next check-in; the captured output shows in the command
-              history below (click the row to expand).
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+          {/* Host maintenance & recovery — queued near-live (can't stream live). */}
+          <HostMaintenanceSection sensorId={sensorId} basePath={basePath} />
 
-      {/* Commands */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Terminal className="size-4 text-primary" />
-            Commands
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-wrap gap-2">
-            {[
-              { cmd: "run-scan", label: "Force scan", icon: RefreshCw },
-              { cmd: "upload-now", label: "Force upload", icon: UploadCloud },
-              { cmd: "config-backup", label: "Back up config now", icon: KeyRound },
-              { cmd: "collect-logs", label: "Collect logs", icon: FileText },
-            ].map(({ cmd, label, icon: Icon }) => (
-              <form action={cmdAction} key={cmd}>
+          <div className="border-t" />
+
+          {/* Code update (near-live, queued) + the queued-command result history. */}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <ArrowUpCircle className="size-4 text-primary" />
+              <span className="text-sm font-medium">Update &amp; history</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-input p-3">
+              <form action={cmdAction}>
                 <input type="hidden" name="sensorId" value={sensorId} />
                 <input type="hidden" name="basePath" value={basePath} />
-                <input type="hidden" name="command" value={cmd} />
+                <input type="hidden" name="command" value="update" />
                 <Button type="submit" variant="outline" size="sm" disabled={queuing}>
-                  <Icon className="size-4" /> {label}
+                  <ArrowUpCircle className="size-4" /> Update now
                 </Button>
               </form>
-            ))}
-          </div>
-          {/* Code update — more consequential than the safe commands above, so
-              it's separated with its own explanation. */}
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-input p-3">
-            <form action={cmdAction}>
-              <input type="hidden" name="sensorId" value={sensorId} />
-              <input type="hidden" name="basePath" value={basePath} />
-              <input type="hidden" name="command" value="update" />
-              <Button type="submit" variant="outline" size="sm" disabled={queuing}>
-                <ArrowUpCircle className="size-4" /> Update now
-              </Button>
-            </form>
-            <p className="flex-1 text-xs text-muted-foreground">
-              Pulls the latest release and rebuilds on the next check-in (≤ poll interval).
-              The collector healthchecks and <strong>auto-rolls-back</strong> if the new build
-              is unhealthy; the box reports its new version when it&apos;s back.
+              <p className="flex-1 text-xs text-muted-foreground">
+                Pulls the latest release and rebuilds on the next check-in (≤ poll interval).
+                The collector healthchecks and <strong>auto-rolls-back</strong> if the new build
+                is unhealthy; the box reports its new version when it&apos;s back.
+              </p>
+            </div>
+            <Notice state={cmdState} />
+            <p className="text-xs text-muted-foreground">
+              Host actions and updates land here when the box reports their result on the next
+              check-in. Live diagnostics/operations stream into the session terminal above.
             </p>
-          </div>
-          <Notice state={cmdState} />
-          <p className="text-xs text-muted-foreground">
-            Queued commands run on the sensor&apos;s next check-in (within the poll interval).
-          </p>
 
-          {mgmt.commands.length > 0 && (
-            <div className="mt-1 overflow-x-auto rounded-lg border">
-              <table className="w-full text-sm">
-                <thead className="text-xs text-muted-foreground">
-                  <tr className="border-b">
-                    <th className="px-3 py-2 text-left font-medium">Command</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="hidden px-3 py-2 text-left font-medium sm:table-cell">Queued</th>
-                    <th className="hidden px-3 py-2 text-left font-medium md:table-cell">Sent</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mgmt.commands.map((c) => {
-                    const hasResult = c.result && Object.keys(c.result).length > 0;
-                    const open = openCmd === c.id;
-                    return (
-                      <Fragment key={c.id}>
-                        <tr
-                          className={"border-b last:border-0 " + (hasResult ? "cursor-pointer hover:bg-accent/40" : "")}
-                          onClick={() => hasResult && setOpenCmd(open ? null : c.id)}
-                        >
-                          <td className="px-3 py-2 font-mono text-xs">
-                            {c.command}
-                            {hasResult && <span className="ml-1.5 text-[10px] text-primary">view</span>}
-                          </td>
-                          <td className={`px-3 py-2 ${STATUS_TONE[c.status] ?? "text-muted-foreground"}`}>{c.status}</td>
-                          <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell" title={dateTime(c.createdAt)}>
-                            {relativeTime(c.createdAt)}
-                          </td>
-                          <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
-                            {c.sentAt ? relativeTime(c.sentAt) : "—"}
-                          </td>
-                        </tr>
-                        {open && hasResult && (
-                          <tr className="bg-muted/30">
-                            <td colSpan={4} className="px-3 py-2">
-                              {renderResult(c.result!)}
+            {mgmt.commands.length > 0 && (
+              <div className="mt-1 overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="px-3 py-2 text-left font-medium">Command</th>
+                      <th className="px-3 py-2 text-left font-medium">Status</th>
+                      <th className="hidden px-3 py-2 text-left font-medium sm:table-cell">Queued</th>
+                      <th className="hidden px-3 py-2 text-left font-medium md:table-cell">Sent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mgmt.commands.map((c) => {
+                      const hasResult = c.result && Object.keys(c.result).length > 0;
+                      const open = openCmd === c.id;
+                      return (
+                        <Fragment key={c.id}>
+                          <tr
+                            className={"border-b last:border-0 " + (hasResult ? "cursor-pointer hover:bg-accent/40" : "")}
+                            onClick={() => hasResult && setOpenCmd(open ? null : c.id)}
+                          >
+                            <td className="px-3 py-2 font-mono text-xs">
+                              {c.command}
+                              {hasResult && <span className="ml-1.5 text-[10px] text-primary">view</span>}
+                            </td>
+                            <td className={`px-3 py-2 ${STATUS_TONE[c.status] ?? "text-muted-foreground"}`}>{c.status}</td>
+                            <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell" title={dateTime(c.createdAt)}>
+                              {relativeTime(c.createdAt)}
+                            </td>
+                            <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
+                              {c.sentAt ? relativeTime(c.sentAt) : "—"}
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                          {open && hasResult && (
+                            <tr className="bg-muted/30">
+                              <td colSpan={4} className="px-3 py-2">
+                                {renderResult(c.result!)}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
-
-      {/* Host-level maintenance & recovery (restart/rebuild/rollback/reboot) */}
-      <HostMaintenanceCard sensorId={sensorId} basePath={basePath} />
     </div>
   );
 }
