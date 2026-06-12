@@ -304,6 +304,43 @@ export function SensorManagementPanel({
 
           <div className="border-t" />
 
+          {/* Queued operational commands — the COMPATIBILITY path. The live "Run"
+              buttons in the console only work on boxes new enough to support
+              live ops; these queue the same commands to run at the next check-in,
+              so they work on ANY box (incl. older code that returns "not permitted"
+              for the live versions). Essential for operating/recovering a box that
+              can't update. */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="size-4 text-primary" />
+              <span className="text-sm font-medium">Run on next check-in</span>
+              <span className="text-xs text-muted-foreground">works on any box (queued)</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { cmd: "run-scan", label: "Force scan" },
+                { cmd: "upload-now", label: "Force upload" },
+                { cmd: "collect-logs", label: "Collect logs" },
+                { cmd: "config-backup", label: "Back up config" },
+              ].map(({ cmd, label }) => (
+                <form action={cmdAction} key={cmd}>
+                  <input type="hidden" name="sensorId" value={sensorId} />
+                  <input type="hidden" name="basePath" value={basePath} />
+                  <input type="hidden" name="command" value={cmd} />
+                  <Button type="submit" variant="outline" size="sm" disabled={queuing}>
+                    {label}
+                  </Button>
+                </form>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Runs on the box at its next check-in; the result lands in the history below. Use these
+              when the live buttons say &quot;not permitted&quot; (older box) or no session is open.
+            </p>
+          </div>
+
+          <div className="border-t" />
+
           {/* Code update (near-live, queued) + the queued-command result history. */}
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
