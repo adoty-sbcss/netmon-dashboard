@@ -391,7 +391,154 @@ const fixSftpUpload: HelpArticle = {
   ],
 };
 
-export const HELP_ARTICLES: HelpArticle[] = [fixEnrollment, fixSftpUpload];
+const recoverStuckSensor: HelpArticle = {
+  slug: "recover-stuck-sensor",
+  title: "Recover a sensor that's stuck (won't update)",
+  summary:
+    "A sensor is online and checking in, but it's flagged “Needs attention” with no version / no fresh data — it silently stopped updating. One paste on the box fixes it.",
+  category: "Sensors",
+  updated: "2026-06-12",
+  blocks: [
+    {
+      kind: "callout",
+      tone: "info",
+      text: (
+        <>
+          Use this when a sensor is <strong>still checking in</strong> but shows{" "}
+          <strong>No version reported</strong> or <strong>No fresh data</strong>. Its auto-update
+          got wedged — the box itself is fine, it just needs one command.
+        </>
+      ),
+    },
+    { kind: "h", text: "How to spot it" },
+    {
+      kind: "p",
+      text: (
+        <>
+          On <strong>All sensors</strong>, the box shows up under <strong>Needs attention</strong>.
+          On its own page the <strong>Reported commit</strong> is blank and there&apos;s a yellow
+          banner. Speed tests may also show as failed.
+        </>
+      ),
+    },
+    {
+      kind: "image",
+      src: "/help/sensor-stuck-attention.svg",
+      alt: "Needs attention card on the All sensors page",
+      caption: "All sensors → “Needs attention”.",
+    },
+    {
+      kind: "image",
+      src: "/help/sensor-stuck-banner.svg",
+      alt: "Sensor page banner with a blank reported commit",
+      caption: "On the sensor's page: a banner, and a blank “Reported commit”.",
+    },
+    { kind: "h", text: "Fix it (one paste, then walk away)" },
+    {
+      kind: "p",
+      text: (
+        <>
+          You&apos;ll need SSH access to the box as any admin login. It asks for the password{" "}
+          <strong>once</strong>, then runs on its own for a few minutes.
+        </>
+      ),
+    },
+    {
+      kind: "steps",
+      items: [
+        <>
+          SSH into the sensor: {C("ssh ADMIN@SENSOR-IP")} (use your admin login and the sensor&apos;s
+          IP).
+        </>,
+        <>Paste the whole block below, enter the password when asked, then wait — it finishes on its own.</>,
+        <>Read the last line: {C("RESULT: SUCCESS")} means it&apos;s fixed.</>,
+      ],
+    },
+    {
+      kind: "code",
+      caption: "Paste this entire block.",
+      code: `cat > /tmp/netmon-fix.sh <<'NETMON_EOF'
+#!/usr/bin/env bash
+# NetMon sensor recovery — fixes the "stuck / won't update" state. Safe + idempotent.
+say(){ echo; echo "=== $* ==="; }
+as_svc(){ if command -v runuser >/dev/null 2>&1; then runuser -u "$SVC" -- "$@"; else sudo -u "$SVC" "$@"; fi; }
+FALLBACK="$SUDO_USER"; [ -z "$FALLBACK" ] && FALLBACK=root
+
+# 0) Find the repo + the user the update timer runs as
+REPO=""
+for c in "$(systemctl show -p WorkingDirectory --value netmon-update.service 2>/dev/null)" "$(systemctl show -p WorkingDirectory --value netmon-checkin.service 2>/dev/null)" /home/*/NetMon /home/*/net_mon /opt/net_mon /opt/netmon /root/NetMon /root/net_mon; do
+  [ -n "$c" ] && [ -d "$c/.git" ] && REPO="$c" && break
+done
+SVC="$(systemctl show -p User --value netmon-update.service 2>/dev/null)"
+[ -z "$SVC" ] && SVC="$FALLBACK"
+id "$SVC" >/dev/null 2>&1 || SVC="$FALLBACK"
+say "Discovered"; echo "repo: $REPO"; echo "service user: $SVC"
+if [ -z "$REPO" ] || [ ! -d "$REPO/.git" ]; then echo "FATAL: NetMon repo not found. Send /tmp/netmon-fix.log to the admin."; exit 1; fi
+
+# 1) THE FIX: own the repo as the update user + trust it for git
+say "Fixing repo ownership"
+chown -R "$SVC" "$REPO" && echo "ownership fixed" || echo "WARN: chown failed"
+git config --system --add safe.directory "$REPO" 2>/dev/null || true
+
+# 2) Clear local edits (as the service user)
+say "Cleaning working tree"
+as_svc git -C "$REPO" reset --hard || echo "WARN: reset failed"
+as_svc git -C "$REPO" status -sb || true
+
+# 3) Docker access
+say "Checking docker access"
+as_svc docker info >/dev/null 2>&1 && echo "docker OK" || { echo "adding $SVC to docker group"; usermod -aG docker "$SVC" 2>/dev/null || true; }
+
+# 4) Passwordless sudo for unattended updates
+say "Ensuring update privilege"
+if [ -f /etc/sudoers.d/netmon-update ]; then echo "already present"; else echo "$SVC ALL=(ALL) NOPASSWD:ALL" > /tmp/nm-sudoers; visudo -cf /tmp/nm-sudoers >/dev/null 2>&1 && install -m 440 -o root -g root /tmp/nm-sudoers /etc/sudoers.d/netmon-update && echo "installed"; rm -f /tmp/nm-sudoers; fi
+
+# 5) Run the update (waits until done — a few minutes)
+say "Running auto-update (please wait a few minutes)"
+systemctl start netmon-update.service
+RES="$(systemctl show -p Result --value netmon-update.service 2>/dev/null)"; echo "result: $RES"
+if [ "$RES" != "success" ] && journalctl -u netmon-update.service -n 80 --no-pager 2>/dev/null | grep -qiE "permission denied|cannot connect to the docker daemon"; then
+  say "Docker permission tripped it — retrying once"; usermod -aG docker "$SVC" 2>/dev/null || true
+  systemctl start netmon-update.service; RES="$(systemctl show -p Result --value netmon-update.service 2>/dev/null)"; echo "retry result: $RES"
+fi
+
+# 6) Verdict
+say "Update log (tail)"; journalctl -u netmon-update.service -n 25 --no-pager 2>/dev/null || true
+SHA="$(cat /var/lib/netmon/current-sha 2>/dev/null)"
+say "VERDICT"; echo "running commit: $SHA"
+if [ -n "$SHA" ] && journalctl -u netmon-update.service -n 50 --no-pager 2>/dev/null | grep -qiE "update complete|already up to date|healthcheck passed"; then
+  echo "RESULT: SUCCESS -- sensor unstuck, now on $SHA"
+  echo "It goes green on the dashboard within ~3 minutes. Nothing else to do."
+else
+  echo "RESULT: NOT fully fixed -- send /tmp/netmon-fix.log to the admin."
+fi
+NETMON_EOF
+sudo bash /tmp/netmon-fix.sh 2>&1 | tee /tmp/netmon-fix.log`,
+    },
+    {
+      kind: "callout",
+      tone: "success",
+      text: (
+        <>
+          <strong>RESULT: SUCCESS</strong> → done. The sensor goes green on the dashboard within
+          ~3 minutes and speed tests start working. Nothing else to do.
+        </>
+      ),
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      text: (
+        <>
+          <strong>RESULT: NOT fully fixed</strong> → send the file {C("/tmp/netmon-fix.log")} to
+          the NetMon admin.
+        </>
+      ),
+    },
+  ],
+};
+
+export const HELP_ARTICLES: HelpArticle[] = [fixEnrollment, fixSftpUpload, recoverStuckSensor];
 
 export function getArticle(slug: string): HelpArticle | undefined {
   return HELP_ARTICLES.find((a) => a.slug === slug);
