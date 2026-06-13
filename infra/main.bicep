@@ -29,10 +29,13 @@
 // in-VNet Container Apps Job (see migrateJob), NOT from a workstation.
 //
 // COLD-REBUILD ORDERING: on a from-scratch rebuild the ACR starts empty, so the
-// container images won't exist yet. Either (a) set params `containerImage` /
-// `migratorImage` to a public placeholder for the first deploy and let the
-// GitHub Actions pipeline + `az acr build` roll the real images, or (b) run
-// `az acr build` for both targets once after ACR exists, then re-deploy.
+// container images won't exist yet. The image params (`containerImage` /
+// `migratorImage` / `ingestImage` / `maintenanceImage`) are REQUIRED (no
+// :latest default) so a routine apply can never silently downgrade a running
+// pinned :sha. For the FIRST deploy, pass a public placeholder for each and let
+// the GitHub Actions pipeline + `az acr build` roll the real images; or run
+// `az acr build` for every target once after ACR exists, then re-deploy passing
+// the resulting :sha tags. On a normal apply, always pass the live pinned :sha.
 //
 // LIGHTHOUSE NOTE: this subscription is Azure Lighthouse-managed, which can block
 // role-assignment writes through some paths. If the deploy fails ONLY on the
@@ -84,17 +87,29 @@ param caeSubnetPrefix string = '10.40.0.0/23'
 @description('Delegated subnet for PostgreSQL Flexible Server (private access).')
 param postgresSubnetPrefix string = '10.40.4.0/28'
 
-@description('Container image the web app runs. Defaults to the ACR image; must exist before deploy (see header).')
-param containerImage string = '${acrName}.azurecr.io/netmon-dashboard:latest'
+@description('Container image the web app runs. REQUIRED (no default) so a full apply cannot silently downgrade the running pinned :sha to a floating :latest — prod passes the pinned image, e.g. <acrName>.azurecr.io/netmon-dashboard:<sha>. On a cold first build pass a public placeholder (see COLD-REBUILD ORDERING above).')
+param containerImage string
 
-@description('Image the migrate/seed Job runs (full repo + drizzle-kit + tsx). Built from the Dockerfile "migrator" target.')
-param migratorImage string = '${acrName}.azurecr.io/netmon-dashboard-migrator:latest'
+@description('Image the migrate/seed Job runs (full repo + drizzle-kit + tsx; also reused by the AI + enrich Jobs). Built from the Dockerfile "migrator" target. REQUIRED — pass the pinned :sha (prod) or a placeholder (cold build).')
+param migratorImage string
 
 param containerCpu string = '0.5'
 param containerMemory string = '1.0Gi'
 
 @description('Public origin the web app is served at. Pins BOTH the OIDC callback base AND the sensor enrollment snippet URL (the app reads APP_ORIGIN for both; see src/lib/auth/oidc.ts and the ingestion settings page). Set this to the bound custom domain so it is stable across environment rebuilds, e.g. https://netmon.sbcss.net. Empty string falls back to deriving the origin from the request host. NOTE: the OIDC client IDs/secrets are still applied via `az containerapp update` (see docs/DEPLOY.md); a full bicep redeploy reapplies APP_ORIGIN but you must re-add those auth env vars.')
 param appOrigin string = 'https://netmon.sbcss.net'
+
+// ---- Custom domain (was added OUT OF BAND via `az containerapp hostname bind`
+// + a managed certificate, so it was NOT in this template — a full apply would
+// have DELETED the binding and broken https://netmon.sbcss.net. Declared here so
+// the IaC matches live and an apply is a no-op.) The managed cert is referenced
+// (not created) — it is auto-provisioned when the hostname is bound. Leave
+// customDomainName empty on a fresh environment until the cert exists, then set it.
+@description('Custom domain bound to the web app ingress (live: netmon.sbcss.net). Empty = no custom domain binding (e.g. a fresh environment before its managed certificate has been provisioned).')
+param customDomainName string = 'netmon.sbcss.net'
+
+@description('Name of the managed certificate (under the CAE) for customDomainName. Auto-generated when the hostname was bound — live: netmon.sbcss.net-w2-sbcss-260603224931. Only used when customDomainName is set.')
+param customDomainCertName string = 'netmon.sbcss.net-w2-sbcss-260603224931'
 
 // ---- Ingestion (SFTP sync) Job ----
 // The SFTP connection is now configured in-app (Settings → SFTP ingestion) and
@@ -105,8 +120,8 @@ param appOrigin string = 'https://netmon.sbcss.net'
 @description('Provision the scheduled SFTP ingestion cron Job (config comes from the in-app settings).')
 param enableIngestJob bool = true
 
-@description('Image the ingest Job runs. Built from the Dockerfile "ingest" target.')
-param ingestImage string = '${acrName}.azurecr.io/netmon-dashboard-ingest:latest'
+@description('Image the ingest Job runs. Built from the Dockerfile "ingest" target. REQUIRED — pass the pinned :sha (prod) or a placeholder (cold build); no :latest default, to prevent a full apply from downgrading the running image.')
+param ingestImage string
 
 @description('Cron (UTC) for the ingest Job wake-up. Default: hourly. The job then pulls only when the per-cadence interval (set in /settings/ingestion) has elapsed, so it stays near one real pass per chosen frequency.')
 param ingestCron string = '0 * * * *'
@@ -124,8 +139,8 @@ param ingestCron string = '0 * * * *'
 @description('Provision the AI analysis cron Job. No-ops until a model key is set.')
 param enableAiJob bool = true
 
-@description('Cron (UTC) for how often the AI Job WAKES to check the in-app schedule. Hourly by default; the actual run time/cadence is set in Settings → AI analysis and honored in code.')
-param aiCron string = '0 * * * *'
+@description('Cron (UTC) for how often the AI Job WAKES to check the in-app schedule. Live = 02:00 UTC daily (was tuned out-of-band from the original hourly wake; reconciled here so a full apply does not revert it). The actual run time/cadence is set in Settings → AI analysis and honored in code.')
+param aiCron string = '0 2 * * *'
 
 // ---- Enrichment Job (nightly device re-classification) ----
 @description('Provision the nightly enrichment Job — re-classifies existing devices with the current classifier so code changes (e.g. AP/Aruba rules) reach all existing rows. Free: local logic, no model calls.')
@@ -144,8 +159,8 @@ param enrichCron string = '0 8 * * *'
 @description('Provision the daily maintenance Job — purge old time-series, VACUUM, prune SFTP bundles.')
 param enableMaintenanceJob bool = true
 
-@description('Image the maintenance Job runs. Built from the Dockerfile "maintenance" target.')
-param maintenanceImage string = '${acrName}.azurecr.io/netmon-dashboard-maintenance:latest'
+@description('Image the maintenance Job runs. Built from the Dockerfile "maintenance" target. REQUIRED — pass the pinned :sha (prod) or a placeholder (cold build); no :latest default, to prevent a full apply from downgrading the running image.')
+param maintenanceImage string
 
 @description('Cron (UTC) for the daily maintenance Job. Default 04:00 UTC (~9 PM Pacific).')
 param maintenanceCron string = '0 4 * * *'
@@ -221,12 +236,15 @@ var aiEnv = concat(
 )
 
 // ---- Log Analytics ----
+@description('Log Analytics retention in days. Reconciled to the live value (90) so a full apply does not shrink retention; tune here if desired.')
+param logRetentionDays int = 90
+
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
   location: location
   properties: {
     sku: { name: 'PerGB2018' }
-    retentionInDays: 30
+    retentionInDays: logRetentionDays
   }
 }
 
@@ -404,6 +422,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 3000
         transport: 'Auto'
         allowInsecure: false
+        // Reconciled live binding (see customDomainName param). SniEnabled +
+        // the managed cert under the CAE. Empty domain → no customDomains.
+        customDomains: empty(customDomainName) ? [] : [
+          {
+            name: customDomainName
+            bindingType: 'SniEnabled'
+            certificateId: '${containerEnv.id}/managedCertificates/${customDomainCertName}'
+          }
+        ]
       }
       registries: [
         {
