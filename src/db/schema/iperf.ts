@@ -8,6 +8,7 @@ import {
   pgTable,
   serial,
   integer,
+  bigint,
   text,
   boolean,
   doublePrecision,
@@ -15,7 +16,7 @@ import {
   timestamp,
   index,
 } from "drizzle-orm/pg-core";
-import { districts, sensors, users } from "./app";
+import { districts, schools, sensors, users } from "./app";
 
 /** One iperf3 target server per district (the box runs `iperf3 -c` against it). */
 export const districtIperf = pgTable("district_iperf", {
@@ -132,4 +133,73 @@ export const latencyResults = pgTable(
       .notNull(),
   },
   (t) => [index("idx_latency_results_sensor").on(t.sensorId, t.createdAt)],
+);
+
+/**
+ * PERF-3: the admin-set committed/provisioned internet rate for a SCHOOL's WAN
+ * uplink. Uplink utilization (computed from SNMP counter deltas) is shown vs
+ * THIS rate — not the physical port speed — because a 10G/100G port may carry
+ * only 1–10G of paid transport. One row per school (the school's single WAN
+ * circuit); per-interface overrides can come later.
+ */
+export const schoolCommittedRate = pgTable("school_committed_rate", {
+  schoolId: integer("school_id")
+    .primaryKey()
+    .references(() => schools.id, { onDelete: "cascade" }),
+  committedMbps: integer("committed_mbps"),
+  label: text("label"),
+  note: text("note"),
+  updatedBy: integer("updated_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+/**
+ * PERF-3: a single uplink octet-counter sample, ingested from a bundle's SNMP
+ * crawl (collector samples ifHCInOctets/ifHCOutOctets for the resolved uplink
+ * ifIndex only). in/out Mbps are computed at ingest as the counter delta vs the
+ * previous sample for the same (school, chassis, ifindex) over the elapsed time
+ * — null on the first sample or across a counter reset. One row per crawled
+ * uplink per ingest (topology crawl runs ~hourly, so this is average util over
+ * the interval). The school's WAN uplink = the busiest sampled uplink.
+ */
+export const uplinkSamples = pgTable(
+  "uplink_samples",
+  {
+    id: serial("id").primaryKey(),
+    schoolId: integer("school_id")
+      .notNull()
+      .references(() => schools.id, { onDelete: "cascade" }),
+    sensorId: integer("sensor_id").references(() => sensors.id, {
+      onDelete: "set null",
+    }),
+    /** SNMP chassis id of the switch the uplink lives on. */
+    chassisId: text("chassis_id").notNull(),
+    ifindex: text("ifindex").notNull(),
+    ifName: text("if_name"),
+    /** Physical port speed (ifHighSpeed), for reference vs the committed rate. */
+    speedMbps: integer("speed_mbps"),
+    inOctets: bigint("in_octets", { mode: "number" }),
+    outOctets: bigint("out_octets", { mode: "number" }),
+    /** Computed vs the previous sample; null when not computable. */
+    inMbps: doublePrecision("in_mbps"),
+    outMbps: doublePrecision("out_mbps"),
+    /** Wall-clock instant the counter was sampled on the box. */
+    sampledAt: timestamp("sampled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("idx_uplink_samples_school").on(t.schoolId, t.sampledAt),
+    index("idx_uplink_samples_iface").on(
+      t.schoolId,
+      t.chassisId,
+      t.ifindex,
+      t.sampledAt,
+    ),
+  ],
 );

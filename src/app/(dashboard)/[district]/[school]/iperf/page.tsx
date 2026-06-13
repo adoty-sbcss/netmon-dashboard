@@ -1,15 +1,19 @@
 import { notFound } from "next/navigation";
-import { Activity, AlertTriangle, Gauge, Globe, ServerCog } from "lucide-react";
+import { Activity, AlertTriangle, Gauge, Globe, Network, ServerCog } from "lucide-react";
 
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import {
   getDistrictIperf,
+  getSchoolCommittedRate,
   listSchoolIperfResults,
   listSchoolSpeedtests,
   listSchoolLatency,
+  listSchoolUplinkSamples,
   type SchoolIperfRow,
   type SchoolLatencyRow,
+  type UplinkSampleRow,
 } from "@/lib/iperf";
+import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
@@ -25,11 +29,44 @@ import {
 } from "@/components/ui/table";
 import { IperfChart } from "./iperf-chart";
 import { SpeedtestLatest } from "./speedtest-latest";
+import { CommittedRateForm } from "./committed-rate-form";
 
 export const dynamic = "force-dynamic";
 
 function f1(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(1);
+}
+
+/** PERF-3: tint utilization as it approaches/exceeds the committed rate. */
+function pctClass(p: number | null): string {
+  if (p == null) return "";
+  if (p >= 100) return "text-destructive";
+  if (p >= 80) return "text-[var(--warning)]";
+  return "";
+}
+
+function UplinkMetric({
+  label,
+  mbps,
+  pct,
+}: {
+  label: string;
+  mbps: number | null;
+  pct: number | null;
+}) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-lg font-semibold tabular-nums">
+        {mbps == null ? "—" : `${f1(mbps)} Mbps`}
+      </p>
+      {pct != null && (
+        <p className={`text-xs tabular-nums ${pctClass(pct)}`}>
+          {pct.toFixed(0)}% of committed
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface SensorSummary {
@@ -54,12 +91,17 @@ export default async function IperfPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [cfg, rows, speedtests, latencyRows] = await Promise.all([
-    getDistrictIperf(district.id),
-    listSchoolIperfResults(school.id, 300),
-    listSchoolSpeedtests(school.id, 200),
-    listSchoolLatency(school.id, 400),
-  ]);
+  const [cfg, rows, speedtests, latencyRows, committed, uplinkRows, sessionUser] =
+    await Promise.all([
+      getDistrictIperf(district.id),
+      listSchoolIperfResults(school.id, 300),
+      listSchoolSpeedtests(school.id, 200),
+      listSchoolLatency(school.id, 400),
+      getSchoolCommittedRate(school.id),
+      listSchoolUplinkSamples(school.id, 500),
+      getSessionUser(),
+    ]);
+  const canEditRate = sessionUser?.role === "superadmin";
 
   // Latest latency probe per target (internet / gateway / dns), newest-first input.
   const latencyLatest = new Map<string, SchoolLatencyRow>();
@@ -145,6 +187,56 @@ export default async function IperfPage({
   }
   const stSeries = [...stSeriesMap.values()].sort((a, b) => a.ts - b.ts);
   const stKeys = [...stKeySet];
+
+  // --- PERF-3: uplink utilization vs committed rate -------------------------
+  // Group samples by uplink (chassis+ifindex). The school's WAN uplink = the
+  // busiest one (highest latest in+out Mbps) — in a directional spine crawl
+  // that's the edge/core port facing the gateway.
+  const upByKey = new Map<string, UplinkSampleRow[]>();
+  for (const s of uplinkRows) {
+    const key = `${s.chassisId}|${s.ifindex}`;
+    (upByKey.get(key) ?? upByKey.set(key, []).get(key)!).push(s);
+  }
+  // rows arrive newest-first; keep each uplink's series oldest-first for charts.
+  for (const arr of upByKey.values()) arr.reverse();
+  const latestRate = (arr: UplinkSampleRow[]) => {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const r = arr[i];
+      if (r.inMbps != null || r.outMbps != null) return (r.inMbps ?? 0) + (r.outMbps ?? 0);
+    }
+    return -1; // no computed rate yet (only a baseline sample)
+  };
+  let wanKey: string | null = null;
+  let wanBest = -1;
+  for (const [key, arr] of upByKey) {
+    const r = latestRate(arr);
+    if (r > wanBest) {
+      wanBest = r;
+      wanKey = key;
+    }
+  }
+  const wanSamples = wanKey ? upByKey.get(wanKey)! : [];
+  const wanLatest = [...wanSamples].reverse().find((s) => s.inMbps != null || s.outMbps != null) ?? null;
+  const wanCurrentIn = wanLatest?.inMbps ?? null;
+  const wanCurrentOut = wanLatest?.outMbps ?? null;
+  const committedMbps = committed.committedMbps;
+  const utilPct = (mbps: number | null) =>
+    committedMbps && committedMbps > 0 && mbps != null ? (mbps / committedMbps) * 100 : null;
+  const utilInPct = utilPct(wanCurrentIn);
+  const utilOutPct = utilPct(wanCurrentOut);
+  const wanName = wanLatest?.ifName ?? wanSamples.at(-1)?.ifName ?? null;
+  const wanSpeedMbps = wanLatest?.speedMbps ?? wanSamples.at(-1)?.speedMbps ?? null;
+  // Trend series for the WAN uplink (in/out Mbps over time).
+  const upSeries = wanSamples
+    .filter((s) => (s.inMbps != null || s.outMbps != null) && s.sampledAt)
+    .map((s) => {
+      const point: Record<string, number> = { ts: (s.sampledAt as Date).getTime() };
+      if (s.inMbps != null) point["↓ in"] = s.inMbps;
+      if (s.outMbps != null) point["↑ out"] = s.outMbps;
+      return point;
+    });
+  const upKeys = ["↓ in", "↑ out"].filter((k) => upSeries.some((p) => k in p));
+  const hasUplinkData = uplinkRows.length > 0;
 
   const configured = Boolean(cfg.enabled && cfg.serverHost);
 
@@ -309,6 +401,140 @@ export default async function IperfPage({
                 </TableBody>
               </Table>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* --- Uplink utilization vs committed rate (PERF-3) --- */}
+      {(hasUplinkData || canEditRate || committedMbps != null) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Network className="size-4 text-primary" /> Uplink utilization
+              {committedMbps != null && (
+                <Badge variant="outline" className="font-normal">
+                  vs {committedMbps} Mbps committed
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-6">
+            <p className="text-sm text-muted-foreground">
+              Measured from SNMP uplink counter deltas on the WAN-facing port,
+              shown against the school&apos;s <em>committed</em> rate — not the
+              physical port speed (a 10G port may carry only 1–10G of paid
+              transport). Each point is the average over an ~hourly sample.
+            </p>
+
+            {!hasUplinkData ? (
+              <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                No uplink samples yet. They appear once a sensor with SNMP spine
+                crawl enabled reports its uplink counters (two samples are needed
+                to compute a rate).
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <UplinkMetric label="↓ In" mbps={wanCurrentIn} pct={utilInPct} />
+                  <UplinkMetric label="↑ Out" mbps={wanCurrentOut} pct={utilOutPct} />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Committed</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {committedMbps != null ? `${committedMbps} Mbps` : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Port speed</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {wanSpeedMbps != null ? `${wanSpeedMbps} Mbps` : "—"}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  WAN uplink: {wanName ?? "—"}
+                  {wanLatest?.sampledAt
+                    ? ` · sampled ${relativeTime(wanLatest.sampledAt)}`
+                    : ""}
+                </p>
+                {committedMbps == null && (
+                  <p className="text-xs text-[var(--warning)]">
+                    Set a committed rate {canEditRate ? "below " : ""}to see
+                    utilization %.
+                  </p>
+                )}
+                {upKeys.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">
+                      Uplink throughput over time
+                    </p>
+                    <IperfChart series={upSeries} keys={upKeys} />
+                  </div>
+                )}
+                <div className="overflow-x-auto">
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">
+                    Recent samples
+                  </p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>When</TableHead>
+                        <TableHead>↓ In</TableHead>
+                        <TableHead>↑ Out</TableHead>
+                        <TableHead className="hidden sm:table-cell">
+                          % of committed
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {[...wanSamples]
+                        .reverse()
+                        .slice(0, 24)
+                        .map((s) => {
+                          const pIn = utilPct(s.inMbps);
+                          const pOut = utilPct(s.outMbps);
+                          const peak =
+                            pIn != null || pOut != null
+                              ? Math.max(pIn ?? 0, pOut ?? 0)
+                              : null;
+                          return (
+                            <TableRow key={s.id}>
+                              <TableCell
+                                className="whitespace-nowrap text-muted-foreground"
+                                title={s.sampledAt ? dateTime(s.sampledAt) : ""}
+                              >
+                                {s.sampledAt
+                                  ? relativeTime(s.sampledAt)
+                                  : relativeTime(s.createdAt)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                {f1(s.inMbps)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                {f1(s.outMbps)}
+                              </TableCell>
+                              <TableCell
+                                className={`hidden tabular-nums sm:table-cell ${pctClass(peak)}`}
+                              >
+                                {peak == null ? "—" : `${peak.toFixed(0)}%`}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+
+            {canEditRate && (
+              <CommittedRateForm
+                districtSlug={district.slug}
+                schoolSlug={school.slug}
+                committedMbps={committedMbps}
+                label={committed.label}
+                note={committed.note}
+              />
+            )}
           </CardContent>
         </Card>
       )}

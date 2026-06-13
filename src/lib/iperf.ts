@@ -7,7 +7,14 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { districtIperf, iperfResults, speedtestResults, latencyResults } from "@/db/schema/iperf";
+import {
+  districtIperf,
+  iperfResults,
+  speedtestResults,
+  latencyResults,
+  schoolCommittedRate,
+  uplinkSamples,
+} from "@/db/schema/iperf";
 import { sensors } from "@/db/schema/app";
 
 export interface DistrictIperfView {
@@ -239,6 +246,87 @@ export async function listSchoolLatency(
     .innerJoin(sensors, eq(latencyResults.sensorId, sensors.id))
     .where(eq(sensors.schoolId, schoolId))
     .orderBy(desc(latencyResults.createdAt))
+    .limit(limit);
+}
+
+// --- uplink utilization vs committed rate (PERF-3) -------------------------
+
+export interface SchoolCommittedRateView {
+  committedMbps: number | null;
+  label: string | null;
+  note: string | null;
+  updatedAt: Date | null;
+}
+
+/** The admin-set committed/provisioned WAN rate for a school (null when unset). */
+export async function getSchoolCommittedRate(
+  schoolId: number,
+): Promise<SchoolCommittedRateView> {
+  const [row] = await db
+    .select()
+    .from(schoolCommittedRate)
+    .where(eq(schoolCommittedRate.schoolId, schoolId))
+    .limit(1);
+  return {
+    committedMbps: row?.committedMbps ?? null,
+    label: row?.label ?? null,
+    note: row?.note ?? null,
+    updatedAt: row?.updatedAt ?? null,
+  };
+}
+
+/** Upsert (or clear, when committedMbps is null) a school's committed WAN rate. */
+export async function saveSchoolCommittedRate(
+  schoolId: number,
+  v: { committedMbps: number | null; label: string | null; note: string | null },
+  updatedBy?: number | null,
+): Promise<void> {
+  const set = {
+    committedMbps: v.committedMbps,
+    label: v.label,
+    note: v.note,
+    updatedBy: updatedBy ?? null,
+    updatedAt: new Date(),
+  };
+  await db
+    .insert(schoolCommittedRate)
+    .values({ schoolId, ...set })
+    .onConflictDoUpdate({ target: schoolCommittedRate.schoolId, set });
+}
+
+export interface UplinkSampleRow {
+  id: number;
+  chassisId: string;
+  ifindex: string;
+  ifName: string | null;
+  speedMbps: number | null;
+  inMbps: number | null;
+  outMbps: number | null;
+  sampledAt: Date | null;
+  createdAt: Date;
+}
+
+/** Uplink counter samples across a school's sensors (newest first). The page
+ *  groups by (chassis, ifindex) and treats the busiest uplink as the WAN edge. */
+export async function listSchoolUplinkSamples(
+  schoolId: number,
+  limit = 500,
+): Promise<UplinkSampleRow[]> {
+  return db
+    .select({
+      id: uplinkSamples.id,
+      chassisId: uplinkSamples.chassisId,
+      ifindex: uplinkSamples.ifindex,
+      ifName: uplinkSamples.ifName,
+      speedMbps: uplinkSamples.speedMbps,
+      inMbps: uplinkSamples.inMbps,
+      outMbps: uplinkSamples.outMbps,
+      sampledAt: uplinkSamples.sampledAt,
+      createdAt: uplinkSamples.createdAt,
+    })
+    .from(uplinkSamples)
+    .where(eq(uplinkSamples.schoolId, schoolId))
+    .orderBy(desc(uplinkSamples.createdAt))
     .limit(limit);
 }
 

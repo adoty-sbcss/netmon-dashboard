@@ -14,7 +14,7 @@
  *   maps           topology_snapshots (physical + logical, per school)
  *   rollup         health_rollup_daily (per district+school+day)
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   districts,
@@ -38,6 +38,7 @@ import {
   topologySnapshots,
   topologyPositions,
   healthRollupDaily,
+  uplinkSamples,
 } from "../db/schema";
 import {
   readBundleDir,
@@ -491,6 +492,123 @@ function buildSnmpFabricGraph(scans: ScanData[], sourceScanId: number | null): T
     }
   }
   return { nodes: [...nodeById.values()], edges: [...edgeByKey.values()], sourceScanId };
+}
+
+/** PERF-3: average Mbps from an octet counter delta, or null when not derivable
+ * (missing counter, or a negative delta = counter reset/wrap). */
+function uplinkRateMbps(
+  prevOctets: number | null,
+  curOctets: number | null,
+  secs: number,
+): number | null {
+  if (prevOctets == null || curOctets == null) return null;
+  const deltaBytes = curOctets - prevOctets;
+  if (deltaBytes < 0) return null; // counter reset/reboot/wrap → skip this interval
+  return (deltaBytes * 8) / secs / 1_000_000;
+}
+
+/**
+ * PERF-3: persist the uplink octet-counter samples carried in this bundle's SNMP
+ * crawl (node.extra.uplink), one row per uplink, computing in/out Mbps vs the
+ * previous stored sample for the same (school, chassis, ifindex). Best-effort —
+ * an hourly bundle may roll up several crawls, so we keep the LATEST sample per
+ * uplink and skip anything not newer than what's already stored.
+ */
+async function persistUplinkSamples(
+  tx: Tx,
+  schoolId: number,
+  sensorId: number,
+  scans: ScanData[],
+): Promise<void> {
+  type Sample = {
+    chassisId: string;
+    ifindex: string;
+    ifName: string | null;
+    speedMbps: number | null;
+    inOctets: number | null;
+    outOctets: number | null;
+    sampledAt: Date;
+  };
+  const latest = new Map<string, Sample>();
+  for (const scan of scans) {
+    for (const n of scan.snmpTopology?.nodes ?? []) {
+      const chassis = str(n.chassis_id);
+      const up = n.extra?.uplink;
+      if (!chassis || !up) continue;
+      const ifindex = up.ifindex != null ? String(up.ifindex) : null;
+      const tsSec = typeof up.counter_ts === "number" ? up.counter_ts : null;
+      if (!ifindex || tsSec == null) continue;
+      const inOctets = typeof up.in_octets === "number" ? up.in_octets : null;
+      const outOctets = typeof up.out_octets === "number" ? up.out_octets : null;
+      if (inOctets == null && outOctets == null) continue;
+      const sampledAt = new Date(tsSec * 1000);
+      const key = `${chassis}|${ifindex}`;
+      const prev = latest.get(key);
+      if (!prev || sampledAt > prev.sampledAt) {
+        latest.set(key, {
+          chassisId: chassis,
+          ifindex,
+          ifName: str(up.name),
+          speedMbps: typeof up.speed_mbps === "number" ? up.speed_mbps : null,
+          inOctets,
+          outOctets,
+          sampledAt,
+        });
+      }
+    }
+  }
+  if (latest.size === 0) return;
+
+  for (const s of latest.values()) {
+    const [prev] = await tx
+      .select({
+        inOctets: uplinkSamples.inOctets,
+        outOctets: uplinkSamples.outOctets,
+        sampledAt: uplinkSamples.sampledAt,
+      })
+      .from(uplinkSamples)
+      .where(
+        and(
+          eq(uplinkSamples.schoolId, schoolId),
+          eq(uplinkSamples.chassisId, s.chassisId),
+          eq(uplinkSamples.ifindex, s.ifindex),
+        ),
+      )
+      .orderBy(desc(uplinkSamples.sampledAt))
+      .limit(1);
+
+    // Re-ingest / out-of-order guard: never store a sample not newer than the
+    // last one for this uplink (keeps the series monotonic + idempotent).
+    if (prev?.sampledAt && s.sampledAt.getTime() <= prev.sampledAt.getTime()) {
+      continue;
+    }
+
+    let inMbps: number | null = null;
+    let outMbps: number | null = null;
+    if (prev?.sampledAt) {
+      const secs = (s.sampledAt.getTime() - prev.sampledAt.getTime()) / 1000;
+      // Sane gap only: >30s avoids divide-by-noise; <6h avoids a misleading
+      // "average" across a long collection outage.
+      if (secs > 30 && secs < 6 * 3600) {
+        inMbps = uplinkRateMbps(prev.inOctets, s.inOctets, secs);
+        outMbps = uplinkRateMbps(prev.outOctets, s.outOctets, secs);
+      }
+    }
+
+    await tx.insert(uplinkSamples).values({
+      schoolId,
+      sensorId,
+      chassisId: s.chassisId,
+      ifindex: s.ifindex,
+      ifName: s.ifName,
+      speedMbps: s.speedMbps,
+      inOctets: s.inOctets,
+      outOctets: s.outOctets,
+      inMbps,
+      outMbps,
+      sampledAt: s.sampledAt,
+    });
+  }
 }
 
 function buildLogicalGraph(scan: ScanData, sourceScanId: number | null) {
@@ -1173,6 +1291,9 @@ export async function ingestBundle(
           set: { graph: finalGraph, generatedAt: new Date() },
         });
     }
+
+    // ---- PERF-3: uplink utilization samples (counter deltas vs committed rate) ----
+    await persistUplinkSamples(tx, school.id, sensor.id, bundle.scans);
 
     // ---- daily health rollup (per district+school+day) ----
     if (day) {

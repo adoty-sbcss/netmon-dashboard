@@ -206,6 +206,18 @@ export interface SnmpInterface {
   stp_state?: string | null; // forwarding | blocking | listening | ...
 }
 
+/** PERF-3: the resolved uplink's octet-counter sample (collector emits this only
+ * for spine-crawled switches where an uplink ifIndex resolves). counter_ts is
+ * epoch seconds at sample time. */
+export interface RawSnmpUplink {
+  ifindex?: number | string | null;
+  name?: string | null;
+  speed_mbps?: number | null;
+  in_octets?: number | null;
+  out_octets?: number | null;
+  counter_ts?: number | null;
+}
+
 /** snmp_topology.json — the SNMP fabric crawl (chassis-keyed, multi-switch). */
 export interface RawSnmpTopoNode {
   chassis_id?: string | null;
@@ -216,7 +228,11 @@ export interface RawSnmpTopoNode {
   source?: string | null;
   capabilities?: string[] | null;
   // CORE-2: interface health / STP keyed by ifIndex (stored in topology_nodes.extra).
-  extra?: { interfaces?: Record<string, SnmpInterface> | null } | null;
+  // PERF-3: `uplink` is the resolved uplink's counter sample (same extra jsonb).
+  extra?: {
+    interfaces?: Record<string, SnmpInterface> | null;
+    uplink?: RawSnmpUplink | null;
+  } | null;
 }
 export interface RawSnmpTopoEdge {
   local_chassis_id?: string | null;
