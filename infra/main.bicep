@@ -139,8 +139,8 @@ param ingestCron string = '0 * * * *'
 @description('Provision the AI analysis cron Job. No-ops until a model key is set.')
 param enableAiJob bool = true
 
-@description('Cron (UTC) for how often the AI Job WAKES to check the in-app schedule. Live = 02:00 UTC daily (was tuned out-of-band from the original hourly wake; reconciled here so a full apply does not revert it). The actual run time/cadence is set in Settings → AI analysis and honored in code.')
-param aiCron string = '0 2 * * *'
+@description('Cron (UTC) for how often the AI Job WAKES — NOT how often analysis runs. Keep this HOURLY: each wake the code checks the in-app schedule (ai_settings.schedule_cron, edited at Settings → AI analysis) and no-ops with zero model calls unless due, so the in-app schedule is the real cost/cadence knob (default 02:00 daily). Setting this to a daily cron would cap the in-app schedule to that one wake and silently break the "set any time/cadence in the UI" promise — leave it hourly.')
+param aiCron string = '0 * * * *'
 
 // ---- Enrichment Job (nightly device re-classification) ----
 @description('Provision the nightly enrichment Job — re-classifies existing devices with the current classifier so code changes (e.g. AP/Aruba rules) reach all existing rows. Free: local logic, no model calls.')
