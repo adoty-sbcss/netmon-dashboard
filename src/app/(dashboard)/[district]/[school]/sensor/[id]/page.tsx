@@ -169,6 +169,11 @@ export default async function SensorDetailPage({
               <li key={f.code}>
                 <span className="font-medium">{f.label}</span>
                 {f.detail ? <span className="text-muted-foreground"> — {f.detail}</span> : null}
+                {f.help ? (
+                  <Link href={`/help/${f.help}`} className="ml-1 whitespace-nowrap font-medium text-primary hover:underline">
+                    Fix this →
+                  </Link>
+                ) : null}
               </li>
             ))}
           </ul>

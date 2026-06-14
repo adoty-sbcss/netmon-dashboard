@@ -13,7 +13,23 @@ export interface HealthFlag {
   level: HealthLevel;
   label: string;
   detail?: string;
+  /** Help Center article slug that explains/fixes this flag (for a "Fix this →" link). */
+  help?: string;
 }
+
+/** Which Help Center article each flag points at (the "meet them at the problem" link). */
+const HELP_FOR: Record<string, string> = {
+  never_checkin: "sensor-health-needs-attention",
+  offline: "sensor-health-needs-attention",
+  late_checkin: "sensor-health-needs-attention",
+  update_failed: "recover-stuck-sensor",
+  update_rolled_back: "recover-stuck-sensor",
+  no_version: "recover-stuck-sensor",
+  behind_fleet: "recover-stuck-sensor",
+  no_data_ever: "fix-automatic-sftp-upload",
+  stalled_data: "fix-automatic-sftp-upload",
+  config_pending: "school-and-district-settings",
+};
 
 export interface SensorHealthInput {
   lastCheckinAt: Date | null;
@@ -146,6 +162,7 @@ export function sensorHealthFlags(
     });
   }
 
+  for (const f of flags) f.help = HELP_FOR[f.code];
   return flags;
 }
 

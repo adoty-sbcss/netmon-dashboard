@@ -122,19 +122,22 @@ export default async function FleetSensorsPage() {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {flags.map((f) => (
-                    <span
-                      key={f.code}
-                      title={f.detail}
-                      className={`rounded px-1.5 py-0.5 text-[11px] ${
-                        f.level === "error"
-                          ? "bg-destructive/10 text-destructive"
-                          : "bg-[var(--warning)]/15 text-[var(--warning)]"
-                      }`}
-                    >
-                      {f.label}
-                    </span>
-                  ))}
+                  {flags.map((f) => {
+                    const cls = `rounded px-1.5 py-0.5 text-[11px] ${
+                      f.level === "error"
+                        ? "bg-destructive/10 text-destructive"
+                        : "bg-[var(--warning)]/15 text-[var(--warning)]"
+                    }`;
+                    return f.help ? (
+                      <Link key={f.code} href={`/help/${f.help}`} title={f.detail} className={`${cls} hover:underline`}>
+                        {f.label} →
+                      </Link>
+                    ) : (
+                      <span key={f.code} title={f.detail} className={cls}>
+                        {f.label}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             ))}

@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import Link from "next/link";
 import { ArrowDownToLine, ArrowUpFromLine, Clock } from "lucide-react";
 
 import { dateTime, relativeTime } from "@/lib/format";
@@ -78,7 +79,13 @@ export function SpeedtestLatest({ items }: { items: SpeedtestLatestRow[] }) {
             </div>
             {!r.ok ? (
               <p className="text-sm text-destructive">
-                Failed{r.error ? ` — ${r.error}` : ""}
+                Failed{r.error ? ` — ${r.error}` : ""}{" "}
+                <Link
+                  href="/help/read-speed-and-bandwidth"
+                  className="whitespace-nowrap font-medium text-primary hover:underline"
+                >
+                  Why? →
+                </Link>
               </p>
             ) : (
               <>
