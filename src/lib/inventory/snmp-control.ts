@@ -189,10 +189,11 @@ export async function purgeAllDiscoveredAction(
   };
 }
 
-/** Valid effective device types for manual reclassify (mirrors entities_host). */
+/** Valid effective device types for manual reclassify (mirrors entities_host +
+ *  the DEVICE_TYPE_OPTIONS the inventory + device-page dropdowns offer). */
 const DEVICE_TYPES = new Set([
   "switch", "router", "ap", "firewall", "printer", "phone", "camera",
-  "computer", "server", "mobile", "storage", "iot", "vm", "unknown",
+  "computer", "server", "mobile", "storage", "media", "display", "iot", "vm", "unknown",
 ]);
 
 /** Bulk-purge (reversibly exclude) the SELECTED devices. items = JSON array of
@@ -304,6 +305,65 @@ export async function bulkReclassifyDevicesAction(
     ok: true,
     message: `Reclassified ${hostIds.length} device(s) as “${deviceType}” — sticks across future scans.`,
   };
+}
+
+/** Set the manual type override for ONE host (the device-detail page control).
+ *  Same sticky semantics as the bulk reclassify; survives re-scans. */
+export async function setHostDeviceTypeAction(
+  _prev: InventoryActionState,
+  formData: FormData,
+): Promise<InventoryActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const hostId = Number(formData.get("hostId"));
+  const basePath = String(formData.get("basePath") ?? "");
+  const deviceType = String(formData.get("deviceType") ?? "");
+  if (!Number.isInteger(hostId)) return { error: "Invalid device." };
+  if (!DEVICE_TYPES.has(deviceType)) return { error: "Pick a device type." };
+
+  await db
+    .update(entitiesHost)
+    .set({ deviceTypeOverride: deviceType })
+    .where(eq(entitiesHost.id, hostId));
+
+  await db.insert(auditLog).values({
+    actorType: "user", actor: admin.email, action: "device_reclassified",
+    detail: { hostId, deviceType },
+  });
+  if (basePath) {
+    revalidatePath(`${basePath}/host/${hostId}`);
+    revalidatePath(`${basePath}/inventory`);
+    revalidatePath(`${basePath}/map`);
+  }
+  return { ok: true, message: `Set type to “${deviceType}” — sticks across future scans.` };
+}
+
+/** Clear a host's manual type override → revert to the auto-detected type. */
+export async function clearHostDeviceTypeAction(
+  _prev: InventoryActionState,
+  formData: FormData,
+): Promise<InventoryActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const hostId = Number(formData.get("hostId"));
+  const basePath = String(formData.get("basePath") ?? "");
+  if (!Number.isInteger(hostId)) return { error: "Invalid device." };
+
+  await db
+    .update(entitiesHost)
+    .set({ deviceTypeOverride: null })
+    .where(eq(entitiesHost.id, hostId));
+
+  await db.insert(auditLog).values({
+    actorType: "user", actor: admin.email, action: "device_reclassified",
+    detail: { hostId, deviceType: null },
+  });
+  if (basePath) {
+    revalidatePath(`${basePath}/host/${hostId}`);
+    revalidatePath(`${basePath}/inventory`);
+    revalidatePath(`${basePath}/map`);
+  }
+  return { ok: true, message: "Reverted to the auto-detected type." };
 }
 
 /** Bulk-restore (un-exclude) SELECTED purged devices. keys = JSON array. */

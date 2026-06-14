@@ -7,6 +7,8 @@ import {
   getSchoolBySlug,
   getSwitchDetail,
 } from "@/db/queries";
+import { getDistrictSnmpCommunity } from "@/db/settings-queries";
+import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +21,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SwitchPortsTable } from "@/components/device/switch-ports-table";
+import { ConnectedDevicesTable } from "@/components/device/connected-devices-table";
+import { SnmpCommunityForm } from "../../../../settings/network/snmp-community-form";
 
 export default async function SwitchDetailPage({
   params,
@@ -37,6 +42,10 @@ export default async function SwitchDetailPage({
 
   const sw = await getSwitchDetail(school.id, switchId);
   if (!sw) notFound();
+
+  const user = await getSessionUser();
+  const isSuperadmin = user?.role === "superadmin";
+  const community = isSuperadmin ? await getDistrictSnmpCommunity(sw.districtId) : "";
 
   const basePath = `/${district.slug}/${school.slug}`;
   const attrEntries = Object.entries(sw.attributes ?? {});
@@ -108,33 +117,93 @@ export default async function SwitchDetailPage({
         </CardContent>
       </Card>
 
-      {/* SNMP attributes */}
-      {sw.snmp.length > 0 && (
+      {/* Per-port detail + devices plugged into each port. */}
+      <SwitchPortsTable ports={sw.ports} />
+      <ConnectedDevicesTable devices={sw.connectedDevices} basePath={basePath} />
+
+      {/* SNMP — settings + identity. */}
+      {sw.mgmtIp && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">SNMP attributes</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Network className="size-4 text-primary" />
+              SNMP
+            </CardTitle>
           </CardHeader>
-          <CardContent className="px-0 sm:px-6">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Attribute</TableHead>
-                    <TableHead>Value</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sw.snmp.map((a, i) => (
-                    <TableRow key={`${a.oidName}-${i}`}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {a.oidName ?? "—"}
-                      </TableCell>
-                      <TableCell className="break-all">{a.value ?? "—"}</TableCell>
+          <CardContent className="flex flex-col gap-4">
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="min-w-0">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">Status</dt>
+                <dd className="mt-0.5">
+                  {sw.snmpResponded === true ? (
+                    <span className="text-emerald-600 dark:text-emerald-400">
+                      Responded{sw.snmpVersion ? ` (v${sw.snmpVersion})` : ""}
+                    </span>
+                  ) : sw.snmpResponded === false ? (
+                    <span className="text-muted-foreground">No response</span>
+                  ) : (
+                    <span className="text-muted-foreground">Not probed</span>
+                  )}
+                </dd>
+              </div>
+              <Field
+                label="Last checked"
+                value={sw.snmpCheckedAt ? `${dateTime(sw.snmpCheckedAt)} (${relativeTime(sw.snmpCheckedAt)})` : null}
+              />
+              <div className="min-w-0">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Read community
+                </dt>
+                <dd className="mt-0.5 truncate font-mono">
+                  {isSuperadmin ? (
+                    community ? (
+                      community
+                    ) : (
+                      <span className="text-muted-foreground">not set</span>
+                    )
+                  ) : (
+                    <span className="text-muted-foreground">•••••• (admin only)</span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+
+            {isSuperadmin && (
+              <div className="border-t pt-4">
+                <SnmpCommunityForm
+                  districtId={sw.districtId}
+                  basePath={basePath}
+                  current={community}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Read-only SNMP, v2c. This community is district-wide — changing it here
+                  re-pushes to every sensor in {district.name}.
+                </p>
+              </div>
+            )}
+
+            {sw.snmp.length > 0 && (
+              <div className="overflow-x-auto border-t pt-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Attribute</TableHead>
+                      <TableHead>Value</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {sw.snmp.map((a, i) => (
+                      <TableRow key={`${a.oidName}-${i}`}>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {a.oidName ?? "—"}
+                        </TableCell>
+                        <TableCell className="break-all">{a.value ?? "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -7,7 +7,7 @@
  * than correlated subqueries: simpler to read and the dataset is small.
  */
 import "server-only";
-import { and, count, desc, eq, gte, inArray, isNotNull, lte, max, min, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, isNotNull, lte, max, min, ne, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./index";
@@ -38,6 +38,7 @@ import {
   topologySnapshots,
   topologyPositions,
 } from "./schema/entities";
+import { issues } from "./schema/issues";
 import {
   configBackups,
   desiredConfig,
@@ -697,20 +698,68 @@ export interface SnmpAttr {
   deviceIp: string | null;
 }
 
+/** A single switch port: its ifIndex plus the CORE-2/INV per-port health record. */
+export type SwitchPort = { ifIndex: string } & SnmpInterface;
+
+/** A device the bridge FDB shows directly attached to a switch/router port. */
+export interface ConnectedDevice {
+  ifName: string | null;
+  mac: string;
+  hostEntityId: number | null;
+  hostname: string | null;
+  ip: string | null;
+  deviceType: DeviceType | null;
+}
+
+/** DHCP fingerprint for an endpoint that may never speak SNMP. */
+export interface DhcpFingerprint {
+  vendorClassId: string | null;
+  clientHostname: string | null;
+  paramReqList: string | null;
+  seenAt: Date | null;
+}
+
+/** An open issue that mentions this device (heuristic text match). */
+export interface DeviceIssue {
+  id: number;
+  title: string;
+  severity: string;
+  status: string;
+  recommendation: string | null;
+}
+
 export interface HostDetail {
   id: number;
+  districtId: number;
   mac: string;
   ip: string | null;
   hostname: string | null;
   vendor: string | null;
+  /** Effective type: manual override > SNMP-refined > stored auto. */
   deviceType: DeviceType | null;
+  /** Operator's manual classification, if set (drives the "manual vs auto" UI). */
+  deviceTypeOverride: DeviceType | null;
+  /** Auto-detected type (shown as a hint, and what "reset to auto" reverts to). */
+  deviceTypeAuto: DeviceType | null;
   firstSeenAt: Date | null;
   lastSeenAt: Date | null;
   attributes: Record<string, unknown>;
+  model: string | null;
+  serial: string | null;
   /** Resolved switch port (ifName / "port N"); null until a switch FDB resolves it. */
   switchPort: string | null;
   /** IP of the switch/gateway whose forwarding table produced the port mapping. */
   switchPortSource: string | null;
+  /** Canonical switch entity for switchPortSource (clickable), when known. */
+  switchEntityId: number | null;
+  /** Latest SNMP-reachability for this IP (powers the SNMP card). */
+  snmpResponded: boolean | null;
+  snmpVersion: string | null;
+  snmpCheckedAt: Date | null;
+  dhcp: DhcpFingerprint | null;
+  /** Set when this host is itself infra (gateway/router/switch) we SNMP-crawled. */
+  ports: SwitchPort[];
+  connectedDevices: ConnectedDevice[];
   sightings: HostSighting[];
   snmp: SnmpAttr[];
 }
@@ -791,19 +840,110 @@ export async function getHostDetail(
     hostname: host.hostname,
     snmpSysDescr: sysDescr,
   });
+  // Manual override is human truth — it wins over the (re)derived auto type.
+  const overrideType = (host.deviceTypeOverride as DeviceType | null) || null;
+  const autoType = deviceType ?? (host.deviceType as DeviceType | null) ?? null;
+  const effectiveType = overrideType ?? autoType;
+
+  const model =
+    mapAttrStr(host.attributes, "model") ??
+    snmp.find((a) => a.oidName === "entPhysicalModelName")?.value ??
+    null;
+  const serial =
+    mapAttrStr(host.attributes, "serial") ??
+    snmp.find((a) => a.oidName === "entPhysicalSerialNum")?.value ??
+    null;
+
+  // Only an infrastructure host (gateway/router/switch) carries its own ports +
+  // FDB-attached devices — skip the (school-wide) FDB scan for ordinary endpoints.
+  const isInfra = ["switch", "router", "ap", "firewall"].includes(effectiveType ?? "");
+
+  const [dhcpRow, reachRow, switchEnt] = await Promise.all([
+    db
+      .select({
+        vendorClassId: dhcpObservations.vendorClassId,
+        clientHostname: dhcpObservations.clientHostname,
+        paramReqList: dhcpObservations.paramReqList,
+        seenAt: dhcpObservations.seenAt,
+      })
+      .from(dhcpObservations)
+      .innerJoin(scanRuns, eq(dhcpObservations.scanRunId, scanRuns.id))
+      .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+      .where(
+        and(
+          eq(sensors.schoolId, schoolId),
+          eq(dhcpObservations.clientMac, host.mac),
+          or(
+            isNotNull(dhcpObservations.vendorClassId),
+            isNotNull(dhcpObservations.clientHostname),
+            isNotNull(dhcpObservations.paramReqList),
+          ),
+        ),
+      )
+      .orderBy(desc(dhcpObservations.seenAt))
+      .limit(1),
+    host.ip
+      ? db
+          .select({
+            snmpResponded: networkReachability.snmpResponded,
+            snmpVersion: networkReachability.snmpVersion,
+            checkedAt: networkReachability.checkedAt,
+          })
+          .from(networkReachability)
+          .innerJoin(scanRuns, eq(networkReachability.scanRunId, scanRuns.id))
+          .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+          .where(and(eq(sensors.schoolId, schoolId), eq(networkReachability.ip, host.ip)))
+          .orderBy(desc(networkReachability.checkedAt))
+          .limit(1)
+      : Promise.resolve(
+          [] as { snmpResponded: boolean | null; snmpVersion: string | null; checkedAt: Date | null }[],
+        ),
+    port?.sourceDeviceIp
+      ? db
+          .select({ id: entitiesSwitch.id })
+          .from(entitiesSwitch)
+          .where(
+            and(
+              eq(entitiesSwitch.schoolId, schoolId),
+              eq(entitiesSwitch.mgmtIp, port.sourceDeviceIp),
+            ),
+          )
+          .limit(1)
+      : Promise.resolve([] as { id: number }[]),
+  ]);
+
+  const [ports, connectedDevices] =
+    isInfra && host.ip
+      ? await Promise.all([
+          getDevicePorts(schoolId, { mgmtIp: host.ip }),
+          getConnectedDevices(schoolId, host.ip),
+        ])
+      : [[] as SwitchPort[], [] as ConnectedDevice[]];
 
   return {
     id: host.id,
+    districtId: host.districtId,
     mac: host.mac,
     ip: host.ip,
     hostname: host.hostname,
     vendor: vendor ?? host.vendor,
-    deviceType: deviceType ?? (host.deviceType as DeviceType | null) ?? null,
+    deviceType: effectiveType,
+    deviceTypeOverride: overrideType,
+    deviceTypeAuto: autoType,
     firstSeenAt: host.firstSeenAt,
     lastSeenAt: host.lastSeenAt,
     attributes: (host.attributes ?? {}) as Record<string, unknown>,
+    model,
+    serial,
     switchPort: portLabel(port),
     switchPortSource: port?.sourceDeviceIp ?? null,
+    switchEntityId: switchEnt[0]?.id ?? null,
+    snmpResponded: reachRow[0]?.snmpResponded ?? null,
+    snmpVersion: reachRow[0]?.snmpVersion ?? null,
+    snmpCheckedAt: reachRow[0]?.checkedAt ?? null,
+    dhcp: dhcpRow[0] ?? null,
+    ports,
+    connectedDevices,
     sightings,
     snmp,
   };
@@ -971,10 +1111,18 @@ export interface SwitchAppearance {
 }
 
 export interface SwitchDetail extends SwitchRow {
+  districtId: number;
   attributes: Record<string, unknown>;
   appearances: SwitchAppearance[];
   snmp: SnmpAttr[];
   interfaceCount: number;
+  /** Per-port detail from the stored physical snapshot (CORE-2/INV). */
+  ports: SwitchPort[];
+  /** Devices the bridge FDB shows directly attached to this switch. */
+  connectedDevices: ConnectedDevice[];
+  snmpResponded: boolean | null;
+  snmpVersion: string | null;
+  snmpCheckedAt: Date | null;
 }
 
 export async function getSwitchDetail(
@@ -1047,8 +1195,30 @@ export async function getSwitchDetail(
     interfaceCount = ifc?.c ?? 0;
   }
 
+  const [ports, connectedDevices, reachRow] = await Promise.all([
+    getDevicePorts(schoolId, { chassisId: sw.chassisId, mgmtIp: sw.mgmtIp }),
+    sw.mgmtIp ? getConnectedDevices(schoolId, sw.mgmtIp) : Promise.resolve([] as ConnectedDevice[]),
+    sw.mgmtIp
+      ? db
+          .select({
+            snmpResponded: networkReachability.snmpResponded,
+            snmpVersion: networkReachability.snmpVersion,
+            checkedAt: networkReachability.checkedAt,
+          })
+          .from(networkReachability)
+          .innerJoin(scanRuns, eq(networkReachability.scanRunId, scanRuns.id))
+          .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+          .where(and(eq(sensors.schoolId, schoolId), eq(networkReachability.ip, sw.mgmtIp)))
+          .orderBy(desc(networkReachability.checkedAt))
+          .limit(1)
+      : Promise.resolve(
+          [] as { snmpResponded: boolean | null; snmpVersion: string | null; checkedAt: Date | null }[],
+        ),
+  ]);
+
   return {
     id: sw.id,
+    districtId: sw.districtId,
     chassisId: sw.chassisId,
     systemName: sw.systemName,
     systemDescription: sw.systemDescription,
@@ -1060,7 +1230,149 @@ export async function getSwitchDetail(
     appearances,
     snmp,
     interfaceCount,
+    ports,
+    connectedDevices,
+    snmpResponded: reachRow[0]?.snmpResponded ?? null,
+    snmpVersion: reachRow[0]?.snmpVersion ?? null,
+    snmpCheckedAt: reachRow[0]?.checkedAt ?? null,
   };
+}
+
+// ---- device ports + connected devices + per-device issues -----------------
+
+/**
+ * Per-port interface health for a crawled switch/router, read from the school's
+ * stored physical snapshot node (CORE-2/INV `interfaces`), matched by chassis or
+ * mgmt IP. Sorted by numeric ifIndex. Empty when the device hasn't been
+ * SNMP-crawled (so endpoints + un-polled gear render nothing).
+ */
+export async function getDevicePorts(
+  schoolId: number,
+  match: { chassisId?: string | null; mgmtIp?: string | null },
+): Promise<SwitchPort[]> {
+  const [row] = await db
+    .select({ graph: topologySnapshots.graph })
+    .from(topologySnapshots)
+    .where(
+      and(
+        eq(topologySnapshots.scopeType, "school"),
+        eq(topologySnapshots.scopeId, schoolId),
+        eq(topologySnapshots.kind, "physical"),
+      ),
+    )
+    .limit(1);
+  if (!row) return [];
+  const nodes =
+    ((row.graph ?? {}) as {
+      nodes?: Array<{
+        id?: string;
+        mgmt_ip?: string | null;
+        interfaces?: Record<string, SnmpInterface> | null;
+      }>;
+    }).nodes ?? [];
+  const wantId = match.chassisId ? `switch:${match.chassisId}` : null;
+  const node = nodes.find(
+    (n) =>
+      (wantId != null && n.id === wantId) ||
+      (match.mgmtIp != null && n.mgmt_ip === match.mgmtIp),
+  );
+  const ifaces = node?.interfaces ?? null;
+  if (!ifaces) return [];
+  return Object.entries(ifaces)
+    .map(([ifIndex, rec]) => ({ ifIndex, ...rec }))
+    .sort((a, b) => Number(a.ifIndex) - Number(b.ifIndex));
+}
+
+/**
+ * Devices the bridge FDB shows DIRECTLY attached to a switch/router (by mgmt IP).
+ * Reuses getFdbAttachments' access-port disambiguation (a device is attributed to
+ * the port carrying the fewest MACs) so uplink ports — which learn every
+ * downstream MAC — don't flood the list. Each row links to the host's page.
+ */
+export async function getConnectedDevices(
+  schoolId: number,
+  deviceIp: string,
+): Promise<ConnectedDevice[]> {
+  const attachments = await getFdbAttachments(schoolId);
+  const here = [...attachments.entries()].filter(([, v]) => v.switchIp === deviceIp);
+  if (here.length === 0) return [];
+  const hostRows = await db
+    .select({
+      id: entitiesHost.id,
+      mac: entitiesHost.mac,
+      hostname: entitiesHost.hostname,
+      ip: entitiesHost.ip,
+      deviceType: entitiesHost.deviceType,
+      deviceTypeOverride: entitiesHost.deviceTypeOverride,
+      excludedAt: entitiesHost.excludedAt,
+    })
+    .from(entitiesHost)
+    .where(eq(entitiesHost.schoolId, schoolId));
+  const byMac = new Map(hostRows.map((h) => [h.mac.toLowerCase(), h]));
+  const out: ConnectedDevice[] = [];
+  for (const [mac, v] of here) {
+    const h = byMac.get(mac);
+    if (h?.excludedAt) continue; // hidden / purged from inventory
+    out.push({
+      ifName: v.port,
+      mac,
+      hostEntityId: h?.id ?? null,
+      hostname: h?.hostname ?? null,
+      ip: h?.ip ?? null,
+      deviceType:
+        ((h?.deviceTypeOverride as DeviceType | null) ||
+          (h?.deviceType as DeviceType | null)) ??
+        null,
+    });
+  }
+  out.sort(
+    (a, b) =>
+      (a.ifName ?? "").localeCompare(b.ifName ?? "", undefined, { numeric: true }) ||
+      (a.ip ?? "").localeCompare(b.ip ?? ""),
+  );
+  return out;
+}
+
+/**
+ * Open issues that mention this device by ip / mac / hostname. Heuristic text
+ * match — `issues` carries no device FK, so we ILIKE the title/detail; may
+ * over/under-match (v1). District-wide + this school's scope, excluding resolved.
+ */
+export async function getDeviceIssues(
+  districtId: number,
+  schoolId: number,
+  ref: { ip?: string | null; mac?: string | null; hostname?: string | null },
+): Promise<DeviceIssue[]> {
+  const terms = [ref.ip, ref.mac, ref.hostname]
+    .map((t) => (t ?? "").trim())
+    .filter((t) => t.length >= 3);
+  if (terms.length === 0) return [];
+  const likeClauses = terms.flatMap((t) => [
+    ilike(issues.title, `%${t}%`),
+    ilike(issues.detail, `%${t}%`),
+  ]);
+  return db
+    .select({
+      id: issues.id,
+      title: issues.title,
+      severity: issues.severity,
+      status: issues.status,
+      recommendation: issues.recommendation,
+    })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.districtId, districtId),
+        ne(issues.status, "resolved"),
+        or(
+          eq(issues.scopeType, "district"),
+          and(eq(issues.scopeType, "school"), eq(issues.scopeId, schoolId)),
+        ),
+        or(...likeClauses),
+      ),
+    )
+    .orderBy(desc(issues.lastSeenAt))
+    .limit(20);
 }
 
 // ---- DHCP -----------------------------------------------------------------

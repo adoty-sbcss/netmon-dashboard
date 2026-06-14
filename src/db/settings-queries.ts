@@ -144,3 +144,15 @@ export async function listDistrictSensorCapabilities(
     };
   });
 }
+
+/**
+ * The district's effective SNMP read community, for display on a device page:
+ * ground truth (what sensors report) when they all agree, else the last pushed
+ * (desired) value. Mirrors the logic on /settings/network. "" when none set.
+ */
+export async function getDistrictSnmpCommunity(districtId: number): Promise<string> {
+  const rows = await listDistrictSensorCapabilities(districtId);
+  const reported = [...new Set(rows.map((s) => s.reportedSnmpCommunities).filter(Boolean))];
+  const desiredFallback = rows.find((s) => s.snmpCommunities)?.snmpCommunities ?? "";
+  return reported.length === 1 ? reported[0] : desiredFallback;
+}

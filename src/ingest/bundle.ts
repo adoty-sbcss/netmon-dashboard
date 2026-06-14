@@ -197,13 +197,23 @@ export interface RawTopology {
 
 /** CORE-2: per-interface health + STP port role on a crawled switch (ifXTable +
  *  dot1dStpPortState), keyed by ifIndex. Rides in the node's `extra.interfaces`. */
+export interface SnmpPoe {
+  admin?: boolean | null; // pethPsePortAdminEnable
+  status?: string | null; // deliveringPower | searching | disabled | fault | ...
+  class?: string | null; // class0 .. class4
+  power_w?: number | null; // best-effort consumed watts (Cisco)
+}
 export interface SnmpInterface {
   name?: string | null;
+  alias?: string | null; // INV: ifAlias (operator port description)
   speed_mbps?: number | null;
   oper_status?: string | null; // up | down | dormant | ...
+  admin_status?: string | null; // INV: ifAdminStatus (up | down | testing)
+  duplex?: string | null; // INV: full | half | unknown
   in_errors?: number | null;
   out_errors?: number | null;
   stp_state?: string | null; // forwarding | blocking | listening | ...
+  poe?: SnmpPoe | null; // INV: PoE (POWER-ETHERNET-MIB), best-effort joined to ifIndex
 }
 
 /** PERF-3: the resolved uplink's octet-counter sample (collector emits this only

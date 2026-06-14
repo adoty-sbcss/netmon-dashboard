@@ -3,8 +3,10 @@ import { notFound } from "next/navigation";
 import {
   ArrowLeft,
   Cpu,
+  Map as MapIcon,
   Network,
   Radio,
+  ShieldAlert,
   Tag,
 } from "lucide-react";
 
@@ -12,11 +14,15 @@ import {
   getDistrictBySlug,
   getSchoolBySlug,
   getHostDetail,
+  getDeviceIssues,
 } from "@/db/queries";
+import { getDistrictSnmpCommunity } from "@/db/settings-queries";
+import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { DeviceTypeBadge } from "@/components/device-type-badge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -26,6 +32,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SwitchPortsTable } from "@/components/device/switch-ports-table";
+import { ConnectedDevicesTable } from "@/components/device/connected-devices-table";
+import { SnmpCommunityForm } from "../../../../settings/network/snmp-community-form";
+import { DeviceSightings } from "./device-sightings";
+import { HostReclassify } from "./host-reclassify";
 
 export default async function HostDetailPage({
   params,
@@ -45,14 +56,31 @@ export default async function HostDetailPage({
   const host = await getHostDetail(school.id, entityId);
   if (!host) notFound();
 
+  const user = await getSessionUser();
+  const isSuperadmin = user?.role === "superadmin";
+
+  const [community, deviceIssues] = await Promise.all([
+    isSuperadmin ? getDistrictSnmpCommunity(host.districtId) : Promise.resolve(""),
+    getDeviceIssues(host.districtId, school.id, {
+      ip: host.ip,
+      mac: host.mac,
+      hostname: host.hostname,
+    }),
+  ]);
+
   const basePath = `/${district.slug}/${school.slug}`;
-  const attrs = (host.attributes ?? {}) as Record<string, unknown>;
+  const attrs = host.attributes;
   // mDNS/SSDP service discovery — surfaced in its own block below, so keep it out
   // of the generic attribute badges to avoid double-rendering.
   const serviceHint = typeof attrs.service_hint === "string" ? attrs.service_hint : null;
   const services = Array.isArray(attrs.services) ? attrs.services.map(String) : [];
   const attrEntries = Object.entries(attrs).filter(
-    ([k]) => k !== "service_hint" && k !== "services",
+    ([k]) =>
+      k !== "service_hint" &&
+      k !== "services" &&
+      k !== "model" &&
+      k !== "serial" &&
+      k !== "classification",
   );
 
   return (
@@ -68,8 +96,28 @@ export default async function HostDetailPage({
         <PageHeader
           title={host.hostname || host.ip || host.mac}
           description={`${school.name || titleizeSlug(school.slug)} · ${district.name}`}
-          actions={<DeviceTypeBadge type={host.deviceType} />}
+          actions={
+            <div className="flex items-center gap-2">
+              <DeviceTypeBadge type={host.deviceType} />
+              <Button asChild variant="outline" size="sm">
+                <Link href={`${basePath}/map`}>
+                  <MapIcon className="size-4" /> View on map
+                </Link>
+              </Button>
+            </div>
+          }
         />
+        {isSuperadmin && (
+          <div className="mt-3">
+            <HostReclassify
+              hostId={host.id}
+              basePath={basePath}
+              current={host.deviceType}
+              override={host.deviceTypeOverride}
+              auto={host.deviceTypeAuto}
+            />
+          </div>
+        )}
       </div>
 
       {/* Identity */}
@@ -86,17 +134,33 @@ export default async function HostDetailPage({
             <Field label="IP address" value={host.ip} mono />
             <Field label="MAC address" value={host.mac} mono />
             <Field label="Vendor" value={host.vendor} />
-            <Field
-              label="Switch port"
-              value={
-                host.switchPort
-                  ? host.switchPortSource
-                    ? `${host.switchPort} · via ${host.switchPortSource}`
-                    : host.switchPort
-                  : null
-              }
-              mono
-            />
+            <Field label="Model" value={host.model} />
+            <Field label="Serial" value={host.serial} mono />
+            <div className="min-w-0">
+              <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                Switch port
+              </dt>
+              <dd className="mt-0.5 truncate font-mono">
+                {host.switchPort ? (
+                  host.switchEntityId ? (
+                    <Link
+                      href={`${basePath}/switch/${host.switchEntityId}`}
+                      className="text-primary hover:underline"
+                    >
+                      {host.switchPort}
+                      {host.switchPortSource ? ` · ${host.switchPortSource}` : ""}
+                    </Link>
+                  ) : (
+                    <>
+                      {host.switchPort}
+                      {host.switchPortSource ? ` · via ${host.switchPortSource}` : ""}
+                    </>
+                  )
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </dd>
+            </div>
             <Field label="First seen" value={host.firstSeenAt ? dateTime(host.firstSeenAt) : null} />
             <Field
               label="Last seen"
@@ -140,97 +204,166 @@ export default async function HostDetailPage({
         </CardContent>
       </Card>
 
-      {/* SNMP identity (when this host's IP was SNMP-polled, e.g. a gateway) */}
-      {host.snmp.length > 0 && (
+      {/* Ports + connected devices — only when this host is itself infra we crawled. */}
+      <SwitchPortsTable ports={host.ports} />
+      <ConnectedDevicesTable devices={host.connectedDevices} basePath={basePath} />
+
+      {/* SNMP — settings + identity (when this host has an IP we can poll). */}
+      {host.ip && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Network className="size-4 text-primary" />
-              SNMP attributes
+              SNMP
             </CardTitle>
           </CardHeader>
-          <CardContent className="px-0 sm:px-6">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Attribute</TableHead>
-                    <TableHead>Value</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {host.snmp.map((a, i) => (
-                    <TableRow key={`${a.oidName}-${i}`}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {a.oidName ?? "—"}
-                      </TableCell>
-                      <TableCell className="break-all">{a.value ?? "—"}</TableCell>
+          <CardContent className="flex flex-col gap-4">
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="min-w-0">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">Status</dt>
+                <dd className="mt-0.5">
+                  {host.snmpResponded === true ? (
+                    <span className="text-emerald-600 dark:text-emerald-400">
+                      Responded{host.snmpVersion ? ` (v${host.snmpVersion})` : ""}
+                    </span>
+                  ) : host.snmpResponded === false ? (
+                    <span className="text-muted-foreground">No response</span>
+                  ) : (
+                    <span className="text-muted-foreground">Not probed</span>
+                  )}
+                </dd>
+              </div>
+              <Field
+                label="Last checked"
+                value={host.snmpCheckedAt ? `${dateTime(host.snmpCheckedAt)} (${relativeTime(host.snmpCheckedAt)})` : null}
+              />
+              <div className="min-w-0">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Read community
+                </dt>
+                <dd className="mt-0.5 truncate font-mono">
+                  {isSuperadmin ? (
+                    community ? (
+                      community
+                    ) : (
+                      <span className="text-muted-foreground">not set</span>
+                    )
+                  ) : (
+                    <span className="text-muted-foreground">•••••• (admin only)</span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+
+            {isSuperadmin && (
+              <div className="border-t pt-4">
+                <SnmpCommunityForm
+                  districtId={host.districtId}
+                  basePath={basePath}
+                  current={community}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Read-only SNMP, v2c. This community is district-wide — changing it here
+                  re-pushes to every sensor in {district.name}.
+                </p>
+              </div>
+            )}
+
+            {host.snmp.length > 0 && (
+              <div className="overflow-x-auto border-t pt-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Attribute</TableHead>
+                      <TableHead>Value</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {host.snmp.map((a, i) => (
+                      <TableRow key={`${a.oidName}-${i}`}>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {a.oidName ?? "—"}
+                        </TableCell>
+                        <TableCell className="break-all">{a.value ?? "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* Sightings over time */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Sightings
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              {host.sightings.length} across all scans
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-0 sm:px-6">
-          {host.sightings.length === 0 ? (
-            <p className="px-6 py-6 text-sm text-muted-foreground">
-              No per-scan sightings recorded.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>Sensor</TableHead>
-                    <TableHead>IP</TableHead>
-                    <TableHead className="hidden md:table-cell">Hostname</TableHead>
-                    <TableHead className="hidden lg:table-cell">Source</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {host.sightings.map((s) => (
-                    <TableRow key={s.scanId}>
-                      <TableCell title={dateTime(s.startedAt)}>
-                        {s.startedAt ? relativeTime(s.startedAt) : "—"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{s.sensorSlug}</TableCell>
-                      <TableCell className="font-mono tabular-nums">{s.ip ?? "—"}</TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        {s.hostname ?? "—"}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        {s.source ? (
-                          <Badge variant="outline" className="text-[10px] uppercase">
-                            {s.source}
-                          </Badge>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* DHCP fingerprint — identity for endpoints that never speak SNMP. */}
+      {host.dhcp && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              DHCP fingerprint
+              {host.dhcp.seenAt && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  last seen {relativeTime(host.dhcp.seenAt)}
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Vendor class (opt 60)" value={host.dhcp.vendorClassId} />
+              <Field label="Advertised hostname (opt 12)" value={host.dhcp.clientHostname} />
+              <Field label="Requested options (opt 55)" value={host.dhcp.paramReqList} mono />
+            </dl>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Findings that mention this device (heuristic match). */}
+      {deviceIssues.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlert className="size-4 text-primary" />
+              Findings about this device
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                {deviceIssues.length}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {deviceIssues.map((it) => (
+              <div key={it.id} className="flex flex-col gap-1 border-b pb-3 last:border-b-0 last:pb-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className={severityClass(it.severity)}>
+                    {it.severity}
+                  </Badge>
+                  <Link
+                    href={`/${district.slug}/issues`}
+                    className="text-sm font-medium hover:underline"
+                  >
+                    {it.title}
+                  </Link>
+                </div>
+                {it.recommendation && (
+                  <p className="text-xs text-muted-foreground">{it.recommendation}</p>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sightings over time — collapsed by default. */}
+      <DeviceSightings sightings={host.sightings} />
     </div>
   );
+}
+
+function severityClass(severity: string): string {
+  const s = severity.toLowerCase();
+  if (s === "critical" || s === "high") return "text-destructive";
+  if (s === "medium" || s === "warning") return "text-[var(--warning)]";
+  return "text-muted-foreground";
 }
 
 function Field({
