@@ -56,6 +56,7 @@ export interface DistrictSummary {
   id: number;
   slug: string;
   name: string;
+  isDemo: boolean;
   schoolCount: number;
   sensorCount: number;
   hostCount: number;
@@ -80,6 +81,7 @@ export interface NavTree {
   id: number;
   slug: string;
   name: string;
+  isDemo: boolean;
   schools: { id: number; slug: string; name: string | null }[];
 }
 
@@ -105,6 +107,7 @@ export async function getNavTree(
       districtId: districts.id,
       districtSlug: districts.slug,
       districtName: districts.name,
+      districtIsDemo: districts.isDemo,
       schoolId: schools.id,
       schoolSlug: schools.slug,
       schoolName: schools.name,
@@ -122,6 +125,7 @@ export async function getNavTree(
         id: r.districtId,
         slug: r.districtSlug,
         name: r.districtName,
+        isDemo: r.districtIsDemo,
         schools: [],
       };
       tree.set(r.districtId, node);
@@ -191,6 +195,7 @@ export async function listDistricts(
     id: d.id,
     slug: d.slug,
     name: d.name,
+    isDemo: d.isDemo,
     schoolCount: sc.get(d.id)?.c ?? 0,
     sensorCount: sn.get(d.id)?.c ?? 0,
     hostCount: hc.get(d.id)?.c ?? 0,

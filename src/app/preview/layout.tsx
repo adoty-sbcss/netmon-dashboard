@@ -27,6 +27,7 @@ const MOCK_TREE: NavTree[] = [
     id: 1,
     slug: "sbcss",
     name: "San Bernardino CSS",
+    isDemo: false,
     schools: [
       { id: 1, slug: "north-elementary", name: "North Elementary" },
       { id: 2, slug: "valley-high", name: "Valley High School" },
@@ -36,6 +37,7 @@ const MOCK_TREE: NavTree[] = [
     id: 2,
     slug: "bear-valley-usd",
     name: "Bear Valley USD",
+    isDemo: false,
     schools: [{ id: 3, slug: "fallsvale", name: "Fallsvale Elementary" }],
   },
 ];

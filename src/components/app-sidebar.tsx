@@ -111,6 +111,11 @@ export function AppSidebar({
                       <Link href={districtHref}>
                         <Building2 />
                         <span>{d.name}</span>
+                        {d.isDemo && (
+                          <span className="ml-auto rounded-sm bg-[var(--warning)]/15 px-1 py-px text-[10px] font-semibold uppercase leading-none tracking-wide text-[var(--warning)]">
+                            Demo
+                          </span>
+                        )}
                       </Link>
                     </SidebarMenuButton>
                     {/* ...while a separate chevron expands/collapses the schools. */}

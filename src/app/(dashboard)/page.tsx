@@ -99,6 +99,14 @@ export default async function OverviewPage() {
                     <CardTitle className="flex items-center gap-2 text-base">
                       <Building2 className="size-4 text-primary" />
                       {d.name || titleizeSlug(d.slug)}
+                      {d.isDemo && (
+                        <Badge
+                          variant="outline"
+                          className="border-[var(--warning)]/40 bg-[var(--warning)]/10 text-[var(--warning)]"
+                        >
+                          Demo
+                        </Badge>
+                      )}
                     </CardTitle>
                     <CardAction>
                       <ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
