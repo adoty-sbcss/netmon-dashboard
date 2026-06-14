@@ -48,6 +48,7 @@ import {
 import { enrichHost, type DeviceType } from "../lib/oui";
 import { isIpPhoneMapNode, refineInfraType } from "../lib/classify/device-hints";
 import type { SnmpInterface } from "../ingest/bundle";
+import { collapseStacksAndLags } from "../lib/topology/graph";
 
 // ---- shared shapes --------------------------------------------------------
 
@@ -1625,6 +1626,8 @@ interface RawNode {
   hostCount?: number | null;
   // CORE-2: per-ifIndex interface health on fabric switch nodes.
   interfaces?: Record<string, SnmpInterface> | null;
+  // The internet-facing device — the Internet node attaches here (graph.ts).
+  isEdge?: boolean | null;
 }
 export interface TopoEdge {
   source: string;
@@ -1635,6 +1638,17 @@ export interface TopoEdge {
   remote_port?: string | null;
   stp_blocked?: boolean | null; // local STP port state is blocking → redundant link held down
   speed_mbps?: number | null; // local port ifHighSpeed
+  // A synthesized link bridging a gap (not measured) — drawn dashed/muted.
+  inferred?: boolean | null;
+  inferredReason?: string | null;
+  // A bundled port-channel: this one edge stands for `lagCount` parallel links.
+  lagCount?: number | null;
+}
+/** Roll-up of endpoints attached to a switch (count + per-type breakdown), for
+ *  the hover card — so endpoints stay off the canvas but are one hover away. */
+export interface ConnectedSummary {
+  count: number;
+  byType: Record<string, number>;
 }
 /** Per-switch interface-health summary for the map hover. */
 export interface IfaceSummary {
@@ -1662,6 +1676,12 @@ export interface MapNode {
   // MAP-4: interface health on switch nodes (full per-ifIndex map + a summary).
   interfaces?: Record<string, SnmpInterface> | null;
   ifaceSummary?: IfaceSummary | null;
+  // The internet-facing edge device (Internet attaches here at render).
+  isEdge?: boolean | null;
+  // Endpoints attached to this switch (FDB roll-up) — shown in the hover card.
+  connected?: ConnectedSummary | null;
+  // >1 when this node is a collapsed switch stack ("stack ×N").
+  stackCount?: number | null;
 }
 export interface MapGraph {
   nodes: MapNode[];
@@ -1881,6 +1901,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
           entityKind: "switch",
           interfaces,
           ifaceSummary: summarizeInterfaces(interfaces),
+          isEdge: n.isEdge ?? null,
         };
       }
       const host = n.ip && baseType !== "subnet" ? hostByIp.get(n.ip) : undefined;
@@ -1895,6 +1916,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
           firmware: hostOs(host.attributes),
           entityId: host.id,
           entityKind: "host",
+          isEdge: n.isEdge ?? null,
         };
       }
       return {
@@ -1903,6 +1925,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
         label: n.label || n.ip || n.id,
         ip: n.ip ?? null,
         hostCount: n.hostCount ?? null,
+        isEdge: n.isEdge ?? null,
       };
     });
   }
@@ -1936,8 +1959,13 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
   const physical = build("physical");
   const logical = build("logical");
 
-  // --- FDB overlay: attach leaf devices to their access switch port ---------
+  // --- FDB overlay + per-switch endpoint roll-up ----------------------------
+  // Attach identified leaf devices to their access-switch port (so they appear
+  // when endpoints are toggled on) AND tally a count/type breakdown per switch
+  // IP for the hover card — the default infra-only canvas stays clean, but
+  // "what's hanging off this switch" is one hover away.
   const fdb = await getFdbAttachments(schoolId);
+  const rollupByIp = new Map<string, ConnectedSummary>();
   if (fdb.size > 0) {
     const switchNodeByIp = new Map<string, string>();
     for (const n of physical.nodes) if (n.ip) switchNodeByIp.set(n.ip, n.id);
@@ -1950,6 +1978,13 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
       if (!swNode) continue; // its access switch isn't on the map (yet)
       const host = hostByMac.get(mac);
       if (!host) continue; // unidentified MAC — skip until we know the device
+      // Tally toward this switch's connected-devices summary (keyed by switch IP
+      // so stack members sharing a mgmt IP aggregate after collapse).
+      const t = host.deviceTypeOverride || host.deviceType || "host";
+      const sum = rollupByIp.get(att.switchIp) ?? { count: 0, byType: {} };
+      sum.count++;
+      sum.byType[t] = (sum.byType[t] ?? 0) + 1;
+      rollupByIp.set(att.switchIp, sum);
       const hostNodeId = `host:${host.id}`;
       if (!present.has(hostNodeId)) {
         physical.nodes.push({
@@ -1969,6 +2004,18 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     }
   }
 
+  // Collapse switch stacks into one node and bundle parallel LAG links into one
+  // — the clean infra view the operator asked for. Runs after the FDB overlay so
+  // attached-host edges get rewired onto the surviving stack node too.
+  const physicalClean: MapGraph = { ...physical, ...collapseStacksAndLags(physical) };
+  // Attach the endpoint roll-up to each (post-collapse) switch node by IP.
+  for (const n of physicalClean.nodes) {
+    if (n.entityKind === "switch" && n.ip) {
+      const sum = rollupByIp.get(n.ip);
+      if (sum) n.connected = sum;
+    }
+  }
+
   // Prune any excluded-device nodes that were baked into the stored snapshot,
   // plus edges that referenced them — so purging actually clears the map.
   function prune(g: MapGraph): MapGraph {
@@ -1976,7 +2023,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     const keep = new Set(nodes.map((n) => n.id));
     return { ...g, nodes, edges: g.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
   }
-  return { physical: prune(physical), logical: prune(logical) };
+  return { physical: prune(physicalClean), logical: prune(logical) };
 }
 
 /** Entity ids hidden from the map at a school — for filtering AI map context. */

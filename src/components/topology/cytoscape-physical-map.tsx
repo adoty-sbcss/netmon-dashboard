@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Download, ExternalLink, EyeOff, Layers, Maximize2, Network, Radar, RotateCcw, Save, Table2 } from "lucide-react";
 
-import type { MapGraph, IfaceSummary } from "@/db/queries";
+import type { MapGraph, IfaceSummary, ConnectedSummary } from "@/db/queries";
 import { saveMapPositions, setDeviceMapHidden } from "@/lib/admin/map-actions";
 import { ipInAnyCidr } from "@/lib/net";
 import { cn } from "@/lib/utils";
@@ -90,7 +90,9 @@ function buildElements(
   }
 
   const els: any[] = [];
-  const gw = nodes.find((n) => n.type === "gateway" || n.type === "router");
+  // Anchor the Internet to the tagged edge device (graph.ts), falling back to the
+  // first gateway/router for older snapshots that predate edge tagging.
+  const gw = nodes.find((n) => n.isEdge) ?? nodes.find((n) => n.type === "gateway" || n.type === "router");
   if (gw) {
     els.push({
       data: { id: "__internet", label: "Internet", full: "Internet", type: "internet", ip: "", model: "", entityId: null, entityKind: null, color: TYPE_STYLE.internet.color, shape: "round-rectangle", icon: iconUri("internet"), status: "" },
@@ -123,6 +125,8 @@ function buildElements(
         status: status[key] ?? "",
         coverage,
         ifaceSummary: n.ifaceSummary ?? null, // MAP-4 hover summary (switches)
+        connected: n.connected ?? null, // endpoints attached via FDB (hover roll-up)
+        stackCount: n.stackCount ?? null, // >1 → collapsed switch stack
       },
     });
   }
@@ -134,10 +138,19 @@ function buildElements(
   if (gw) els.push({ data: { id: "e_internet", source: "__internet", target: gw.id, kind: "wan" } });
   for (const e of edges) {
     if (grouped.has(e.source) || grouped.has(e.target)) continue;
-    // MAP-3/MAP-4: mark a blocked STP link + label uplinks with their speed.
+    // Blocked STP link, inferred (gap-bridging) link, bundled LAG, and uplink
+    // speed all share the single edge-label slot (priority: blocked > inferred > LAG).
     const blocked = e.stp_blocked ? 1 : 0;
+    const inferred = e.inferred ? 1 : 0;
+    const lag = e.lagCount && e.lagCount > 1 ? e.lagCount : 0;
     const spd = e.speed_mbps ?? null;
     const speedLabel = spd ? (spd >= 1000 ? `${spd / 1000}G` : `${spd}M`) : "";
+    const lagLabel = lag ? `${lag}×${speedLabel ? ` ${speedLabel}` : " LAG"}` : speedLabel;
+    const edgeLabel = blocked
+      ? `blocked${speedLabel ? ` · ${speedLabel}` : ""}`
+      : inferred
+        ? "inferred"
+        : lagLabel;
     els.push({
       data: {
         id: `e_${e.source}_${e.target}_${e.kind ?? ""}`,
@@ -145,7 +158,9 @@ function buildElements(
         target: e.target,
         kind: e.kind ?? "",
         blocked,
-        edgeLabel: blocked ? `blocked${speedLabel ? ` · ${speedLabel}` : ""}` : speedLabel,
+        inferred,
+        lag,
+        edgeLabel,
       },
     });
   }
@@ -207,6 +222,10 @@ const STYLESHEET: any[] = [
   { selector: 'edge[kind="wan"]', style: { "line-color": "#fbbf24", width: 2.5 } },
   // MAP-3: a redundant link an STP-blocking port is holding down — dashed + red.
   { selector: "edge[blocked = 1]", style: { "line-color": "#ef4444", "line-style": "dashed", width: 2, color: "#ef4444" } },
+  // Inferred (gap-bridging) link — dashed grey, clearly "not a measured link".
+  { selector: "edge[inferred = 1]", style: { "line-color": "#94a3b8", "line-style": "dashed", width: 1.2, color: "#94a3b8" } },
+  // Bundled port-channel (LAG) — one fatter link standing in for N parallel ones.
+  { selector: "edge[lag > 1]", style: { width: 2.6 } },
   { selector: "node:selected", style: { "border-color": "#6366f1", "border-width": 4 } },
   { selector: ".dim", style: { opacity: 0.2 } },
   // Coverage overlay (applied as classes only while the Coverage toggle is on).
@@ -237,7 +256,9 @@ interface HoverState {
   firmware: string;
   port: string;
   status: string;
-  connected: number;
+  connected: number; // link degree (number of map links on this node)
+  endpoints?: ConnectedSummary | null; // FDB endpoints behind a switch (count + types)
+  stackCount?: number | null; // >1 → collapsed switch stack
   ifaceSummary?: IfaceSummary | null;
 }
 interface MenuState {
@@ -273,7 +294,9 @@ export function CytoscapePhysicalMap({
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<any>(null);
-  const [infraOnly, setInfraOnly] = useState(false);
+  // Default to the clean core-infrastructure view; endpoints are a toggle away
+  // (their counts/types still surface in each switch's hover card).
+  const [infraOnly, setInfraOnly] = useState(true);
   const [groupLeaves, setGroupLeaves] = useState(true);
   const [coverageOn, setCoverageOn] = useState(false);
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
@@ -372,6 +395,8 @@ export function CytoscapePhysicalMap({
           port: d.port,
           status: d.status,
           connected: e.target.degree(false),
+          endpoints: d.connected ?? null,
+          stackCount: d.stackCount ?? null,
           ifaceSummary: d.ifaceSummary ?? null,
         });
         const hood = e.target.closedNeighborhood();
@@ -592,7 +617,10 @@ export function CytoscapePhysicalMap({
                 style={{ left: Math.min(hover.x + 14, Math.max(8, cw - 248)), top: hover.y + 14 }}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{typeLabel(hover.type)}</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {typeLabel(hover.type)}
+                    {hover.stackCount && hover.stackCount > 1 ? ` · stack ×${hover.stackCount}` : ""}
+                  </p>
                   {STATUS_BADGE[hover.status] && (
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <span className="size-2 rounded-full" style={{ background: STATUS_BADGE[hover.status].color }} />
@@ -621,7 +649,7 @@ export function CytoscapePhysicalMap({
                     <dd className="truncate text-right">{hover.firmware || "—"}</dd>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground">Connected</dt>
+                    <dt className="text-muted-foreground">Links</dt>
                     <dd className="tabular-nums">{hover.connected}</dd>
                   </div>
                   {hover.port && (
@@ -658,6 +686,26 @@ export function CytoscapePhysicalMap({
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+                {/* Endpoints behind this switch (FDB roll-up) — kept off the canvas
+                    in the default infra view, surfaced here on hover. */}
+                {hover.endpoints && hover.endpoints.count > 0 && (
+                  <div className="mt-1.5 border-t pt-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">Connected devices</span>
+                      <span className="font-medium tabular-nums">{hover.endpoints.count}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {Object.entries(hover.endpoints.byType)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 6)
+                        .map(([t, c]) => (
+                          <span key={t} className="rounded bg-muted px-1 text-muted-foreground">
+                            {typeLabel(t)} {c}
+                          </span>
+                        ))}
+                    </div>
                   </div>
                 )}
                 {hover.model && hover.model !== hover.firmware && (

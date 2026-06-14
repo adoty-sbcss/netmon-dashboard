@@ -59,6 +59,7 @@ type RawInterfaces = Record<string, SnmpInterface>;
 import { classifyHost } from "../lib/classify";
 import { decodeSysObjectId } from "../lib/oui/sysobjectid";
 import { isCiscoIpPhoneName, isIpPhoneMapNode, isIpPhoneTopoNode } from "../lib/classify/device-hints";
+import { connectPhysicalGraph, type Graph } from "../lib/topology/graph";
 
 /**
  * SNMP curation. Raw SNMP is thousands of rows/scan (mostly ipNetToMediaTable +
@@ -370,64 +371,8 @@ function mergeTopoGraphs(existing: TopoGraph | null, incoming: TopoGraph): TopoG
   };
 }
 
-/**
- * MAP-5: reconcile placeholder physical-graph nodes (`cdp:<name>` / `ip:<addr>`,
- * from the local LLDP/CDP scan) into the canonical `switch:<chassis>` fabric node
- * when they resolve to the SAME box. Conservative by design: matches ONLY on an
- * exact management-IP equality (an IP belongs to exactly one device → no risk of
- * merging two distinct switches). Drops the placeholder (the fabric node is
- * richer) and rewrites edges. Returns the reconciled graph + the id remap so the
- * caller can migrate saved positions to follow.
- */
-function reconcilePlaceholderNodes(graph: TopoGraph): {
-  graph: TopoGraph;
-  remap: Map<string, string>;
-} {
-  const ipToSwitch = new Map<string, string>();
-  for (const n of graph.nodes) {
-    const id = n.id;
-    if (typeof id === "string" && id.startsWith("switch:")) {
-      const mip = (n as { mgmt_ip?: unknown }).mgmt_ip;
-      if (typeof mip === "string" && mip) ipToSwitch.set(mip, id);
-    }
-  }
-  const remap = new Map<string, string>();
-  if (ipToSwitch.size > 0) {
-    for (const n of graph.nodes) {
-      const id = n.id;
-      if (typeof id !== "string") continue;
-      if (
-        id.startsWith("switch:") ||
-        id.startsWith("gw:") ||
-        id.startsWith("scanner:") ||
-        id.startsWith("subnet:")
-      )
-        continue;
-      let ip: string | null = id.startsWith("ip:") ? id.slice(3) : null;
-      const nip = (n as { ip?: unknown }).ip;
-      const nmip = (n as { mgmt_ip?: unknown }).mgmt_ip;
-      if (!ip && typeof nip === "string") ip = nip;
-      if (!ip && typeof nmip === "string") ip = nmip;
-      const target = ip ? ipToSwitch.get(ip) : undefined;
-      if (target && target !== id) remap.set(id, target);
-    }
-  }
-  if (remap.size === 0) return { graph, remap };
-
-  const keptNodes = graph.nodes.filter((n) => !remap.has(n.id as string));
-  const edgeMap = new Map<string, TopoGraph["edges"][number]>();
-  for (const e of graph.edges) {
-    const source = remap.get(e.source) ?? e.source;
-    const target = remap.get(e.target) ?? e.target;
-    if (source === target) continue; // collapsed self-loop → drop
-    const ne = { ...e, source, target };
-    edgeMap.set(`${source}|${target}|${ne.kind ?? ""}`, ne);
-  }
-  return {
-    graph: { nodes: keptNodes, edges: [...edgeMap.values()], sourceScanId: graph.sourceScanId },
-    remap,
-  };
-}
+// Placeholder/gateway reconciliation + edge anchoring + island bridging now lives
+// in ../lib/topology/graph.ts (connectPhysicalGraph), shared with the validator.
 
 /**
  * Build a physical-graph contribution from the SNMP fabric crawl across ALL
@@ -1218,10 +1163,31 @@ export async function ingestBundle(
       buildPhysicalGraph(primary.topology, srcScanId, sensor.id) as TopoGraph,
       buildSnmpFabricGraph(bundle.scans, srcScanId),
     );
+    // Stamp this bundle's contribution with a freshness timestamp so the
+    // accumulating per-school snapshot can age out gear no sensor still sees.
+    const seenIso = (toDate(primary.meta.completed_at) ?? new Date()).toISOString();
+    const stampSeen = (g: TopoGraph): TopoGraph => ({
+      nodes: g.nodes.map((n) => ({ ...n, seenAt: seenIso })),
+      edges: g.edges.map((e) => ({ ...e, seenAt: seenIso })),
+      sourceScanId: g.sourceScanId,
+    });
     const snapshots = [
-      { kind: "physical", graph: physicalGraph },
+      { kind: "physical", graph: stampSeen(physicalGraph) },
       { kind: "logical", graph: buildLogicalGraph(primary, srcScanId) },
     ];
+    // Inputs for the physical connect-and-anchor pass: the WAN gateway and each
+    // infra IP's traceroute distance (lower hop = more upstream), used to anchor
+    // the Internet edge and root any disconnected islands toward it.
+    const gatewayIp = str(primary.meta.gateway_ip);
+    const hopsByIp = new Map<string, number>();
+    for (const scan of bundle.scans) {
+      for (const r of scan.reachability) {
+        const ip = str(r.ip);
+        const hops = toNum(r.traceroute_hops);
+        if (ip && hops != null && hops < (hopsByIp.get(ip) ?? Infinity)) hopsByIp.set(ip, hops);
+      }
+    }
+    const freshnessCutoff = new Date(Date.now() - 21 * 24 * 3600 * 1000).toISOString();
     for (const snap of snapshots) {
       const [existing] = await tx
         .select({ graph: topologySnapshots.graph })
@@ -1242,8 +1208,15 @@ export async function ingestBundle(
       // only) and migrate any saved map positions to follow the rekeying.
       let finalGraph = merged;
       if (snap.kind === "physical") {
-        const rec = reconcilePlaceholderNodes(merged);
-        finalGraph = rec.graph;
+        // Reconcile placeholders + gateway into ONE graph, anchor the Internet
+        // edge, bridge disconnected islands with inferred links, and prune stale
+        // nodes — so the map reads as a connected hierarchy, not floating stars.
+        const rec = connectPhysicalGraph(merged as unknown as Graph, {
+          gatewayIp,
+          hopsByIp,
+          freshnessCutoff,
+        });
+        finalGraph = rec.graph as unknown as TopoGraph;
         if (rec.remap.size > 0) {
           const placed = await tx
             .select({ nodeId: topologyPositions.nodeId })
