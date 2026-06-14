@@ -40,6 +40,16 @@ const MOCK_TREE: NavTree[] = [
     isDemo: false,
     schools: [{ id: 3, slug: "fallsvale", name: "Fallsvale Elementary" }],
   },
+  {
+    id: 3,
+    slug: "demo-usd",
+    name: "Demo Unified School District",
+    isDemo: true,
+    schools: [
+      { id: 4, slug: "lincoln-es", name: "Lincoln Elementary" },
+      { id: 5, slug: "roosevelt-hs", name: "Roosevelt High School" },
+    ],
+  },
 ];
 
 export default function PreviewLayout({

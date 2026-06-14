@@ -110,9 +110,9 @@ export function AppSidebar({
                     >
                       <Link href={districtHref}>
                         <Building2 />
-                        <span>{d.name}</span>
+                        <span className="min-w-0 flex-1 truncate">{d.name}</span>
                         {d.isDemo && (
-                          <span className="ml-auto rounded-sm bg-[var(--warning)]/15 px-1 py-px text-[10px] font-semibold uppercase leading-none tracking-wide text-[var(--warning)]">
+                          <span className="shrink-0 overflow-visible rounded-sm bg-[var(--warning)]/15 px-1 py-px text-[10px] font-semibold uppercase leading-none tracking-wide text-[var(--warning)]">
                             Demo
                           </span>
                         )}

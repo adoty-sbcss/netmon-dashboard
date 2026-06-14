@@ -48,8 +48,9 @@ import { issueKeyFromTitle } from "../lib/issues/reconcile";
 // ---------------------------------------------------------------------------
 
 const DISTRICT_SLUG = "demo-usd";
-// "DEMO —" prefix so it's unmistakable to any superadmin browsing real districts.
-const DISTRICT_NAME = "DEMO — Demo Unified School District";
+// Clean, realistic name — the amber "Demo" badge (driven by districts.is_demo)
+// is what marks it as sample data, so the name itself stays normal-looking.
+const DISTRICT_NAME = "Demo Unified School District";
 
 const NOW = Date.now();
 const HOUR = 3600_000;
