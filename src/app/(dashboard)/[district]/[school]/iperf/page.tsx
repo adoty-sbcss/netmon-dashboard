@@ -9,6 +9,7 @@ import {
   listSchoolSpeedtests,
   listSchoolLatency,
   listSchoolUplinkSamples,
+  listSchoolUplinkDailyAvg,
   type SchoolIperfRow,
   type SchoolLatencyRow,
   type UplinkSampleRow,
@@ -35,6 +36,13 @@ export const dynamic = "force-dynamic";
 
 function f1(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(1);
+}
+
+/** Keep only uplink samples from the last 24h. Kept out of the component body so
+ *  the Date.now() read isn't flagged as an impure render call. */
+function withinLast24h(samples: UplinkSampleRow[]): UplinkSampleRow[] {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  return samples.filter((s) => (s.sampledAt ?? s.createdAt).getTime() >= cutoff);
 }
 
 /** PERF-3: tint utilization as it approaches/exceeds the committed rate. */
@@ -91,16 +99,25 @@ export default async function IperfPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [cfg, rows, speedtests, latencyRows, committed, uplinkRows, sessionUser] =
-    await Promise.all([
-      getDistrictIperf(district.id),
-      listSchoolIperfResults(school.id, 300),
-      listSchoolSpeedtests(school.id, 200),
-      listSchoolLatency(school.id, 400),
-      getSchoolCommittedRate(school.id),
-      listSchoolUplinkSamples(school.id, 500),
-      getSessionUser(),
-    ]);
+  const [
+    cfg,
+    rows,
+    speedtests,
+    latencyRows,
+    committed,
+    uplinkRows,
+    uplinkDaily,
+    sessionUser,
+  ] = await Promise.all([
+    getDistrictIperf(district.id),
+    listSchoolIperfResults(school.id, 300),
+    listSchoolSpeedtests(school.id, 200),
+    listSchoolLatency(school.id, 400),
+    getSchoolCommittedRate(school.id),
+    listSchoolUplinkSamples(school.id, 500),
+    listSchoolUplinkDailyAvg(school.id, 30),
+    getSessionUser(),
+  ]);
   const canEditRate = sessionUser?.role === "superadmin";
 
   // Latest latency probe per target (internet / gateway / dns), newest-first input.
@@ -226,16 +243,40 @@ export default async function IperfPage({
   const utilOutPct = utilPct(wanCurrentOut);
   const wanName = wanLatest?.ifName ?? wanSamples.at(-1)?.ifName ?? null;
   const wanSpeedMbps = wanLatest?.speedMbps ?? wanSamples.at(-1)?.speedMbps ?? null;
-  // Trend series for the WAN uplink (in/out Mbps over time).
-  const upSeries = wanSamples
-    .filter((s) => (s.inMbps != null || s.outMbps != null) && s.sampledAt)
+  // Hourly samples are kept to the recent window; the 30-day view below is the
+  // long-range overview (daily averages, aggregated DB-side).
+  const sampleTs = (s: UplinkSampleRow) => (s.sampledAt ?? s.createdAt).getTime();
+  const wanSamples24h = withinLast24h(wanSamples);
+  // Hourly trend for the WAN uplink (in/out Mbps over the last 24h).
+  const upSeries = wanSamples24h
+    .filter((s) => s.inMbps != null || s.outMbps != null)
     .map((s) => {
-      const point: Record<string, number> = { ts: (s.sampledAt as Date).getTime() };
+      const point: Record<string, number> = { ts: sampleTs(s) };
       if (s.inMbps != null) point["↓ in"] = s.inMbps;
       if (s.outMbps != null) point["↑ out"] = s.outMbps;
       return point;
     });
   const upKeys = ["↓ in", "↑ out"].filter((k) => upSeries.some((p) => k in p));
+
+  // Daily-average trend for the WAN uplink over the last 30 days. The aggregate
+  // covers all uplinks; keep just the one we picked as the WAN edge.
+  const wanDaily = wanKey
+    ? uplinkDaily.filter((d) => `${d.chassisId}|${d.ifindex}` === wanKey)
+    : [];
+  const upDailySeries = wanDaily
+    .filter((d) => d.inMbps != null || d.outMbps != null)
+    .map((d) => {
+      const point: Record<string, number> = {
+        ts: new Date(`${d.day}T00:00:00`).getTime(),
+      };
+      if (d.inMbps != null) point["↓ in"] = d.inMbps;
+      if (d.outMbps != null) point["↑ out"] = d.outMbps;
+      return point;
+    })
+    .sort((a, b) => a.ts - b.ts);
+  const upDailyKeys = ["↓ in", "↑ out"].filter((k) =>
+    upDailySeries.some((p) => k in p),
+  );
   const hasUplinkData = uplinkRows.length > 0;
 
   const configured = Boolean(cfg.enabled && cfg.serverHost);
@@ -462,18 +503,31 @@ export default async function IperfPage({
                     utilization %.
                   </p>
                 )}
+                {upDailyKeys.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">
+                      Daily average · last 30 days
+                    </p>
+                    <IperfChart series={upDailySeries} keys={upDailyKeys} />
+                  </div>
+                )}
                 {upKeys.length > 0 && (
                   <div>
                     <p className="mb-2 text-xs font-medium text-muted-foreground">
-                      Uplink throughput over time
+                      Hourly · last 24 hours
                     </p>
                     <IperfChart series={upSeries} keys={upKeys} />
                   </div>
                 )}
                 <div className="overflow-x-auto">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">
-                    Recent samples
+                    Recent samples · last 24 hours
                   </p>
+                  {wanSamples24h.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No uplink samples in the last 24 hours.
+                    </p>
+                  ) : (
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -486,9 +540,8 @@ export default async function IperfPage({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {[...wanSamples]
+                      {[...wanSamples24h]
                         .reverse()
-                        .slice(0, 24)
                         .map((s) => {
                           const pIn = utilPct(s.inMbps);
                           const pOut = utilPct(s.outMbps);
@@ -522,6 +575,7 @@ export default async function IperfPage({
                         })}
                     </TableBody>
                   </Table>
+                  )}
                 </div>
               </>
             )}

@@ -4,7 +4,7 @@
  * box); results are reported by the sensor into iperf_results.
  */
 import "server-only";
-import { desc, eq } from "drizzle-orm";
+import { and, avg, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -328,6 +328,47 @@ export async function listSchoolUplinkSamples(
     .where(eq(uplinkSamples.schoolId, schoolId))
     .orderBy(desc(uplinkSamples.createdAt))
     .limit(limit);
+}
+
+export interface UplinkDailyAvgRow {
+  chassisId: string;
+  ifindex: string;
+  /** 'YYYY-MM-DD' (local to the DB session). */
+  day: string;
+  inMbps: number | null;
+  outMbps: number | null;
+}
+
+/** Per-day average in/out Mbps for each uplink over the last `days` days (PERF-3
+ *  long-range overview). Aggregated DB-side so the window doesn't depend on the
+ *  raw-sample row cap (~hourly samples would blow past it in ~3 weeks). Days with
+ *  no computed rate are omitted; the page selects the WAN uplink and charts it. */
+export async function listSchoolUplinkDailyAvg(
+  schoolId: number,
+  days = 30,
+): Promise<UplinkDailyAvgRow[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const tsExpr = sql`coalesce(${uplinkSamples.sampledAt}, ${uplinkSamples.createdAt})`;
+  const dayExpr = sql<string>`to_char(${tsExpr}, 'YYYY-MM-DD')`;
+  const rows = await db
+    .select({
+      chassisId: uplinkSamples.chassisId,
+      ifindex: uplinkSamples.ifindex,
+      day: dayExpr,
+      inMbps: avg(uplinkSamples.inMbps),
+      outMbps: avg(uplinkSamples.outMbps),
+    })
+    .from(uplinkSamples)
+    .where(and(eq(uplinkSamples.schoolId, schoolId), sql`${tsExpr} >= ${since}`))
+    .groupBy(uplinkSamples.chassisId, uplinkSamples.ifindex, dayExpr)
+    .orderBy(dayExpr);
+  return rows.map((r) => ({
+    chassisId: r.chassisId,
+    ifindex: r.ifindex,
+    day: r.day,
+    inMbps: r.inMbps == null ? null : Number(r.inMbps),
+    outMbps: r.outMbps == null ? null : Number(r.outMbps),
+  }));
 }
 
 /** Every iperf result across a school's sensors (newest first), with the sensor
