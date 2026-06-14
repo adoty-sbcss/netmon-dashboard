@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, List } from "lucide-react";
 
 import type { HelpArticle, HelpBlock } from "@/lib/help/articles";
 import { CodeBlock } from "./code-block";
@@ -10,10 +10,25 @@ const CALLOUT = {
   success: { Icon: CheckCircle2, cls: "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300" },
 } as const;
 
+/** Stable anchor id from a heading's text (for the table of contents). */
+function headingId(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 function Block({ block }: { block: HelpBlock }) {
   switch (block.kind) {
     case "h":
-      return <h2 className="mt-8 mb-2 text-base font-semibold tracking-tight">{block.text}</h2>;
+      return (
+        <h2
+          id={headingId(block.text)}
+          className="mt-8 mb-2 scroll-mt-24 text-base font-semibold tracking-tight"
+        >
+          {block.text}
+        </h2>
+      );
     case "p":
       return <p className="my-2 text-sm leading-relaxed text-foreground/90">{block.text}</p>;
     case "steps":
@@ -45,8 +60,28 @@ function Block({ block }: { block: HelpBlock }) {
 }
 
 export function HelpArticleView({ article }: { article: HelpArticle }) {
+  const headings = article.blocks
+    .filter((b): b is Extract<HelpBlock, { kind: "h" }> => b.kind === "h")
+    .map((b) => b.text);
+
   return (
     <article className="max-w-3xl">
+      {headings.length >= 3 && (
+        <nav className="mb-2 rounded-lg border bg-muted/30 p-3">
+          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <List className="size-3.5" /> On this page
+          </p>
+          <ul className="flex flex-col gap-1">
+            {headings.map((h) => (
+              <li key={h}>
+                <a href={`#${headingId(h)}`} className="text-sm text-primary hover:underline">
+                  {h}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
       {article.blocks.map((b, i) => (
         <Block key={i} block={b} />
       ))}
