@@ -36,7 +36,6 @@ const DISTRICT_LABELS: Record<string, string> = {
   neighbors: "Neighbors",
   dhcp: "DHCP",
   dns: "DNS",
-  stp: "STP",
   findings: "Findings",
   sensors: "Sensors",
   settings: "Settings",

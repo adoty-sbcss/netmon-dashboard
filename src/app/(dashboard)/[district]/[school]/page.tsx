@@ -6,7 +6,6 @@ import {
   HardDrive,
   Network,
   Radio,
-  RouteOff,
   Waypoints,
 } from "lucide-react";
 
@@ -146,7 +145,7 @@ export default async function SchoolPage({
       </div>
 
       {/* Activity metrics — deeper telemetry */}
-      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
         <StatCard
           label="Neighbors (LLDP)"
           value={num(stats.neighborCount)}
@@ -164,12 +163,6 @@ export default async function SchoolPage({
           value={num(stats.dnsCount)}
           icon={Globe}
           href={`/${district.slug}/${school.slug}/dns`}
-        />
-        <StatCard
-          label="STP events"
-          value={num(stats.stpCount)}
-          icon={RouteOff}
-          href={`/${district.slug}/${school.slug}/stp`}
         />
       </div>
 

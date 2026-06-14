@@ -369,7 +369,6 @@ export interface SchoolStats {
   neighborCount: number;
   dhcpCount: number;
   dnsCount: number;
-  stpCount: number;
   findingCount: number;
   lastScanAt: Date | null;
 }
@@ -397,7 +396,6 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     [nb],
     [dhcp],
     [dns],
-    [stp],
     [find],
     [last],
   ] = await Promise.all([
@@ -422,7 +420,6 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
       .select({ c: count() })
       .from(dnsProbes)
       .where(inScans(dnsProbes.scanRunId)),
-    db.select({ c: count() }).from(stpEvents).where(inScans(stpEvents.scanRunId)),
     db.select({ c: count() }).from(findings).where(inScans(findings.scanRunId)),
     db
       .select({ last: max(scanRuns.startedAt) })
@@ -438,7 +435,6 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     neighborCount: nb?.c ?? 0,
     dhcpCount: dhcp?.c ?? 0,
     dnsCount: dns?.c ?? 0,
-    stpCount: stp?.c ?? 0,
     findingCount: find?.c ?? 0,
     lastScanAt: last?.last ?? null,
   };

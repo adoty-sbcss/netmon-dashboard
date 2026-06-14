@@ -7,7 +7,6 @@ import {
   HardDrive,
   Network,
   Radio,
-  RouteOff,
   School,
   ShieldAlert,
   Sparkles,
@@ -135,11 +134,10 @@ export default function PreviewPage() {
           <StatCard label="Sensors" value="2" icon={Radio} href="#" />
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
           <StatCard label="Neighbors (LLDP)" value="38" icon={Waypoints} href="#" />
           <StatCard label="DHCP observed" value="6" icon={HardDrive} href="#" />
           <StatCard label="DNS probes" value="124" icon={Globe} href="#" />
-          <StatCard label="STP events" value="2" icon={RouteOff} tone="warning" href="#" />
         </div>
 
         {/* AI health summary */}
