@@ -26,11 +26,11 @@ import "dotenv/config";
 
 import Client from "ssh2-sftp-client";
 import postgres from "postgres";
-import { and, eq, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNotNull, lt, notInArray, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import { scanRuns } from "../db/schema/netmon";
-import { ingestedBundles } from "../db/schema/app";
+import { districts, ingestedBundles } from "../db/schema/app";
 import { resolveSftpConfig } from "../lib/ingest/settings";
 
 function intEnv(name: string, dflt: number): number {
@@ -75,7 +75,17 @@ async function purgeTimeSeries(): Promise<void> {
   // a bare Date embedded in a raw sql fragment fails (postgres-js can't serialize
   // it without the column type). started_at is nullable, ingested_at isn't, and
   // for hourly-ingested bundles the two are within minutes anyway.
-  const where = lt(scanRuns.ingestedAt, cutoff);
+  //
+  // Demo districts are spared: their data is seeded once and must persist so the
+  // demo doesn't hollow out after RETENTION_DAYS. scan_runs carry the district
+  // slug, so exclude any slug flagged is_demo.
+  const demoSlugs = (
+    await db.select({ slug: districts.slug }).from(districts).where(eq(districts.isDemo, true))
+  ).map((r) => r.slug);
+  const where =
+    demoSlugs.length > 0
+      ? and(lt(scanRuns.ingestedAt, cutoff), notInArray(scanRuns.districtSlug, demoSlugs))
+      : lt(scanRuns.ingestedAt, cutoff);
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(scanRuns).where(where);
   const n = row?.n ?? 0;
   if (DRY_RUN) {

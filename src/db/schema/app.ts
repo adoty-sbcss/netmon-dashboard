@@ -47,6 +47,14 @@ export const districts = pgTable("districts", {
   /** Matches NetMon's district_slug; the SFTP/bundle path key. */
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
+  /**
+   * Demo/sample district (seeded by db/seed-demo.ts, not a real sensor). When
+   * true the scheduled AI sweep skips it (no token spend, no auto-generated
+   * issues clobbering the curated ones) and the maintenance purge spares its
+   * time-series so the demo never decays. An explicit `ai:analyze --district
+   * <slug>` can still target it on purpose. Real districts are always false.
+   */
+  isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

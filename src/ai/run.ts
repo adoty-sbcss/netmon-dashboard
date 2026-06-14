@@ -106,10 +106,13 @@ async function main() {
 
   const window = { start: new Date(now.getTime() - ANALYSIS_WINDOW_MS), end: now };
 
+  // Demo districts (seeded sample data) are skipped by the sweep so they don't
+  // spend tokens or generate issues that clobber their curated ones. Targeting
+  // one explicitly (`--district <slug>`) still works — that's an intentional act.
   const districtRows = await db
     .select({ id: districts.id, slug: districts.slug, name: districts.name })
     .from(districts)
-    .where(onlySlug ? eq(districts.slug, onlySlug) : undefined)
+    .where(onlySlug ? eq(districts.slug, onlySlug) : eq(districts.isDemo, false))
     .orderBy(districts.name);
 
   if (districtRows.length === 0) {
