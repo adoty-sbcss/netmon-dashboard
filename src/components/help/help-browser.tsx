@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import type { HelpArticleMeta } from "@/lib/help/articles";
+import { logHelpSearchMiss } from "@/lib/help/actions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
@@ -88,6 +89,19 @@ export function HelpBrowser({ articles }: { articles: HelpArticleMeta[] }) {
   }, [filtered]);
 
   const searching = q.trim().length > 0;
+
+  // Log searches that find nothing (debounced, once per term) — the "what to
+  // write next" signal. Only fires after typing settles with zero results.
+  const loggedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const term = q.trim().toLowerCase();
+    if (term.length < 2 || filtered.length > 0 || loggedRef.current.has(term)) return;
+    const t = setTimeout(() => {
+      loggedRef.current.add(term);
+      void logHelpSearchMiss(term);
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [q, filtered.length]);
 
   return (
     <div className="flex flex-col gap-6">

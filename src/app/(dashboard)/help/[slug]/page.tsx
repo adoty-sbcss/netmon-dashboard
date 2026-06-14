@@ -6,6 +6,7 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { HELP_ARTICLES, getArticle } from "@/lib/help/articles";
 import { PageHeader } from "@/components/page-header";
 import { HelpArticleView } from "@/components/help/help-article-view";
+import { ArticleFeedback } from "@/components/help/article-feedback";
 
 export function generateStaticParams() {
   return HELP_ARTICLES.map((a) => ({ slug: a.slug }));
@@ -86,6 +87,8 @@ export default async function HelpArticlePage({
           </ul>
         </div>
       )}
+
+      <ArticleFeedback slug={article.slug} />
 
       <p className="max-w-3xl pt-2 text-xs text-muted-foreground">
         Still stuck? Use the AI assistant (bottom-right) or contact your NetMon administrator.

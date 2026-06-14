@@ -37,6 +37,55 @@ export function AiAssistantWidget({
   const [pending, setPending] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Resizable panel — drag the top-left corner (the panel is anchored bottom-right,
+  // so dragging up/left grows it). Size persists across opens.
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 400, h: 560 });
+  const resizeStart = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("netmon:assistant-size");
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (typeof s?.w === "number" && typeof s?.h === "number") setSize({ w: s.w, h: s.h });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("netmon:assistant-size", JSON.stringify(size));
+    } catch {
+      /* ignore */
+    }
+  }, [size]);
+
+  function onResizeDown(e: React.PointerEvent) {
+    e.preventDefault();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+  }
+  function onResizeMove(e: React.PointerEvent) {
+    const s = resizeStart.current;
+    if (!s) return;
+    const maxW = Math.round(window.innerWidth * 0.95);
+    const maxH = Math.round(window.innerHeight * 0.9);
+    setSize({
+      w: Math.min(maxW, Math.max(320, s.w + (s.x - e.clientX))),
+      h: Math.min(maxH, Math.max(380, s.h + (s.y - e.clientY))),
+    });
+  }
+  function onResizeUp(e: React.PointerEvent) {
+    resizeStart.current = null;
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }
+
   // Load the active session the first time the panel is opened.
   useEffect(() => {
     if (!open || loaded) return;
@@ -131,8 +180,21 @@ export function AiAssistantWidget({
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex h-[min(70vh,560px)] w-[min(92vw,400px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl">
-      <div className="flex items-center gap-2 border-b px-3 py-2.5">
+    <div
+      style={{ width: size.w, height: size.h }}
+      className="fixed bottom-4 right-4 z-50 flex max-h-[90vh] max-w-[95vw] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
+    >
+      {/* Drag the top-left corner to resize. */}
+      <div
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        title="Drag to resize"
+        className="absolute left-0 top-0 z-20 size-5 cursor-nwse-resize"
+      >
+        <span className="absolute left-1 top-1 size-2 rounded-tl border-l-2 border-t-2 border-muted-foreground/40" />
+      </div>
+      <div className="flex items-center gap-2 border-b px-3 py-2.5 pl-5">
         {hasAvatar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src="/ai/avatar" alt="" className="size-5 rounded object-cover" />

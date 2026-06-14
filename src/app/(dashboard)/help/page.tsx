@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BarChart3 } from "lucide-react";
 
 import { getSessionUser } from "@/lib/auth/current-user";
 import { HELP_ARTICLES, articleMeta } from "@/lib/help/articles";
@@ -30,6 +32,15 @@ export default async function HelpIndexPage() {
         <p className="text-sm text-muted-foreground">No articles yet.</p>
       ) : (
         <HelpBrowser articles={articles} />
+      )}
+
+      {user.role === "superadmin" && (
+        <Link
+          href="/settings/help"
+          className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <BarChart3 className="size-3.5" /> Help feedback (admin)
+        </Link>
       )}
     </div>
   );

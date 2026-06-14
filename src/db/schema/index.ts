@@ -11,3 +11,4 @@ export * from "./registry";
 export * from "./issues";
 export * from "./chat";
 export * from "./notifications";
+export * from "./help";
