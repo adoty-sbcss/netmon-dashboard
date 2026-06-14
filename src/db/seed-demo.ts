@@ -739,9 +739,13 @@ async function resetDemo(): Promise<void> {
 
 async function main() {
   const args = process.argv.slice(2);
-  const reset = args.includes("--reset");
-  const keepBundles = args.includes("--keep-bundles");
-  const force = args.includes("--force");
+  // Env toggles mirror the CLI flags so this can run as an in-Azure Container Apps
+  // Job: `az containerapp job start` can't pass leading-dash args (`--force`) and a
+  // command-override execution doesn't inherit the job's env, so the in-Azure run
+  // re-injects DATABASE_URL via secretref and sets SEED_DEMO_ALLOW_PROD=1 instead.
+  const reset = args.includes("--reset") || process.env.SEED_DEMO_RESET === "1";
+  const keepBundles = args.includes("--keep-bundles") || process.env.SEED_DEMO_KEEP_BUNDLES === "1";
+  const force = args.includes("--force") || process.env.SEED_DEMO_ALLOW_PROD === "1";
 
   const url = process.env.DATABASE_URL ?? "";
   const looksLocal = /@(localhost|127\.0\.0\.1|host\.docker\.internal|postgres)([:/]|$)/.test(url);
@@ -753,7 +757,8 @@ async function main() {
     console.error(
       `Refusing to seed demo data: DATABASE_URL does not look local.\n` +
         `  ${url.replace(/:[^:@/]*@/, ":****@")}\n` +
-        `This script is for a LOCAL dev database. Re-run with --force only if you are certain.`,
+        `This script is for a LOCAL dev database. Re-run with --force (or set ` +
+        `SEED_DEMO_ALLOW_PROD=1) only if you are certain.`,
     );
     process.exit(1);
   }
