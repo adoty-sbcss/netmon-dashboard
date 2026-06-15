@@ -33,7 +33,7 @@ export default async function DistrictIssuesPage({
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Issues"
-        description={`${district.name} · what needs attention — distilled from AI analysis, deduplicated, auto-resolving`}
+        description={`${district.name} · what needs attention — distilled from AI analysis and automated checks, deduplicated, auto-resolving`}
       />
 
       <div className="flex items-center gap-3 text-sm">

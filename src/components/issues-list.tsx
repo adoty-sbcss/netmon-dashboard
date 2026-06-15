@@ -83,8 +83,8 @@ export function IssuesList({
         <ShieldCheck className="size-8 text-[var(--success)]" />
         <p className="font-medium">No open issues</p>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Issues are distilled from the AI analysis and check themselves off when they stop
-          recurring. Run an analysis to populate this.
+          Issues are distilled from AI analysis and automated checks, and check themselves off
+          when they stop recurring.
         </p>
       </div>
     );
@@ -119,6 +119,7 @@ export function IssuesList({
               {i.lastSeenAt ? relativeTime(i.lastSeenAt) : "—"}
               {i.resolvedAt ? ` · resolved ${relativeTime(i.resolvedAt)}` : ""}
               {i.source === "ai-topology" ? " · topology" : ""}
+              {i.source === "rule" ? " · automated check" : ""}
             </p>
           </div>
           {isAdmin && <IssueRowActions id={i.id} status={i.status} basePath={basePath} />}

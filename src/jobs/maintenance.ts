@@ -1,15 +1,20 @@
 /**
  * Maintenance cron Job (daily) — keep the database + SFTP server from growing
- * without bound. Three best-effort steps, each isolated so one failing doesn't
- * abort the others:
+ * without bound, and run the deterministic (non-AI) checks. Four best-effort
+ * steps, each isolated so one failing doesn't abort the others:
  *
  *   1. Purge per-scan TIME-SERIES older than RETENTION_DAYS by deleting old
  *      scan_runs; the FK cascade removes devices / neighbors / dhcp / dns / stp /
  *      traffic / snmp / findings for those scans. The DURABLE tier (entities,
  *      topology snapshots, daily rollups, AI analyses, issues) is untouched, as
  *      are iperf_results + security_events (kept for their own history).
- *   2. VACUUM (ANALYZE) to reclaim the freed space + refresh planner stats.
- *   3. Prune already-ingested bundles from the SFTP server (parsed AND older than
+ *   2. Deterministic RULES → Issues tracker. Currently the STP-instability rule
+ *      (frequent topology changes); reconciled under source 'rule' so it dedupes
+ *      + auto-resolves like the AI findings, but runs with NO dependency on AI
+ *      provider keys. A 24h-window evaluation suits the daily cadence; it reads
+ *      recent data so it's unaffected by step 1's 30-day purge.
+ *   3. VACUUM (ANALYZE) to reclaim the freed space + refresh planner stats.
+ *   4. Prune already-ingested bundles from the SFTP server (parsed AND older than
  *      SFTP_GRACE_DAYS). They're archived to Blob, so this only frees the server;
  *      the ingested_bundles bookkeeping rows are kept.
  *
@@ -32,6 +37,7 @@ import { db } from "../db";
 import { scanRuns } from "../db/schema/netmon";
 import { districts, ingestedBundles } from "../db/schema/app";
 import { resolveSftpConfig } from "../lib/ingest/settings";
+import { evaluateStpRules } from "../lib/rules/stp";
 
 function intEnv(name: string, dflt: number): number {
   const n = Number(process.env[name]);
@@ -100,7 +106,16 @@ async function purgeTimeSeries(): Promise<void> {
   console.log(`Time-series purge: deleted ${n} scan_run(s) older than ${RETENTION_DAYS}d (cascaded their per-scan rows).`);
 }
 
-/** Step 2: VACUUM (ANALYZE). Runs on a dedicated simple-protocol connection —
+/** Step 2: deterministic rules → Issues tracker (STP instability for now). */
+async function deterministicRules(): Promise<void> {
+  const { schoolsEvaluated, flagged } = await evaluateStpRules({ dryRun: DRY_RUN });
+  console.log(
+    `${DRY_RUN ? "[dry-run] " : ""}Deterministic rules: evaluated ${schoolsEvaluated} school(s); ` +
+      `${flagged} with a frequent-STP-topology-change finding${DRY_RUN ? " (no issues written)" : ""}.`,
+  );
+}
+
+/** Step 3: VACUUM (ANALYZE). Runs on a dedicated simple-protocol connection —
  *  VACUUM can't run inside a transaction or a prepared statement. */
 async function vacuum(): Promise<void> {
   if (DRY_RUN) {
@@ -118,7 +133,7 @@ async function vacuum(): Promise<void> {
   }
 }
 
-/** Step 3: delete already-ingested, aged bundles from the SFTP server. */
+/** Step 4: delete already-ingested, aged bundles from the SFTP server. */
 async function pruneSftp(): Promise<void> {
   const cutoff = new Date(Date.now() - SFTP_GRACE_DAYS * DAY_MS);
   const rows = await db
@@ -210,6 +225,7 @@ async function main() {
   };
 
   await step("time-series purge", purgeTimeSeries);
+  await step("deterministic rules", deterministicRules);
   await step("vacuum", vacuum);
   await step("sftp prune", pruneSftp);
 
