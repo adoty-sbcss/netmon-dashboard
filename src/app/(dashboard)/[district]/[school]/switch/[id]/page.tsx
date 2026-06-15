@@ -24,6 +24,7 @@ import {
 import { SwitchPortsTable } from "@/components/device/switch-ports-table";
 import { ConnectedDevicesTable } from "@/components/device/connected-devices-table";
 import { SnmpCommunityForm } from "../../../../settings/network/snmp-community-form";
+import { NeighborSightings } from "./neighbor-sightings";
 
 export default async function SwitchDetailPage({
   params,
@@ -152,7 +153,32 @@ export default async function SwitchDetailPage({
               />
               <div className="min-w-0">
                 <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Read community
+                  Works on this device
+                </dt>
+                <dd className="mt-0.5 truncate font-mono">
+                  {sw.snmpCredential?.community ? (
+                    isSuperadmin ? (
+                      sw.snmpCredential.community
+                    ) : (
+                      <span className="font-sans text-muted-foreground">•••••• (admin only)</span>
+                    )
+                  ) : (sw.snmpCredential?.failureCount ?? 0) > 0 ? (
+                    <span className="font-sans text-muted-foreground">
+                      none worked ({sw.snmpCredential?.failureCount} fails)
+                    </span>
+                  ) : (
+                    <span className="font-sans text-muted-foreground">—</span>
+                  )}
+                </dd>
+                {sw.snmpCredential?.lastSucceededAt && (
+                  <div className="text-xs text-muted-foreground">
+                    last ok {relativeTime(sw.snmpCredential.lastSucceededAt)}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Read community (district)
                 </dt>
                 <dd className="mt-0.5 truncate font-mono">
                   {isSuperadmin ? (
@@ -208,65 +234,8 @@ export default async function SwitchDetailPage({
         </Card>
       )}
 
-      {/* LLDP appearances over time */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Neighbor sightings
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              how sensors see this switch on the wire
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-0 sm:px-6">
-          {sw.appearances.length === 0 ? (
-            <p className="px-6 py-6 text-sm text-muted-foreground">
-              No neighbor sightings recorded.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>Sensor</TableHead>
-                    <TableHead>Local port</TableHead>
-                    <TableHead className="hidden md:table-cell">Remote port</TableHead>
-                    <TableHead className="hidden lg:table-cell">VLAN</TableHead>
-                    <TableHead className="hidden lg:table-cell">Proto</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sw.appearances.map((a) => (
-                    <TableRow key={a.scanId}>
-                      <TableCell title={dateTime(a.startedAt)}>
-                        {a.startedAt ? relativeTime(a.startedAt) : "—"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{a.sensorSlug}</TableCell>
-                      <TableCell className="font-mono text-xs">{a.localPort ?? "—"}</TableCell>
-                      <TableCell className="hidden font-mono text-xs md:table-cell">
-                        {a.portId ?? a.portDescription ?? "—"}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        {a.vlanId ?? "—"}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        {a.protocol ? (
-                          <Badge variant="outline" className="text-[10px] uppercase">
-                            {a.protocol}
-                          </Badge>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* LLDP/CDP neighbor sightings — collapsed to the most recent by default. */}
+      <NeighborSightings appearances={sw.appearances} />
     </div>
   );
 }

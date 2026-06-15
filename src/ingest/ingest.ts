@@ -39,6 +39,7 @@ import {
   topologyPositions,
   healthRollupDaily,
   uplinkSamples,
+  snmpDeviceCredentials,
 } from "../db/schema";
 import {
   readBundleDir,
@@ -51,6 +52,7 @@ import {
   type Bundle,
   type ScanData,
   type RawTopology,
+  type RawSnmpCredential,
   type SnmpInterface,
 } from "./bundle";
 
@@ -450,6 +452,36 @@ function uplinkRateMbps(
   const deltaBytes = curOctets - prevOctets;
   if (deltaBytes < 0) return null; // counter reset/reboot/wrap → skip this interval
   return (deltaBytes * 8) / secs / 1_000_000;
+}
+
+/**
+ * INV/CORE-3: mirror the collector's per-device SNMP credential cache (bundle
+ * root) into snmp_device_credentials so the device page can show which read
+ * community works on each device. Upsert keyed on (school, device IP).
+ */
+async function persistSnmpCredentials(
+  tx: Tx,
+  schoolId: number,
+  creds: RawSnmpCredential[],
+): Promise<void> {
+  for (const c of creds) {
+    const ip = str(c.device_ip);
+    if (!ip) continue;
+    const set = {
+      community: str(c.community),
+      version: str(c.version),
+      lastSucceededAt: toDate(c.last_succeeded_at),
+      failureCount: toNum(c.failure_count),
+      updatedAt: new Date(),
+    };
+    await tx
+      .insert(snmpDeviceCredentials)
+      .values({ schoolId, deviceIp: ip, ...set })
+      .onConflictDoUpdate({
+        target: [snmpDeviceCredentials.schoolId, snmpDeviceCredentials.deviceIp],
+        set,
+      });
+  }
 }
 
 /**
@@ -1267,6 +1299,9 @@ export async function ingestBundle(
 
     // ---- PERF-3: uplink utilization samples (counter deltas vs committed rate) ----
     await persistUplinkSamples(tx, school.id, sensor.id, bundle.scans);
+
+    // ---- INV/CORE-3: per-device working SNMP community (from the bundle root) ----
+    await persistSnmpCredentials(tx, school.id, bundle.snmpCredentials);
 
     // ---- daily health rollup (per district+school+day) ----
     if (day) {

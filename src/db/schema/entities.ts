@@ -196,3 +196,31 @@ export const healthRollupDaily = pgTable(
     ),
   ],
 );
+
+/**
+ * Per-device SNMP credential the SENSOR found working, mirrored from the
+ * collector's `snmp_credentials` cache (shipped in the bundle). One row per
+ * (school, device IP): which read community succeeded, the version, when it last
+ * worked, and the consecutive-failure count. Lets the device page show "the
+ * community that works on this device" without exposing per-poll secrets in the
+ * generic attributes blob. Current-state (latest known), not time-series.
+ */
+export const snmpDeviceCredentials = pgTable(
+  "snmp_device_credentials",
+  {
+    id: serial("id").primaryKey(),
+    schoolId: integer("school_id")
+      .notNull()
+      .references(() => schools.id, { onDelete: "cascade" }),
+    deviceIp: text("device_ip").notNull(),
+    /** The working read community (null when none has succeeded). */
+    community: text("community"),
+    version: text("version"),
+    lastSucceededAt: timestamp("last_succeeded_at", { withTimezone: true }),
+    failureCount: integer("failure_count"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("uq_snmp_cred_school_ip").on(t.schoolId, t.deviceIp)],
+);

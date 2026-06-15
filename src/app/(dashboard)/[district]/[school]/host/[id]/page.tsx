@@ -239,7 +239,32 @@ export default async function HostDetailPage({
               />
               <div className="min-w-0">
                 <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Read community
+                  Works on this device
+                </dt>
+                <dd className="mt-0.5 truncate font-mono">
+                  {host.snmpCredential?.community ? (
+                    isSuperadmin ? (
+                      host.snmpCredential.community
+                    ) : (
+                      <span className="font-sans text-muted-foreground">•••••• (admin only)</span>
+                    )
+                  ) : (host.snmpCredential?.failureCount ?? 0) > 0 ? (
+                    <span className="font-sans text-muted-foreground">
+                      none worked ({host.snmpCredential?.failureCount} fails)
+                    </span>
+                  ) : (
+                    <span className="font-sans text-muted-foreground">—</span>
+                  )}
+                </dd>
+                {host.snmpCredential?.lastSucceededAt && (
+                  <div className="text-xs text-muted-foreground">
+                    last ok {relativeTime(host.snmpCredential.lastSucceededAt)}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Read community (district)
                 </dt>
                 <dd className="mt-0.5 truncate font-mono">
                   {isSuperadmin ? (

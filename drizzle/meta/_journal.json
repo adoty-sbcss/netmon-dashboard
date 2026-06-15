@@ -323,6 +323,13 @@
       "when": 1781479621947,
       "tag": "0045_help_events",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1781529956997,
+      "tag": "0046_jazzy_slipstream",
+      "breakpoints": true
     }
   ]
 }

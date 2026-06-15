@@ -101,7 +101,12 @@ export const neighbors = pgTable(
     seenAt: timestamp("seen_at", { withTimezone: true }),
     extra: jsonb("extra").notNull().default({}),
   },
-  (t) => [index("idx_neighbors_scan").on(t.scanRunId)],
+  (t) => [
+    index("idx_neighbors_scan").on(t.scanRunId),
+    // Switch detail joins neighbor sightings by chassis — index it so the lookup
+    // isn't a full scan.
+    index("idx_neighbors_chassis").on(t.chassisId),
+  ],
 );
 
 export const trafficStats = pgTable(
@@ -146,7 +151,12 @@ export const snmpPolls = pgTable(
     value: text("value"),
     polledAt: timestamp("polled_at", { withTimezone: true }),
   },
-  (t) => [index("idx_snmp_scan").on(t.scanRunId)],
+  (t) => [
+    index("idx_snmp_scan").on(t.scanRunId),
+    // Device-detail pages look up a single device's attributes by IP across a huge
+    // table; without this they do a full scan (the main detail-page slowness).
+    index("idx_snmp_device_ip").on(t.deviceIp),
+  ],
 );
 
 /**
@@ -199,7 +209,11 @@ export const dhcpObservations = pgTable(
     paramReqList: text("param_req_list"),
     clientHostname: text("client_hostname"),
   },
-  (t) => [index("idx_dhcp_scan").on(t.scanRunId)],
+  (t) => [
+    index("idx_dhcp_scan").on(t.scanRunId),
+    // Host detail looks up a device's DHCP fingerprint by client MAC.
+    index("idx_dhcp_client_mac").on(t.clientMac),
+  ],
 );
 
 /**

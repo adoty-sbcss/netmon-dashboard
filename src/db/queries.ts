@@ -37,6 +37,7 @@ import {
   healthRollupDaily,
   topologySnapshots,
   topologyPositions,
+  snmpDeviceCredentials,
 } from "./schema/entities";
 import { issues } from "./schema/issues";
 import {
@@ -724,6 +725,14 @@ export interface DeviceIssue {
   recommendation: string | null;
 }
 
+/** The read community the sensor found working for this device (from the bundle). */
+export interface DeviceSnmpCredential {
+  community: string | null;
+  version: string | null;
+  lastSucceededAt: Date | null;
+  failureCount: number | null;
+}
+
 export interface HostDetail {
   id: number;
   districtId: number;
@@ -752,6 +761,8 @@ export interface HostDetail {
   snmpResponded: boolean | null;
   snmpVersion: string | null;
   snmpCheckedAt: Date | null;
+  /** The read community the sensor found working for this device, if any. */
+  snmpCredential: DeviceSnmpCredential | null;
   dhcp: DhcpFingerprint | null;
   /** Set when this host is itself infra (gateway/router/switch) we SNMP-crawled. */
   ports: SwitchPort[];
@@ -788,7 +799,8 @@ export async function getHostDetail(
       .innerJoin(scanRuns, eq(devices.scanRunId, scanRuns.id))
       .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
       .where(and(eq(sensors.schoolId, schoolId), eq(devices.mac, host.mac)))
-      .orderBy(desc(scanRuns.startedAt)),
+      .orderBy(desc(scanRuns.startedAt))
+      .limit(200),
     host.ip
       ? db
           .select({
@@ -854,7 +866,7 @@ export async function getHostDetail(
   // FDB-attached devices — skip the (school-wide) FDB scan for ordinary endpoints.
   const isInfra = ["switch", "router", "ap", "firewall"].includes(effectiveType ?? "");
 
-  const [dhcpRow, reachRow, switchEnt] = await Promise.all([
+  const [dhcpRow, reachRow, switchEnt, credRow] = await Promise.all([
     db
       .select({
         vendorClassId: dhcpObservations.vendorClassId,
@@ -906,6 +918,23 @@ export async function getHostDetail(
           )
           .limit(1)
       : Promise.resolve([] as { id: number }[]),
+    host.ip
+      ? db
+          .select({
+            community: snmpDeviceCredentials.community,
+            version: snmpDeviceCredentials.version,
+            lastSucceededAt: snmpDeviceCredentials.lastSucceededAt,
+            failureCount: snmpDeviceCredentials.failureCount,
+          })
+          .from(snmpDeviceCredentials)
+          .where(
+            and(
+              eq(snmpDeviceCredentials.schoolId, schoolId),
+              eq(snmpDeviceCredentials.deviceIp, host.ip),
+            ),
+          )
+          .limit(1)
+      : Promise.resolve([] as DeviceSnmpCredential[]),
   ]);
 
   const [ports, connectedDevices] =
@@ -937,6 +966,7 @@ export async function getHostDetail(
     snmpResponded: reachRow[0]?.snmpResponded ?? null,
     snmpVersion: reachRow[0]?.snmpVersion ?? null,
     snmpCheckedAt: reachRow[0]?.checkedAt ?? null,
+    snmpCredential: credRow[0] ?? null,
     dhcp: dhcpRow[0] ?? null,
     ports,
     connectedDevices,
@@ -1119,6 +1149,8 @@ export interface SwitchDetail extends SwitchRow {
   snmpResponded: boolean | null;
   snmpVersion: string | null;
   snmpCheckedAt: Date | null;
+  /** The read community the sensor found working for this switch, if any. */
+  snmpCredential: DeviceSnmpCredential | null;
 }
 
 export async function getSwitchDetail(
@@ -1151,7 +1183,8 @@ export async function getSwitchDetail(
     .where(
       and(eq(sensors.schoolId, schoolId), eq(neighbors.chassisId, sw.chassisId)),
     )
-    .orderBy(desc(scanRuns.startedAt));
+    .orderBy(desc(scanRuns.startedAt))
+    .limit(200);
 
   let snmp: SnmpAttr[] = [];
   let interfaceCount = 0;
@@ -1191,7 +1224,7 @@ export async function getSwitchDetail(
     interfaceCount = ifc?.c ?? 0;
   }
 
-  const [ports, connectedDevices, reachRow] = await Promise.all([
+  const [ports, connectedDevices, reachRow, credRow] = await Promise.all([
     getDevicePorts(schoolId, { chassisId: sw.chassisId, mgmtIp: sw.mgmtIp }),
     sw.mgmtIp ? getConnectedDevices(schoolId, sw.mgmtIp) : Promise.resolve([] as ConnectedDevice[]),
     sw.mgmtIp
@@ -1210,6 +1243,23 @@ export async function getSwitchDetail(
       : Promise.resolve(
           [] as { snmpResponded: boolean | null; snmpVersion: string | null; checkedAt: Date | null }[],
         ),
+    sw.mgmtIp
+      ? db
+          .select({
+            community: snmpDeviceCredentials.community,
+            version: snmpDeviceCredentials.version,
+            lastSucceededAt: snmpDeviceCredentials.lastSucceededAt,
+            failureCount: snmpDeviceCredentials.failureCount,
+          })
+          .from(snmpDeviceCredentials)
+          .where(
+            and(
+              eq(snmpDeviceCredentials.schoolId, schoolId),
+              eq(snmpDeviceCredentials.deviceIp, sw.mgmtIp),
+            ),
+          )
+          .limit(1)
+      : Promise.resolve([] as DeviceSnmpCredential[]),
   ]);
 
   return {
@@ -1231,6 +1281,7 @@ export async function getSwitchDetail(
     snmpResponded: reachRow[0]?.snmpResponded ?? null,
     snmpVersion: reachRow[0]?.snmpVersion ?? null,
     snmpCheckedAt: reachRow[0]?.checkedAt ?? null,
+    snmpCredential: credRow[0] ?? null,
   };
 }
 
@@ -2057,25 +2108,30 @@ function hostOs(attributes: unknown): string | null {
 async function getFdbAttachments(
   schoolId: number,
 ): Promise<Map<string, { switchIp: string; port: string | null }>> {
-  const rows = await db
+  // Latest scan PER SENSOR that produced FDB rows — computed in SQL so we don't
+  // load 30 days of forwarding-table history just to keep the freshest scan
+  // (this was a major device-detail + map slowdown).
+  const latestRows = await db
+    .select({ sensorId: scanRuns.sensorId, maxScan: max(hostSwitchPorts.scanRunId) })
+    .from(hostSwitchPorts)
+    .innerJoin(scanRuns, eq(hostSwitchPorts.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .groupBy(scanRuns.sensorId);
+  const scanIds = latestRows
+    .map((r) => r.maxScan)
+    .filter((n): n is number => n != null);
+  if (scanIds.length === 0) {
+    return new Map<string, { switchIp: string; port: string | null }>();
+  }
+  const fresh = await db
     .select({
-      scanRunId: hostSwitchPorts.scanRunId,
-      sensorId: scanRuns.sensorId,
       switchIp: hostSwitchPorts.sourceDeviceIp,
       mac: hostSwitchPorts.mac,
       ifName: hostSwitchPorts.ifName,
     })
     .from(hostSwitchPorts)
-    .innerJoin(scanRuns, eq(hostSwitchPorts.scanRunId, scanRuns.id))
-    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
-    .where(eq(sensors.schoolId, schoolId));
-
-  const latest = new Map<number, number>();
-  for (const r of rows) {
-    const sid = r.sensorId ?? -1;
-    if (r.scanRunId > (latest.get(sid) ?? -1)) latest.set(sid, r.scanRunId);
-  }
-  const fresh = rows.filter((r) => r.scanRunId === latest.get(r.sensorId ?? -1));
+    .where(inArray(hostSwitchPorts.scanRunId, scanIds));
 
   // distinct MAC count per (switch, port)
   const portMacs = new Map<string, Set<string>>();

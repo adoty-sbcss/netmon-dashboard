@@ -287,11 +287,24 @@ export interface ScanData {
   scanDirName: string;
 }
 
+/** snmp_credentials.json (bundle root): the collector's per-device read-community
+ *  cache — which community works on each device IP. Absent on older collectors. */
+export interface RawSnmpCredential {
+  device_ip?: string | null;
+  community?: string | null;
+  version?: string | null;
+  last_succeeded_at?: string | null;
+  last_attempt_at?: string | null;
+  failure_count?: number | null;
+}
+
 export interface Bundle {
   /** Idempotency key: the .zip filename (synthesized from the dir name if needed). */
   filename: string;
   dirName: string;
   scans: ScanData[];
+  /** Box-global SNMP credential cache (bundle root); empty on older collectors. */
+  snmpCredentials: RawSnmpCredential[];
 }
 
 // ---- coercion helpers (bundle values are display-only text/JSON) ----
@@ -464,7 +477,14 @@ export function readBundleDir(dir: string): Bundle {
   const filename = dirName.toLowerCase().endsWith(".zip")
     ? dirName
     : `${dirName}.zip`;
-  return { filename, dirName, scans };
+  // Box-global SNMP credential cache lives once at the bundle root (like inventory).
+  const snmpCredentials = asList<RawSnmpCredential>(
+    readJson<{ devices?: RawSnmpCredential[] }>(
+      join(dir, "snmp_credentials.json"),
+      {},
+    ).devices,
+  );
+  return { filename, dirName, scans, snmpCredentials };
 }
 
 /** "NetMonitor_01_2026_05_26_07" -> "netmonitor_01" (collector name as device slug). */
