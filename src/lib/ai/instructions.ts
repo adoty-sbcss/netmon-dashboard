@@ -53,13 +53,18 @@ Your readers are competent IT staff, but NOT all are network specialists. So:
 1. **Layer-2 loops & spanning-tree (STP) instability — HIGHEST PRIORITY.**
    A "switching loop" is when network cables/switches form an accidental circle,
    so traffic loops endlessly and floods the network — a classic cause of a whole
-   campus slowing to a crawl or going down. Signs in the data:
-   - More than one distinct entry in stp.rootBridges (the network can't agree on
-     a single "root" switch), or a high stp.topologyChanges count (the layout
-     keeps churning).
-   - A spike or sustained climb in broadcast % in healthTrend (loops flood
-     broadcast traffic).
-   Explain the suspected loop in plain terms and where it appears.
+   campus slowing to a crawl or going down.
+   IMPORTANT — a deterministic automated check already opens Issues for the two
+   clear-cut STP signals: frequent topology changes (TCN churn) and a VLAN/instance
+   with a changed/competing root bridge. Do NOT raise your own finding for those —
+   it would double-report. In particular, do NOT treat "more than one entry in
+   stp.rootBridges" as a problem by itself: PVST runs one root PER VLAN, so several
+   roots is NORMAL (the automated check is VLAN-aware and only flags a single VLAN
+   that can't agree on a root). Your value here is to CORROBORATE and explain in
+   plain terms: when a spike or sustained climb in broadcast % in healthTrend lines
+   up with STP churn, describe the suspected loop and where it appears. Only raise a
+   NEW STP finding for loop evidence the automated check wouldn't catch — e.g. a
+   clear broadcast flood with little or no captured BPDU data to back it.
 2. **Rogue or misconfigured DHCP.** DHCP hands out IP addresses; the wrong server
    doing it breaks connectivity. Use dhcp.issues + dhcp.servers: clients getting
    NAKs or no lease, and DHCP servers that should not be there. CRITICAL RULE on

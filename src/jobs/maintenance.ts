@@ -108,10 +108,11 @@ async function purgeTimeSeries(): Promise<void> {
 
 /** Step 2: deterministic rules → Issues tracker (STP instability for now). */
 async function deterministicRules(): Promise<void> {
-  const { schoolsEvaluated, flagged } = await evaluateStpRules({ dryRun: DRY_RUN });
+  const { schoolsEvaluated, tcFlagged, rootFlagged } = await evaluateStpRules({ dryRun: DRY_RUN });
   console.log(
     `${DRY_RUN ? "[dry-run] " : ""}Deterministic rules: evaluated ${schoolsEvaluated} school(s); ` +
-      `${flagged} with a frequent-STP-topology-change finding${DRY_RUN ? " (no issues written)" : ""}.`,
+      `${tcFlagged} with frequent STP topology changes, ${rootFlagged} with a changed root bridge` +
+      `${DRY_RUN ? " (no issues written)" : ""}.`,
   );
 }
 

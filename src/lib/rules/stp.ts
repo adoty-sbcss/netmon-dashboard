@@ -2,15 +2,20 @@
  * Deterministic STP-instability rule → Issues tracker.
  *
  * Background (UX-5): the dashboard intentionally has NO raw "STP / BPDU log" page
- * — a passive single-port BPDU dump isn't actionable for site techs, and a naive
- * "more than one root bridge" check false-positives on PVST/Rapid-PVST (one root
- * PER VLAN is normal). What IS a real, legible signal is a sustained RATE of
- * spanning-tree TOPOLOGY-CHANGE notifications (TCN): healthy STP emits a TC only
- * briefly when a port/device comes up; TCs recurring across many scans point to a
- * flapping link, an access/edge port without PortFast/edge configured, or — worst
- * case — an intermittent layer-2 loop. This rate signal is VLAN-AGNOSTIC, so it
- * sidesteps the PVST false positive entirely. `stp_events` carries no VLAN, so
- * root-based detection is deliberately NOT attempted.
+ * — a passive single-port BPDU dump isn't actionable for site techs, and the old
+ * "more than one root bridge" warning false-positived on PVST/Rapid-PVST (one root
+ * PER VLAN is normal). This rule turns the same data into two legible signals:
+ *
+ *  1. TOPOLOGY-CHANGE rate — healthy STP emits a topology-change (TCN) only briefly
+ *     when a port/device comes up; TCs recurring across many scans point to a
+ *     flapping link, an access/edge port without PortFast/edge, or — worst case —
+ *     an intermittent layer-2 loop. Measured by DISTINCT scans containing a TC, so
+ *     it's capture-duration-independent and VLAN-agnostic.
+ *  2. ROOT-BRIDGE change — VLAN-AWARE so it does NOT trip on normal PVST. The root
+ *     bridge id is stored as "prio/ext/mac" where `ext` is the VLAN/instance; we
+ *     group observed roots by `ext` and flag a group with >1 distinct root MAC
+ *     (the SAME VLAN can't agree on a root = a flap or a rogue switch winning the
+ *     election). DIFFERENT VLANs having different roots never flags.
  *
  * Runs from the daily maintenance Job (a deterministic cadence that does NOT
  * depend on AI provider keys) and feeds reconcileIssues with source 'rule', so it
@@ -18,7 +23,7 @@
  * same anti-fatigue lifecycle as the AI findings. Relative imports + no
  * `server-only` so the cron Job's tsx can import it (mirrors issues/reconcile.ts).
  */
-import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 
 import { db } from "../../db";
 import { scanRuns, stpEvents } from "../../db/schema/netmon";
@@ -98,6 +103,83 @@ export function stpFindingsFor(stat: StpStat): AiFinding[] {
   ];
 }
 
+// Sentinel group key for a root bridge id with no VLAN/instance extension (a
+// single-instance / classic STP tree). Distinct from any real ext token.
+const NO_EXT = "__no_ext__";
+
+/** Parse a stored bridge id "prio/ext/mac" (or "prio/mac") into {ext, mac}. The
+ *  collector joins prio/ext/hw with "/"; ext is omitted when absent. MACs use
+ *  dots, never "/", so a plain "/" split is safe. Returns null if unparseable. */
+function parseBridgeId(id: string): { ext: string | null; mac: string } | null {
+  const parts = id
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length >= 3) return { ext: parts[1], mac: parts[parts.length - 1] };
+  if (parts.length === 2) return { ext: null, mac: parts[1] }; // prio/mac, no ext
+  return null; // mac-only / malformed — can't reason about it, skip
+}
+
+/**
+ * Build the 0-or-1 root-instability finding for one school's observed root bridge
+ * ids over the window. VLAN-AWARE: groups roots by their VLAN/instance extension
+ * and flags a group that has more than one distinct root MAC — i.e. the SAME VLAN
+ * (or the single no-ext tree) can't agree on a root. DIFFERENT VLANs each having
+ * their own stable root (normal PVST) never flags. Pure + side-effect free.
+ */
+export function rootFindingsFor(rootBridgeIds: string[]): AiFinding[] {
+  const macsByExt = new Map<string, Set<string>>();
+  for (const id of rootBridgeIds) {
+    const p = parseBridgeId(id);
+    if (!p) continue;
+    const key = p.ext ?? NO_EXT;
+    let set = macsByExt.get(key);
+    if (!set) {
+      set = new Set();
+      macsByExt.set(key, set);
+    }
+    set.add(p.mac.toLowerCase());
+  }
+
+  const affected: { label: string; macs: string[] }[] = [];
+  for (const [key, macs] of macsByExt) {
+    if (macs.size < 2) continue; // one root for this VLAN/instance = healthy
+    const label = key === NO_EXT ? "the spanning-tree instance" : `VLAN/instance ${key}`;
+    affected.push({ label, macs: [...macs] });
+  }
+  if (affected.length === 0) return [];
+
+  const maxRoots = Math.max(...affected.map((a) => a.macs.length));
+  const high = affected.length >= 2 || maxRoots >= 3;
+  const where = affected.map((a) => `${a.label}: ${a.macs.join(", ")}`).join("; ");
+
+  // TITLE IS CONSTANT (one root-instability issue per school, bumped each run) —
+  // the changing specifics live in detail, like the topology-change finding.
+  const title = "Spanning-tree root bridge changed (possible flap or rogue switch)";
+  const detail =
+    `More than one switch acted as the spanning-tree ROOT for the same VLAN/instance over the last ` +
+    `${WINDOW_HOURS}h — ${where}. Each VLAN should have exactly one, stable root (normally your ` +
+    `core/distribution switch). Two competing roots for one VLAN means either the root keeps ` +
+    `re-electing (a flap) or an unexpected switch won the election — e.g. a small switch plugged in ` +
+    `with a lower STP priority. (Different VLANs having different roots is normal and is NOT flagged.)`;
+  const recommendation =
+    `Confirm your intended root (usually the core/distribution switch) has the lowest STP priority for ` +
+    `the affected VLAN(s), and that nothing recently added has a lower priority. Check the switch logs ` +
+    `for root-change / root-guard events. If this was a planned core/root change it'll clear on its own. ` +
+    `Verify on the switch before changing priorities.`;
+
+  return [
+    {
+      severity: high ? "high" : "medium",
+      confidence: high ? "definite" : "suggestive",
+      title,
+      detail,
+      evidence: `stp_events root_bridge_id grouped by VLAN/instance ext: ${where} (last ${WINDOW_HOURS}h)`,
+      recommendation,
+    },
+  ];
+}
+
 /**
  * Evaluate the STP rule for every non-demo school with recent scan data (or an
  * existing open STP issue, so a now-quiet school's issue can still tick toward
@@ -110,7 +192,7 @@ export function stpFindingsFor(stat: StpStat): AiFinding[] {
  */
 export async function evaluateStpRules(
   opts: { dryRun?: boolean } = {},
-): Promise<{ schoolsEvaluated: number; flagged: number }> {
+): Promise<{ schoolsEvaluated: number; tcFlagged: number; rootFlagged: number }> {
   const cutoff = new Date(Date.now() - WINDOW_HOURS * 60 * 60 * 1000);
 
   // school -> districtId, for non-demo schools only (also the demo filter).
@@ -145,6 +227,21 @@ export async function evaluateStpRules(
     .groupBy(sensors.schoolId);
   const tcBySchool = new Map(tcRows.map((r) => [r.schoolId, r]));
 
+  // Distinct root bridge ids per school in-window (for the VLAN-aware root check).
+  const rootRows = await db
+    .selectDistinct({ schoolId: sensors.schoolId, rootBridgeId: stpEvents.rootBridgeId })
+    .from(stpEvents)
+    .innerJoin(scanRuns, eq(stpEvents.scanRunId, scanRuns.id))
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(and(gte(scanRuns.ingestedAt, cutoff), isNotNull(stpEvents.rootBridgeId)));
+  const rootsBySchool = new Map<number, string[]>();
+  for (const r of rootRows) {
+    if (!r.rootBridgeId) continue;
+    const arr = rootsBySchool.get(r.schoolId);
+    if (arr) arr.push(r.rootBridgeId);
+    else rootsBySchool.set(r.schoolId, [r.rootBridgeId]);
+  }
+
   // Schools with an existing (non-resolved) 'rule' issue must be reconciled even
   // with no scans this window, so a now-quiet issue can tick toward auto-resolve.
   const openRuleIssueRows = await db
@@ -164,7 +261,8 @@ export async function evaluateStpRules(
   ]);
 
   let evaluated = 0;
-  let flagged = 0;
+  let tcFlagged = 0;
+  let rootFlagged = 0;
   for (const schoolId of schoolsToEval) {
     const districtId = districtBySchool.get(schoolId);
     if (districtId == null) continue; // demo or deleted school — skip
@@ -177,18 +275,22 @@ export async function evaluateStpRules(
       scansWithTc: tc?.scansWithTc ?? 0,
       tcEvents: tc?.tcEvents ?? 0,
     };
-    const findings = stpFindingsFor(stat);
-    if (findings.length) flagged++;
+    const tcFindings = stpFindingsFor(stat);
+    const rootFindings = rootFindingsFor(rootsBySchool.get(schoolId) ?? []);
+    if (tcFindings.length) tcFlagged++;
+    if (rootFindings.length) rootFlagged++;
+    // Both feed one reconcile call under source 'rule'; they're distinct issues
+    // (different titles → different keys), so each dedupes/auto-resolves on its own.
     if (!opts.dryRun) {
       await reconcileIssues({
         districtId,
         scopeType: "school",
         scopeId: schoolId,
         source: "rule",
-        findings,
+        findings: [...tcFindings, ...rootFindings],
       });
     }
   }
 
-  return { schoolsEvaluated: evaluated, flagged };
+  return { schoolsEvaluated: evaluated, tcFlagged, rootFlagged };
 }
