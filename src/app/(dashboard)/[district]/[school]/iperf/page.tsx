@@ -38,6 +38,19 @@ function f1(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(1);
 }
 
+/** Run one section's query, falling back (and logging) if it throws, so a single
+ *  failed query degrades its own card instead of 500-ing the whole page. The
+ *  container-console log is greppable by label — this is how the uplink
+ *  daily-avg bind bug surfaced (and what would otherwise hide the next one). */
+async function safeQuery<T>(p: Promise<T>, fallback: T, label: string): Promise<T> {
+  try {
+    return await p;
+  } catch (err) {
+    console.error(`[Speed & Bandwidth] query "${label}" failed; rendering without it:`, err);
+    return fallback;
+  }
+}
+
 /** Keep only uplink samples from the last 24h. Kept out of the component body so
  *  the Date.now() read isn't flagged as an impure render call. */
 function withinLast24h(samples: UplinkSampleRow[]): UplinkSampleRow[] {
@@ -109,14 +122,14 @@ export default async function IperfPage({
     uplinkDaily,
     sessionUser,
   ] = await Promise.all([
-    getDistrictIperf(district.id),
-    listSchoolIperfResults(school.id, 300),
-    listSchoolSpeedtests(school.id, 200),
-    listSchoolLatency(school.id, 400),
-    getSchoolCommittedRate(school.id),
-    listSchoolUplinkSamples(school.id, 500),
-    listSchoolUplinkDailyAvg(school.id, 30),
-    getSessionUser(),
+    safeQuery(getDistrictIperf(district.id), { serverHost: "", serverPort: 5201, enabled: false }, "districtIperf"),
+    safeQuery(listSchoolIperfResults(school.id, 300), [], "iperfResults"),
+    safeQuery(listSchoolSpeedtests(school.id, 200), [], "speedtests"),
+    safeQuery(listSchoolLatency(school.id, 400), [], "latency"),
+    safeQuery(getSchoolCommittedRate(school.id), { committedMbps: null, label: null, note: null, updatedAt: null }, "committedRate"),
+    safeQuery(listSchoolUplinkSamples(school.id, 500), [], "uplinkSamples"),
+    safeQuery(listSchoolUplinkDailyAvg(school.id, 30), [], "uplinkDailyAvg"),
+    safeQuery(getSessionUser(), null, "sessionUser"),
   ]);
   const canEditRate = sessionUser?.role === "superadmin";
 

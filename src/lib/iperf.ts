@@ -347,7 +347,11 @@ export async function listSchoolUplinkDailyAvg(
   schoolId: number,
   days = 30,
 ): Promise<UplinkDailyAvgRow[]> {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  // postgres.js can't bind a raw JS Date interpolated into a sql`` fragment (it
+  // isn't tied to a typed column here, so the driver gets a Date where it wants
+  // a string/Buffer and throws). Pass an ISO string and cast it. Drizzle column
+  // operators elsewhere serialize Dates fine — only this raw comparison needs it.
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const tsExpr = sql`coalesce(${uplinkSamples.sampledAt}, ${uplinkSamples.createdAt})`;
   const dayExpr = sql<string>`to_char(${tsExpr}, 'YYYY-MM-DD')`;
   const rows = await db
@@ -359,7 +363,7 @@ export async function listSchoolUplinkDailyAvg(
       outMbps: avg(uplinkSamples.outMbps),
     })
     .from(uplinkSamples)
-    .where(and(eq(uplinkSamples.schoolId, schoolId), sql`${tsExpr} >= ${since}`))
+    .where(and(eq(uplinkSamples.schoolId, schoolId), sql`${tsExpr} >= ${since}::timestamptz`))
     .groupBy(uplinkSamples.chassisId, uplinkSamples.ifindex, dayExpr)
     .orderBy(dayExpr);
   return rows.map((r) => ({
