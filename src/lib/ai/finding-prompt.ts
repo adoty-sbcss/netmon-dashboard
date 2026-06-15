@@ -22,13 +22,20 @@ export function buildFindingFixPrompt(f: FindingForPrompt): string {
     (f.detail ? `Detail: ${f.detail}\n` : "") +
     (f.evidence ? `Evidence: ${f.evidence}\n` : "") +
     (f.recommendation ? `Suggested next step: ${f.recommendation}\n` : "") +
-    `\nDo this in order, using your real-data tools (search_devices, site_findings, ` +
-    `list_scans, device_counts, list_sites) — don't answer generically:\n` +
-    `1. LOCATE it: find the exact device(s) or evidence involved and tell me precisely ` +
-    `where they are — IP, MAC, vendor/model, the school, and the subnet or switch/port ` +
-    `if the data has it. (For a device finding like "MikroTik device," search the device ` +
-    `inventory by that vendor/name.)\n` +
-    `2. CONFIRM it from the data, or say plainly if you can't find it.\n` +
+    `\nImportant: this finding comes from the scheduled AI analysis, so it will NOT ` +
+    `appear in your site_findings/issues tools — do NOT try to "find the finding" or ` +
+    `reply that you can't locate it. The Detail/Evidence above IS the source of truth; ` +
+    `work from it.\n\n` +
+    `Do this in order, using your real-data tools — don't answer generically:\n` +
+    `1. LOCATE the devices involved: pull the concrete identifiers out of the Detail/` +
+    `Evidence above (IPs, MACs, vendor/model, names) and look them up.\n` +
+    `   - Hosts/clients (a printer, a "MikroTik device", DHCP clients by MAC) -> ` +
+    `search_devices (matches hostname/vendor/MAC/IP).\n` +
+    `   - Switches / STP root bridges / uplinks / infrastructure -> search_switches ` +
+    `(STP bridge IDs look like priority/.../<chassis-mac>; search the MAC part).\n` +
+    `   Report exactly where each is: IP, MAC, model, the school, and subnet/port if known.\n` +
+    `2. If a specific device isn't in the current inventory, say so briefly but KEEP GOING ` +
+    `- still give the fix from the evidence; don't stop.\n` +
     `3. FIX it: concrete steps for THIS network, referencing the specific devices you found.\n` +
     `4. Flag anything related worth checking.`
   );

@@ -15,6 +15,7 @@ import {
   listHostsForSchool,
   listFindingsForSchool,
   listScanSnapshotsForSchool,
+  listSwitchesForSchool,
 } from "@/db/queries";
 import { ipInCidr } from "@/lib/net";
 import type { AiToolDef, AiToolExecutor } from "./types";
@@ -74,6 +75,21 @@ export const ASSISTANT_TOOLS: AiToolDef[] = [
         school_id: { type: "number" },
         type: { type: "string" },
         subnet: { type: "string" },
+        text: { type: "string" },
+        limit: { type: "number" },
+      },
+      required: ["school_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_switches",
+    description:
+      "Find SWITCHES / infrastructure at a school by `text` (matches system name, model/description, management IP, or chassis MAC). Use this — not search_devices — for findings about switches, spanning-tree/STP root bridges, uplinks, or infrastructure gear. STP bridge IDs look like `priority/.../<chassis-mac>`; search the MAC part here.",
+    parameters: {
+      type: "object",
+      properties: {
+        school_id: { type: "number" },
         text: { type: "string" },
         limit: { type: "number" },
       },
@@ -182,6 +198,32 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
             type: h.deviceType,
             switch_port: h.switchPort,
             last_seen: h.lastSeenAt,
+          })),
+        });
+      }
+
+      case "search_switches": {
+        const id = num(args.school_id);
+        ensure(id);
+        const limit = Math.min(200, Math.max(1, num(args.limit) || 50));
+        const text = typeof args.text === "string" ? args.text.toLowerCase() : null;
+        let switches = await listSwitchesForSchool(id);
+        if (text) {
+          switches = switches.filter((s) =>
+            [s.systemName, s.systemDescription, s.mgmtIp, s.chassisId].some((f) =>
+              f?.toLowerCase().includes(text),
+            ),
+          );
+        }
+        return JSON.stringify({
+          matched: switches.length,
+          returned: Math.min(switches.length, limit),
+          switches: switches.slice(0, limit).map((s) => ({
+            name: s.systemName,
+            model: s.systemDescription,
+            mgmt_ip: s.mgmtIp,
+            chassis_mac: s.chassisId,
+            last_seen: s.lastSeenAt,
           })),
         });
       }
