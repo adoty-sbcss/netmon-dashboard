@@ -35,6 +35,23 @@ export function dateTime(d: Date | string | null | undefined): string {
   });
 }
 
+/**
+ * Coerce a value that *should* be a timestamp into a real Date (or null).
+ *
+ * Drizzle + postgres.js return SQL aggregates (`max()`/`min()`) and raw
+ * `sql<Date>` expressions as STRINGS even when typed `Date`, because those
+ * expressions carry no column decoder. Calling a Date method (`.getTime()`) on
+ * one throws and 500s the page (this is exactly what broke the Sensors page).
+ * Direct table columns already arrive as real Dates and pass through untouched.
+ * Null-safe and idempotent — safe to wrap any timestamp leaving the query layer.
+ */
+export function asDate(d: Date | string | number | null | undefined): Date | null {
+  if (d == null) return null;
+  if (d instanceof Date) return d;
+  const date = new Date(d);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /** Compact integer formatting: 1234 → "1,234". */
 export function num(n: number | null | undefined): string {
   if (n == null) return "—";

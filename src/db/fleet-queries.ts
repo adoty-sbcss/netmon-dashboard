@@ -16,7 +16,7 @@ import { districts, schools, sensors } from "./schema/app";
 import { desiredConfig } from "./schema/management";
 import { entitiesHost } from "./schema/entities";
 import { scanRuns, findings } from "./schema/netmon";
-import { titleizeSlug } from "../lib/format";
+import { asDate, titleizeSlug } from "../lib/format";
 
 export type Scope = number[] | null;
 
@@ -112,7 +112,7 @@ export async function listFleetSensors(scope: Scope): Promise<FleetSensorRow[]> 
     .groupBy(scanRuns.sensorId)
     .as("last_scan_sq");
 
-  return db
+  const rows = await db
     .select({
       id: sensors.id,
       slug: sensors.slug,
@@ -140,6 +140,11 @@ export async function listFleetSensors(scope: Scope): Promise<FleetSensorRow[]> 
     .leftJoin(lastScan, eq(lastScan.sensorId, sensors.id))
     .where(scopeWhere(districts.id, scope))
     .orderBy(districts.name, schools.name, sensors.slug);
+
+  // `lastScan.last` is a raw `max()` aggregate → arrives as a STRING despite the
+  // `Date` type. Coerce so callers (e.g. sensorHealthFlags' .getTime()) get a
+  // real Date. See asDate(); this was the Sensors-page 500.
+  return rows.map((r) => ({ ...r, lastScanAt: asDate(r.lastScanAt) }));
 }
 
 // ---- global search --------------------------------------------------------

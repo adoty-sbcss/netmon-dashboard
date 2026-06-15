@@ -6,6 +6,8 @@
  * gap). Used by the fleet view + the sensor detail page.
  */
 
+import { asDate } from "./format";
+
 export type HealthLevel = "error" | "warn";
 
 export interface HealthFlag {
@@ -65,27 +67,33 @@ export function sensorHealthFlags(
   s: SensorHealthInput,
   opts: { fleetTopSha?: string | null } = {},
 ): HealthFlag[] {
+  // Defensive coercion: lastScanAt/lastCheckinAt are typed Date but can arrive as
+  // ISO strings when sourced from a SQL aggregate (drizzle's raw sql<Date> drops
+  // the driver decoder) — normalize so the .getTime() math below can't throw and
+  // 500 the page (this is the class of bug that took down Sensors). See asDate().
+  const lastCheckinAt = asDate(s.lastCheckinAt);
+  const lastScanAt = asDate(s.lastScanAt);
   const flags: HealthFlag[] = [];
   const now = Date.now();
-  const checkinMs = s.lastCheckinAt ? now - s.lastCheckinAt.getTime() : Infinity;
+  const checkinMs = lastCheckinAt ? now - lastCheckinAt.getTime() : Infinity;
   const online = checkinMs <= 15 * MIN;
 
   // --- reachability ---
-  if (!s.lastCheckinAt) {
+  if (!lastCheckinAt) {
     flags.push({ code: "never_checkin", level: "error", label: "Never checked in" });
   } else if (checkinMs > HOUR) {
     flags.push({
       code: "offline",
       level: "error",
       label: "Offline",
-      detail: `no check-in for ${ageText(s.lastCheckinAt)}`,
+      detail: `no check-in for ${ageText(lastCheckinAt)}`,
     });
   } else if (checkinMs > 20 * MIN) {
     flags.push({
       code: "late_checkin",
       level: "warn",
       label: "Late check-in",
-      detail: `last check-in ${ageText(s.lastCheckinAt)}`,
+      detail: `last check-in ${ageText(lastCheckinAt)}`,
     });
   }
 
@@ -129,8 +137,8 @@ export function sensorHealthFlags(
   // --- producing data? online but no recent scan reaching us = scanning or
   //     upload is stalled (this is exactly how Trona's SFTP-off state looked) ---
   if (online) {
-    const scanMs = s.lastScanAt ? now - s.lastScanAt.getTime() : Infinity;
-    if (!s.lastScanAt) {
+    const scanMs = lastScanAt ? now - lastScanAt.getTime() : Infinity;
+    if (!lastScanAt) {
       flags.push({
         code: "no_data_ever",
         level: "warn",
@@ -142,7 +150,7 @@ export function sensorHealthFlags(
         code: "stalled_data",
         level: "warn",
         label: "No fresh data",
-        detail: `online, but last scan reached us ${ageText(s.lastScanAt)} — scanning or upload is stalled`,
+        detail: `online, but last scan reached us ${ageText(lastScanAt)} — scanning or upload is stalled`,
       });
     }
   }
