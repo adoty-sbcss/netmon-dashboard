@@ -51,6 +51,9 @@ export interface NeighborLink {
   mgmtIp: string | null;
   vlanId: number | null;
   protocol: string | null;
+  /** Canonical entity this neighbor resolves to (for click-through), if known. */
+  entityKind: "host" | "switch" | null;
+  entityId: number | null;
 }
 
 type Tab = "devices" | "links" | "reach" | "excluded";
@@ -678,7 +681,18 @@ export function DevicesHub({
                   <TableRow key={n.id}>
                     <TableCell className="font-mono text-xs">{n.localPort ?? "—"}</TableCell>
                     <TableCell>
-                      <div className="font-medium">{n.systemName || n.chassisId || "—"}</div>
+                      <div className="font-medium">
+                        {n.entityId && n.entityKind ? (
+                          <Link
+                            href={`${basePath}/${n.entityKind}/${n.entityId}`}
+                            className="text-primary hover:underline"
+                          >
+                            {n.systemName || n.chassisId || "—"}
+                          </Link>
+                        ) : (
+                          n.systemName || n.chassisId || "—"
+                        )}
+                      </div>
                       {n.systemDescription && <div className="max-w-xs truncate text-xs text-muted-foreground" title={n.systemDescription}>{n.systemDescription}</div>}
                     </TableCell>
                     <TableCell className="font-mono text-xs">{n.portId ?? n.portDescription ?? "—"}</TableCell>
@@ -696,7 +710,7 @@ export function DevicesHub({
       {tab === "reach" && (
         <div className="rounded-lg border p-3 sm:p-4">
           {reachability.total > 0 ? (
-            <ReachabilityTable summary={reachability} />
+            <ReachabilityTable summary={reachability} basePath={basePath} />
           ) : (
             <p className="py-8 text-center text-sm text-muted-foreground">
               No reachability probes yet. They appear after the sensor scans the

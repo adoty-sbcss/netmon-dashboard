@@ -68,7 +68,18 @@ export default async function DistrictHostsPage({
                           (h.ip ?? "—")
                         )}
                       </TableCell>
-                      <TableCell>{h.hostname ?? "—"}</TableCell>
+                      <TableCell>
+                        {h.schoolSlug && h.hostname ? (
+                          <Link
+                            href={`/${district.slug}/${h.schoolSlug}/host/${h.entityId}`}
+                            className="hover:underline"
+                          >
+                            {h.hostname}
+                          </Link>
+                        ) : (
+                          (h.hostname ?? "—")
+                        )}
+                      </TableCell>
                       <TableCell className="hidden md:table-cell text-muted-foreground">
                         {h.vendor ?? "—"}
                       </TableCell>

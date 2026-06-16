@@ -1,7 +1,12 @@
 import { notFound } from "next/navigation";
 import { Boxes, Radio, Wifi, WifiOff } from "lucide-react";
 
-import { getDistrictBySlug, getSchoolBySlug, listReachabilityForSchool } from "@/db/queries";
+import {
+  getDistrictBySlug,
+  getSchoolBySlug,
+  listReachabilityForSchool,
+  getSchoolDeviceIndex,
+} from "@/db/queries";
 import { listNeighborsForSchool } from "@/db/district-queries";
 import {
   getInventoryForSchool,
@@ -37,23 +42,34 @@ export default async function DevicesPage({
   const isAdmin = user?.role === "superadmin";
   const basePath = `/${district.slug}/${school.slug}`;
 
-  const [inv, neighborsRaw, reachability] = await Promise.all([
+  const [inv, neighborsRaw, reachability, deviceIndex] = await Promise.all([
     getInventoryForSchool(school.id),
     listNeighborsForSchool(school.id),
     listReachabilityForSchool(school.id),
+    getSchoolDeviceIndex(school.id),
   ]);
-  const neighbors: NeighborLink[] = neighborsRaw.map((n) => ({
-    id: n.id,
-    localPort: n.localPort,
-    systemName: n.systemName,
-    chassisId: n.chassisId,
-    systemDescription: n.systemDescription,
-    portId: n.portId,
-    portDescription: n.portDescription,
-    mgmtIp: n.mgmtIp,
-    vlanId: n.vlanId,
-    protocol: n.protocol,
-  }));
+  const neighbors: NeighborLink[] = neighborsRaw.map((n) => {
+    // A neighbor is a switch/AP — resolve it by chassis (base MAC) then mgmt IP
+    // so the topology link clicks through to its device page.
+    const ref =
+      (n.chassisId ? deviceIndex.byMac.get(n.chassisId.toLowerCase()) : undefined) ??
+      (n.mgmtIp ? deviceIndex.byIp.get(n.mgmtIp) : undefined) ??
+      null;
+    return {
+      id: n.id,
+      localPort: n.localPort,
+      systemName: n.systemName,
+      chassisId: n.chassisId,
+      systemDescription: n.systemDescription,
+      portId: n.portId,
+      portDescription: n.portDescription,
+      mgmtIp: n.mgmtIp,
+      vlanId: n.vlanId,
+      protocol: n.protocol,
+      entityKind: ref?.entityKind ?? null,
+      entityId: ref?.entityId ?? null,
+    };
+  });
 
   const gaps = inv.rows
     .filter((r) => r.snmp === "gap")

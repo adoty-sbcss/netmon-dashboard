@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import Link from "next/link";
 import { CheckCircle2, MinusCircle, Radio, Route, XCircle } from "lucide-react";
 
 import type { ReachabilitySummary } from "@/db/queries";
@@ -16,7 +17,13 @@ function rtt(v: number | null): string {
   return typeof v === "number" ? `${v.toFixed(1)} ms` : "—";
 }
 
-export function ReachabilityTable({ summary }: { summary: ReachabilitySummary }) {
+export function ReachabilityTable({
+  summary,
+  basePath,
+}: {
+  summary: ReachabilitySummary;
+  basePath: string;
+}) {
   const [open, setOpen] = useState<number | null>(null);
 
   if (summary.total === 0) return null;
@@ -57,7 +64,19 @@ export function ReachabilityTable({ summary }: { summary: ReachabilitySummary })
                     onClick={() => hasPath && setOpen(isOpen ? null : r.id)}
                   >
                     <td className="px-3 py-2">
-                      <div className="font-mono text-xs">{r.ip}</div>
+                      <div className="font-mono text-xs">
+                        {r.entityId && r.entityKind ? (
+                          <Link
+                            href={`${basePath}/${r.entityKind}/${r.entityId}`}
+                            className="text-primary hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {r.ip}
+                          </Link>
+                        ) : (
+                          r.ip
+                        )}
+                      </div>
                       {(r.hostname || r.vendor) && (
                         <div className="truncate text-xs text-muted-foreground">
                           {r.hostname || r.vendor}

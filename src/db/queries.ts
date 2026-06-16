@@ -7,7 +7,7 @@
  * than correlated subqueries: simpler to read and the dataset is small.
  */
 import "server-only";
-import { and, count, desc, eq, gte, ilike, inArray, isNotNull, lte, max, min, ne, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, max, min, ne, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./index";
@@ -1037,6 +1037,9 @@ export interface ReachabilityRow {
   traceroutePath: TracerouteHop[];
   checkedAt: Date | null;
   sensorSlug: string;
+  /** Canonical entity this probe's IP resolves to (for click-through), if any. */
+  entityKind: "host" | "switch" | null;
+  entityId: number | null;
 }
 
 export interface ReachabilitySummary {
@@ -1115,12 +1118,18 @@ export async function listReachabilityForSchool(
     .where(inArray(networkReachability.scanRunId, scanIds))
     .orderBy(desc(networkReachability.snmpResponded), networkReachability.ip);
 
-  const rows: ReachabilityRow[] = raw.map((r) => ({
-    ...r,
-    traceroutePath: Array.isArray(r.traceroutePath)
-      ? (r.traceroutePath as TracerouteHop[])
-      : [],
-  }));
+  const index = await getSchoolDeviceIndex(schoolId);
+  const rows: ReachabilityRow[] = raw.map((r) => {
+    const ref = r.ip ? index.byIp.get(r.ip) : undefined;
+    return {
+      ...r,
+      traceroutePath: Array.isArray(r.traceroutePath)
+        ? (r.traceroutePath as TracerouteHop[])
+        : [],
+      entityKind: ref?.entityKind ?? null,
+      entityId: ref?.entityId ?? null,
+    };
+  });
 
   return {
     scanAt,
@@ -1471,6 +1480,44 @@ export async function getDeviceIssues(
     )
     .orderBy(desc(issues.lastSeenAt))
     .limit(20);
+}
+
+/** A canonical entity a raw IP/MAC resolved to, for cross-linking tables. */
+export interface DeviceRef {
+  entityKind: "host" | "switch";
+  entityId: number;
+}
+
+/**
+ * Build IP→entity and MAC→entity lookups for a school so any table that only has
+ * a raw IP/MAC (reachability probes, LLDP neighbors, …) can link to the device's
+ * detail page. Excludes purged devices. Host wins on a shared IP (a switch only
+ * fills an IP no host claimed); chassis_id (switch base MAC) populates byMac too.
+ */
+export async function getSchoolDeviceIndex(
+  schoolId: number,
+): Promise<{ byIp: Map<string, DeviceRef>; byMac: Map<string, DeviceRef> }> {
+  const [hosts, switches] = await Promise.all([
+    db
+      .select({ id: entitiesHost.id, ip: entitiesHost.ip, mac: entitiesHost.mac })
+      .from(entitiesHost)
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNull(entitiesHost.excludedAt))),
+    db
+      .select({ id: entitiesSwitch.id, mgmtIp: entitiesSwitch.mgmtIp, chassisId: entitiesSwitch.chassisId })
+      .from(entitiesSwitch)
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNull(entitiesSwitch.excludedAt))),
+  ]);
+  const byIp = new Map<string, DeviceRef>();
+  const byMac = new Map<string, DeviceRef>();
+  for (const h of hosts) {
+    if (h.ip) byIp.set(h.ip, { entityKind: "host", entityId: h.id });
+    if (h.mac) byMac.set(h.mac.toLowerCase(), { entityKind: "host", entityId: h.id });
+  }
+  for (const s of switches) {
+    if (s.mgmtIp && !byIp.has(s.mgmtIp)) byIp.set(s.mgmtIp, { entityKind: "switch", entityId: s.id });
+    if (s.chassisId) byMac.set(s.chassisId.toLowerCase(), { entityKind: "switch", entityId: s.id });
+  }
+  return { byIp, byMac };
 }
 
 // ---- DHCP -----------------------------------------------------------------
