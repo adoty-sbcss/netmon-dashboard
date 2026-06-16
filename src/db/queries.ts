@@ -1625,6 +1625,9 @@ export interface DhcpClientView {
   types: string[];
   count: number;
   messages: DhcpClientMessage[];
+  /** Canonical entity this client MAC resolves to (for click-through), if known. */
+  entityKind: "host" | "switch" | null;
+  entityId: number | null;
 }
 
 export interface DhcpIssue {
@@ -1646,6 +1649,9 @@ export interface DhcpAnalysis {
     scopes: number;
     /** True/false when an authorized-server policy was supplied (AI-5); else undefined. */
     authorized?: boolean;
+    /** Canonical entity this server IP resolves to (for click-through), if known. */
+    entityKind?: "host" | "switch" | null;
+    entityId?: number | null;
   }[];
   clients: DhcpClientView[];
   issues: DhcpIssue[];
@@ -1693,6 +1699,9 @@ export async function getDhcpAnalysis(
 
   const truncated = rows.length > DHCP_ANALYSIS_LIMIT;
   const obs = truncated ? rows.slice(0, DHCP_ANALYSIS_LIMIT) : rows;
+
+  // Resolve client MACs + server IPs to canonical entities for click-through.
+  const deviceIndex = await getSchoolDeviceIndex(schoolId);
 
   // ---- scopes (keyed by derived network CIDR) ----
   const scopeMap = new Map<
@@ -1769,6 +1778,8 @@ export async function getDhcpAnalysis(
           types: [],
           count: 0,
           messages: [],
+          entityKind: null,
+          entityId: null,
         } satisfies DhcpClientView);
       c.count++;
       if (!c.types.includes(type)) c.types.push(type);
@@ -1788,13 +1799,16 @@ export async function getDhcpAnalysis(
     }
   }
 
-  // finalize client status
+  // finalize client status + resolve the MAC to a device for click-through
   for (const c of clientMap.values()) {
     const t = new Set(c.types);
     if (t.has("ACK")) c.status = "ok";
     else if (t.has("NAK")) c.status = "nak";
     else if (t.has("OFFER") || t.has("REQUEST")) c.status = "incomplete";
     else c.status = "no-response"; // only DISCOVER/INFORM seen, no server reply
+    const ref = deviceIndex.byMac.get(c.clientMac.toLowerCase());
+    c.entityKind = ref?.entityKind ?? null;
+    c.entityId = ref?.entityId ?? null;
   }
 
   const scopes = [...scopeMap.values()]
@@ -1806,13 +1820,18 @@ export async function getDhcpAnalysis(
     .sort((a, b) => b.clients - a.clients);
 
   const servers = [...serverMap.values()]
-    .map((s) => ({
-      ip: s.ip,
-      mac: s.mac,
-      messages: s.messages,
-      scopes: s._scopes.size,
-      ...(authz ? { authorized: authz.has(s.ip) } : {}),
-    }))
+    .map((s) => {
+      const ref = deviceIndex.byIp.get(s.ip);
+      return {
+        ip: s.ip,
+        mac: s.mac,
+        messages: s.messages,
+        scopes: s._scopes.size,
+        entityKind: ref?.entityKind ?? null,
+        entityId: ref?.entityId ?? null,
+        ...(authz ? { authorized: authz.has(s.ip) } : {}),
+      };
+    })
     .sort((a, b) => b.messages - a.messages);
 
   const clients = [...clientMap.values()].sort((a, b) => {

@@ -92,11 +92,18 @@ export function DhcpAnalysisView({
   analysis,
   authorizedServers,
   districtSlug,
+  basePath,
 }: {
   analysis: DhcpAnalysis;
   authorizedServers: string[];
   districtSlug: string;
+  basePath: string;
 }) {
+  // Server IP → resolved entity (for click-through), keyed for the scope chips.
+  const serverRef = useMemo(
+    () => new Map(analysis.servers.map((s) => [s.ip, s] as const)),
+    [analysis.servers],
+  );
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DhcpClientStatus | "all" | "issues">(
     "all",
@@ -327,7 +334,19 @@ export function DhcpAnalysisView({
                                       : "")
                                 }
                               >
-                                {ip}
+                                {(() => {
+                                  const ref = serverRef.get(ip);
+                                  return ref?.entityId && ref.entityKind ? (
+                                    <Link
+                                      href={`${basePath}/${ref.entityKind}/${ref.entityId}`}
+                                      className="hover:underline"
+                                    >
+                                      {ip}
+                                    </Link>
+                                  ) : (
+                                    ip
+                                  );
+                                })()}
                               </Badge>
                             ))
                           )}
@@ -411,6 +430,7 @@ export function DhcpAnalysisView({
                     <ClientRows
                       key={c.clientMac}
                       client={c}
+                      basePath={basePath}
                       open={expanded === c.clientMac}
                       onToggle={() =>
                         setExpanded((cur) => (cur === c.clientMac ? null : c.clientMac))
@@ -439,10 +459,12 @@ function ClientRows({
   client,
   open,
   onToggle,
+  basePath,
 }: {
   client: DhcpClientView;
   open: boolean;
   onToggle: () => void;
+  basePath: string;
 }) {
   return (
     <>
@@ -450,7 +472,19 @@ function ClientRows({
         <TableCell className="text-muted-foreground">
           <ChevronRight className={"size-4 transition-transform " + (open ? "rotate-90" : "")} />
         </TableCell>
-        <TableCell className="font-mono text-xs">{client.clientMac}</TableCell>
+        <TableCell className="font-mono text-xs">
+          {client.entityId && client.entityKind ? (
+            <Link
+              href={`${basePath}/${client.entityKind}/${client.entityId}`}
+              className="text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {client.clientMac}
+            </Link>
+          ) : (
+            client.clientMac
+          )}
+        </TableCell>
         <TableCell>
           <StatusBadge status={client.status} />
         </TableCell>

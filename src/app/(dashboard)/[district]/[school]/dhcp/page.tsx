@@ -68,6 +68,7 @@ export default async function DhcpPage({
           analysis={analysis}
           authorizedServers={[...authorized]}
           districtSlug={district.slug}
+          basePath={`/${district.slug}/${school.slug}`}
         />
       )}
     </div>
