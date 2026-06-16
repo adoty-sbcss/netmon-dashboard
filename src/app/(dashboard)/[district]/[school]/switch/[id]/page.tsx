@@ -22,7 +22,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SwitchPortsTable } from "@/components/device/switch-ports-table";
-import { ConnectedDevicesTable } from "@/components/device/connected-devices-table";
 import { SnmpCommunityForm } from "../../../../settings/network/snmp-community-form";
 import { NeighborSightings } from "./neighbor-sightings";
 
@@ -118,9 +117,12 @@ export default async function SwitchDetailPage({
         </CardContent>
       </Card>
 
-      {/* Per-port detail + devices plugged into each port. */}
-      <SwitchPortsTable ports={sw.ports} />
-      <ConnectedDevicesTable devices={sw.connectedDevices} basePath={basePath} />
+      {/* Per-port detail consolidated with the devices plugged into each port. */}
+      <SwitchPortsTable
+        ports={sw.ports}
+        connectedDevices={sw.connectedDevices}
+        basePath={basePath}
+      />
 
       {/* SNMP — settings + identity. */}
       {sw.mgmtIp && (

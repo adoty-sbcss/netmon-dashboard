@@ -33,7 +33,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SwitchPortsTable } from "@/components/device/switch-ports-table";
-import { ConnectedDevicesTable } from "@/components/device/connected-devices-table";
 import { SnmpCommunityForm } from "../../../../settings/network/snmp-community-form";
 import { DeviceSightings } from "./device-sightings";
 import { HostReclassify } from "./host-reclassify";
@@ -82,6 +81,15 @@ export default async function HostDetailPage({
       k !== "serial" &&
       k !== "classification",
   );
+
+  // Reverse view: where this host is plugged in — switch NAME (fall back to its
+  // mgmt IP) + the access port the bridge FDB resolved.
+  const switchWhere = host.switchName || host.switchPortSource;
+  const connectedTo = host.switchPort
+    ? switchWhere
+      ? `${switchWhere} · ${host.switchPort}`
+      : host.switchPort
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -138,23 +146,19 @@ export default async function HostDetailPage({
             <Field label="Serial" value={host.serial} mono />
             <div className="min-w-0">
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                Switch port
+                Connected to
               </dt>
               <dd className="mt-0.5 truncate font-mono">
-                {host.switchPort ? (
+                {connectedTo ? (
                   host.switchEntityId ? (
                     <Link
                       href={`${basePath}/switch/${host.switchEntityId}`}
                       className="text-primary hover:underline"
                     >
-                      {host.switchPort}
-                      {host.switchPortSource ? ` · ${host.switchPortSource}` : ""}
+                      {connectedTo}
                     </Link>
                   ) : (
-                    <>
-                      {host.switchPort}
-                      {host.switchPortSource ? ` · via ${host.switchPortSource}` : ""}
-                    </>
+                    connectedTo
                   )
                 ) : (
                   <span className="text-muted-foreground">—</span>
@@ -204,9 +208,12 @@ export default async function HostDetailPage({
         </CardContent>
       </Card>
 
-      {/* Ports + connected devices — only when this host is itself infra we crawled. */}
-      <SwitchPortsTable ports={host.ports} />
-      <ConnectedDevicesTable devices={host.connectedDevices} basePath={basePath} />
+      {/* Ports + connected devices (consolidated) — when this host is itself infra. */}
+      <SwitchPortsTable
+        ports={host.ports}
+        connectedDevices={host.connectedDevices}
+        basePath={basePath}
+      />
 
       {/* SNMP — settings + identity (when this host has an IP we can poll). */}
       {host.ip && (

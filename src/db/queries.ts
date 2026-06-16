@@ -698,11 +698,15 @@ export interface SnmpAttr {
 /** A single switch port: its ifIndex plus the CORE-2/INV per-port health record. */
 export type SwitchPort = { ifIndex: string } & SnmpInterface;
 
-/** A device the bridge FDB shows directly attached to a switch/router port. */
+/** A device the bridge FDB shows directly attached to a switch/router port. The
+ *  MAC is matched to the canonical inventory (host OR switch) so the row carries
+ *  an IP, reverse-DNS hostname, device type, and a click-through link. */
 export interface ConnectedDevice {
   ifName: string | null;
   mac: string;
-  hostEntityId: number | null;
+  /** Canonical entity this MAC resolved to (null = not in inventory). */
+  entityId: number | null;
+  entityKind: "host" | "switch" | null;
   hostname: string | null;
   ip: string | null;
   deviceType: DeviceType | null;
@@ -757,6 +761,8 @@ export interface HostDetail {
   switchPortSource: string | null;
   /** Canonical switch entity for switchPortSource (clickable), when known. */
   switchEntityId: number | null;
+  /** That switch's system name (so the host shows a name, not just an IP). */
+  switchName: string | null;
   /** Latest SNMP-reachability for this IP (powers the SNMP card). */
   snmpResponded: boolean | null;
   snmpVersion: string | null;
@@ -908,7 +914,7 @@ export async function getHostDetail(
         ),
     port?.sourceDeviceIp
       ? db
-          .select({ id: entitiesSwitch.id })
+          .select({ id: entitiesSwitch.id, systemName: entitiesSwitch.systemName })
           .from(entitiesSwitch)
           .where(
             and(
@@ -917,7 +923,7 @@ export async function getHostDetail(
             ),
           )
           .limit(1)
-      : Promise.resolve([] as { id: number }[]),
+      : Promise.resolve([] as { id: number; systemName: string | null }[]),
     host.ip
       ? db
           .select({
@@ -963,6 +969,7 @@ export async function getHostDetail(
     switchPort: portLabel(port),
     switchPortSource: port?.sourceDeviceIp ?? null,
     switchEntityId: switchEnt[0]?.id ?? null,
+    switchName: switchEnt[0]?.systemName ?? null,
     snmpResponded: reachRow[0]?.snmpResponded ?? null,
     snmpVersion: reachRow[0]?.snmpVersion ?? null,
     snmpCheckedAt: reachRow[0]?.checkedAt ?? null,
@@ -1343,33 +1350,77 @@ export async function getConnectedDevices(
   const attachments = await getFdbAttachments(schoolId);
   const here = [...attachments.entries()].filter(([, v]) => v.switchIp === deviceIp);
   if (here.length === 0) return [];
-  const hostRows = await db
-    .select({
-      id: entitiesHost.id,
-      mac: entitiesHost.mac,
-      hostname: entitiesHost.hostname,
-      ip: entitiesHost.ip,
-      deviceType: entitiesHost.deviceType,
-      deviceTypeOverride: entitiesHost.deviceTypeOverride,
-      excludedAt: entitiesHost.excludedAt,
-    })
-    .from(entitiesHost)
-    .where(eq(entitiesHost.schoolId, schoolId));
-  const byMac = new Map(hostRows.map((h) => [h.mac.toLowerCase(), h]));
+  // Match each learned MAC to the canonical inventory — a host first, else a
+  // switch (chassis_id IS the switch's base MAC) — so the row gets IP / reverse
+  // DNS / type / a click-through, matching the rest of the inventory.
+  const [hostRows, switchRows] = await Promise.all([
+    db
+      .select({
+        id: entitiesHost.id,
+        mac: entitiesHost.mac,
+        hostname: entitiesHost.hostname,
+        ip: entitiesHost.ip,
+        deviceType: entitiesHost.deviceType,
+        deviceTypeOverride: entitiesHost.deviceTypeOverride,
+        excludedAt: entitiesHost.excludedAt,
+      })
+      .from(entitiesHost)
+      .where(eq(entitiesHost.schoolId, schoolId)),
+    db
+      .select({
+        id: entitiesSwitch.id,
+        chassisId: entitiesSwitch.chassisId,
+        systemName: entitiesSwitch.systemName,
+        mgmtIp: entitiesSwitch.mgmtIp,
+        excludedAt: entitiesSwitch.excludedAt,
+      })
+      .from(entitiesSwitch)
+      .where(eq(entitiesSwitch.schoolId, schoolId)),
+  ]);
+  const hostByMac = new Map(hostRows.map((h) => [h.mac.toLowerCase(), h]));
+  const switchByMac = new Map(switchRows.map((s) => [s.chassisId.toLowerCase(), s]));
   const out: ConnectedDevice[] = [];
   for (const [mac, v] of here) {
-    const h = byMac.get(mac);
-    if (h?.excludedAt) continue; // hidden / purged from inventory
+    const h = hostByMac.get(mac);
+    if (h) {
+      if (h.excludedAt) continue; // hidden / purged from inventory
+      out.push({
+        ifName: v.port,
+        mac,
+        entityId: h.id,
+        entityKind: "host",
+        hostname: h.hostname ?? null,
+        ip: h.ip ?? null,
+        deviceType:
+          ((h.deviceTypeOverride as DeviceType | null) ||
+            (h.deviceType as DeviceType | null)) ??
+          null,
+      });
+      continue;
+    }
+    const s = switchByMac.get(mac);
+    if (s) {
+      if (s.excludedAt) continue;
+      out.push({
+        ifName: v.port,
+        mac,
+        entityId: s.id,
+        entityKind: "switch",
+        hostname: s.systemName ?? null,
+        ip: s.mgmtIp ?? null,
+        deviceType: "switch" as DeviceType,
+      });
+      continue;
+    }
+    // Learned MAC we don't have an entity for — still show it (no link).
     out.push({
       ifName: v.port,
       mac,
-      hostEntityId: h?.id ?? null,
-      hostname: h?.hostname ?? null,
-      ip: h?.ip ?? null,
-      deviceType:
-        ((h?.deviceTypeOverride as DeviceType | null) ||
-          (h?.deviceType as DeviceType | null)) ??
-        null,
+      entityId: null,
+      entityKind: null,
+      hostname: null,
+      ip: null,
+      deviceType: null,
     });
   }
   out.sort(
