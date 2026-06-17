@@ -1,10 +1,10 @@
 # NetMon tunnel-broker — tiny stateless WS relay.
-FROM node:20-slim AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:20-slim AS runtime
+FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 # Run as the built-in unprivileged user.
