@@ -53,5 +53,7 @@ export const issues = pgTable(
   (t) => [
     uniqueIndex("uq_issue_scope_key").on(t.scopeType, t.scopeId, t.issueKey),
     index("idx_issue_district_status").on(t.districtId, t.status),
+    // Muted-issue + school issue-list reads filter (scope_type, scope_id, status).
+    index("idx_issue_scope_status").on(t.scopeType, t.scopeId, t.status),
   ],
 );

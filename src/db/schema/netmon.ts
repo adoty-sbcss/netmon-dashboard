@@ -156,6 +156,9 @@ export const snmpPolls = pgTable(
     // Device-detail pages look up a single device's attributes by IP across a huge
     // table; without this they do a full scan (the main detail-page slowness).
     index("idx_snmp_device_ip").on(t.deviceIp),
+    // Device/switch detail filter `device_ip = X AND oid_name (<>|=) 'ifTable'`;
+    // the composite lets both predicates resolve from one index.
+    index("idx_snmp_device_oid").on(t.deviceIp, t.oidName),
   ],
 );
 
@@ -183,6 +186,9 @@ export const hostSwitchPorts = pgTable(
   (t) => [
     index("idx_host_switch_ports_scan").on(t.scanRunId),
     index("idx_host_switch_ports_mac").on(t.mac),
+    // FDB attachment lookups key on the polled switch/gateway IP across this
+    // fast-growing per-scan table (map overlay + switch/host detail "connected").
+    index("idx_host_switch_ports_source_ip").on(t.sourceDeviceIp),
   ],
 );
 

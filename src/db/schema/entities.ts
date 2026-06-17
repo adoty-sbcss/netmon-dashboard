@@ -61,6 +61,8 @@ export const entitiesSwitch = pgTable(
   (t) => [
     uniqueIndex("uq_switch_district_chassis").on(t.districtId, t.chassisId),
     index("idx_switch_school").on(t.schoolId),
+    // Host/switch detail + map resolve switches by management IP.
+    index("idx_switch_mgmt_ip").on(t.mgmtIp),
   ],
 );
 
@@ -119,6 +121,8 @@ export const entitiesHost = pgTable(
   (t) => [
     uniqueIndex("uq_host_district_mac").on(t.districtId, t.mac),
     index("idx_host_school").on(t.schoolId),
+    // Inventory + district hosts sort/look up by IP; host detail resolves by IP.
+    index("idx_host_ip").on(t.ip),
   ],
 );
 

@@ -330,6 +330,13 @@
       "when": 1781529956997,
       "tag": "0046_jazzy_slipstream",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1781671739366,
+      "tag": "0047_giant_chronomancer",
+      "breakpoints": true
     }
   ]
 }
