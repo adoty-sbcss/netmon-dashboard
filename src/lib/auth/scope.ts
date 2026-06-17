@@ -6,6 +6,7 @@
  * everything; otherwise the user sees only the districts they're granted.
  */
 import "server-only";
+import { cache } from "react";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -19,8 +20,12 @@ export interface UserScope {
   districtIds: number[];
 }
 
-/** Resolve the set of districts a user may access. */
-export async function getUserScope(user: SessionUser): Promise<UserScope> {
+/**
+ * Resolve the set of districts a user may access.
+ * Wrapped in React `cache()` — the dashboard layout and the district layout both
+ * resolve scope per request; cache() keys on the (request-stable) user object.
+ */
+export const getUserScope = cache(async (user: SessionUser): Promise<UserScope> => {
   if (user.role === "superadmin") return { all: true, districtIds: [] };
 
   const rows = await db
@@ -51,7 +56,7 @@ export async function getUserScope(user: SessionUser): Promise<UserScope> {
   }
 
   return { all: false, districtIds: [...districtIds] };
-}
+});
 
 /** Convenience: may this user access a given district id? */
 export function scopeAllowsDistrict(scope: UserScope, districtId: number): boolean {

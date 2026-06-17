@@ -7,6 +7,7 @@
  * than correlated subqueries: simpler to read and the dataset is small.
  */
 import "server-only";
+import { cache } from "react";
 import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, max, min, ne, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
@@ -207,14 +208,14 @@ export async function listDistricts(
   }));
 }
 
-export async function getDistrictBySlug(slug: string) {
+export const getDistrictBySlug = cache(async (slug: string) => {
   const [row] = await db
     .select()
     .from(districts)
     .where(eq(districts.slug, slug))
     .limit(1);
   return row ?? null;
-}
+});
 
 // ---- schools --------------------------------------------------------------
 
@@ -282,14 +283,14 @@ export async function listSchools(districtId: number): Promise<SchoolSummary[]> 
   }));
 }
 
-export async function getSchoolBySlug(districtId: number, slug: string) {
+export const getSchoolBySlug = cache(async (districtId: number, slug: string) => {
   const [row] = await db
     .select()
     .from(schools)
     .where(and(eq(schools.districtId, districtId), eq(schools.slug, slug)))
     .limit(1);
   return row ?? null;
-}
+});
 
 // ---- school detail --------------------------------------------------------
 
@@ -315,52 +316,47 @@ export async function listSensorsForSchool(
 
   if (sensorRows.length === 0) return [];
 
-  // Latest scan per sensor (id + startedAt) via a window of max startedAt.
-  const latest = await db
-    .select({
+  // Latest scan run per sensor (id + startedAt) in ONE query via DISTINCT ON,
+  // tie-broken by the highest id. Replaces the previous per-sensor id lookup +
+  // device-count query (2 extra round-trips PER sensor — an N+1 on the hot
+  // school landing page).
+  const latestRuns = await db
+    .selectDistinctOn([scanRuns.sensorId], {
       sensorId: scanRuns.sensorId,
-      lastScanAt: max(scanRuns.startedAt),
+      scanId: scanRuns.id,
+      lastScanAt: scanRuns.startedAt,
     })
     .from(scanRuns)
     .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
     .where(eq(sensors.schoolId, schoolId))
-    .groupBy(scanRuns.sensorId);
+    .orderBy(scanRuns.sensorId, desc(scanRuns.startedAt), desc(scanRuns.id));
 
-  const latestMap = new Map(latest.map((r) => [r.sensorId!, r.lastScanAt]));
+  const latestMap = new Map(latestRuns.map((r) => [r.sensorId!, r]));
 
-  // Resolve the scan_run id + device count for each sensor's latest scan.
-  const scanInfo = await Promise.all(
-    sensorRows.map(async (s) => {
-      const when = latestMap.get(s.id) ?? null;
-      if (!when) return { sensorId: s.id, scanId: null, deviceCount: 0 };
-      const [run] = await db
-        .select({ id: scanRuns.id })
-        .from(scanRuns)
-        .where(
-          and(eq(scanRuns.sensorId, s.id), eq(scanRuns.startedAt, when)),
-        )
-        .orderBy(desc(scanRuns.id))
-        .limit(1);
-      if (!run) return { sensorId: s.id, scanId: null, deviceCount: 0 };
-      const [dc] = await db
-        .select({ c: count() })
+  // Device counts for those latest scans in ONE grouped query.
+  const scanIds = latestRuns.map((r) => r.scanId);
+  const deviceCounts = scanIds.length
+    ? await db
+        .select({ scanId: devices.scanRunId, c: count() })
         .from(devices)
-        .where(eq(devices.scanRunId, run.id));
-      return { sensorId: s.id, scanId: run.id, deviceCount: dc?.c ?? 0 };
-    }),
-  );
-  const infoMap = new Map(scanInfo.map((r) => [r.sensorId, r]));
+        .where(inArray(devices.scanRunId, scanIds))
+        .groupBy(devices.scanRunId)
+    : [];
+  const dcMap = new Map(deviceCounts.map((r) => [r.scanId, r.c]));
 
-  return sensorRows.map((s) => ({
-    id: s.id,
-    slug: s.slug,
-    name: s.name,
-    lastCheckinAt: s.lastCheckinAt,
-    agentVersion: s.agentVersion,
-    lastScanAt: latestMap.get(s.id) ?? null,
-    lastScanId: infoMap.get(s.id)?.scanId ?? null,
-    deviceCount: infoMap.get(s.id)?.deviceCount ?? 0,
-  }));
+  return sensorRows.map((s) => {
+    const lr = latestMap.get(s.id);
+    return {
+      id: s.id,
+      slug: s.slug,
+      name: s.name,
+      lastCheckinAt: s.lastCheckinAt,
+      agentVersion: s.agentVersion,
+      lastScanAt: lr?.lastScanAt ?? null,
+      lastScanId: lr?.scanId ?? null,
+      deviceCount: lr ? (dcMap.get(lr.scanId) ?? 0) : 0,
+    };
+  });
 }
 
 export interface SchoolStats {
@@ -1066,9 +1062,9 @@ function isReachable(r: { pingAlive: boolean | null; tracerouteHops: number | nu
  * Uses the latest scan PER SENSOR so a multi-IDF school shows each sensor's local
  * view. Answers "which switches are out there, and which answer SNMP vs only ping?"
  */
-export async function listReachabilityForSchool(
+export const listReachabilityForSchool = cache(async (
   schoolId: number,
-): Promise<ReachabilitySummary> {
+): Promise<ReachabilitySummary> => {
   // Latest scan per sensor that produced reachability rows.
   const seen = await db
     .select({
@@ -1139,7 +1135,7 @@ export async function listReachabilityForSchool(
     unreachable: rows.filter((r) => !isReachable(r)).length,
     rows,
   };
-}
+});
 
 export interface SwitchAppearance {
   scanId: number;
@@ -1494,9 +1490,9 @@ export interface DeviceRef {
  * detail page. Excludes purged devices. Host wins on a shared IP (a switch only
  * fills an IP no host claimed); chassis_id (switch base MAC) populates byMac too.
  */
-export async function getSchoolDeviceIndex(
+export const getSchoolDeviceIndex = cache(async (
   schoolId: number,
-): Promise<{ byIp: Map<string, DeviceRef>; byMac: Map<string, DeviceRef> }> {
+): Promise<{ byIp: Map<string, DeviceRef>; byMac: Map<string, DeviceRef> }> => {
   const [hosts, switches] = await Promise.all([
     db
       .select({ id: entitiesHost.id, ip: entitiesHost.ip, mac: entitiesHost.mac })
@@ -1518,7 +1514,7 @@ export async function getSchoolDeviceIndex(
     if (s.chassisId) byMac.set(s.chassisId.toLowerCase(), { entityKind: "switch", entityId: s.id });
   }
   return { byIp, byMac };
-}
+});
 
 // ---- DHCP -----------------------------------------------------------------
 

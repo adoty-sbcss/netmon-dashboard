@@ -4,6 +4,7 @@
  * this — it only checks the cookie signature via session.ts.
  */
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 
@@ -25,8 +26,12 @@ export interface SessionUser {
   mustChangePassword: boolean;
 }
 
-/** Load the authenticated user from the session cookie, or null. */
-export async function getSessionUser(): Promise<SessionUser | null> {
+/**
+ * Load the authenticated user from the session cookie, or null.
+ * Wrapped in React `cache()` so the cookie verify + users SELECT runs once per
+ * request even though the layout(s) and most leaf pages each call it.
+ */
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const jar = await cookies();
   const claims = await verifySessionToken(jar.get(SESSION_COOKIE)?.value);
   if (!claims) return null;
@@ -54,7 +59,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     isBreakGlass: u.isBreakGlass,
     mustChangePassword: u.mustChangePassword,
   };
-}
+});
 
 /** Issue/refresh the session cookie for a user. */
 export async function setSessionCookie(

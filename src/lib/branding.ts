@@ -9,6 +9,7 @@
  * visits /settings/branding.
  */
 import "server-only";
+import { cache } from "react";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -39,7 +40,10 @@ export interface BrandingView {
   version: number;
 }
 
-async function getRow() {
+// Wrapped in React `cache()`: the root layout reads branding twice
+// (generateMetadata + body) and the dashboard layout once, so the singleton row
+// is fetched ~3× per page — cache() collapses that to a single read per request.
+const getRow = cache(async () => {
   try {
     const [row] = await db
       .select()
@@ -53,7 +57,7 @@ async function getRow() {
     // defaults / no custom asset.
     return null;
   }
-}
+});
 
 
 export async function getBranding(): Promise<BrandingView> {

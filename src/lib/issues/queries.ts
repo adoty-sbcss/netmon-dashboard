@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
 import { issues } from "@/db/schema";
@@ -98,11 +98,11 @@ export async function listIssuesForSchool(
 }
 
 export async function countOpenIssuesForDistrict(districtId: number): Promise<number> {
-  const rows = await db
-    .select({ id: issues.id })
+  const [row] = await db
+    .select({ c: count() })
     .from(issues)
     .where(and(eq(issues.districtId, districtId), inArray(issues.status, OPEN)));
-  return rows.length;
+  return row?.c ?? 0;
 }
 
 /**
@@ -128,11 +128,11 @@ export async function getMutedIssues(
 }
 
 export async function countOpenIssuesForSchool(schoolId: number): Promise<number> {
-  const rows = await db
-    .select({ id: issues.id })
+  const [row] = await db
+    .select({ c: count() })
     .from(issues)
     .where(
       and(eq(issues.scopeType, "school"), eq(issues.scopeId, schoolId), inArray(issues.status, OPEN)),
     );
-  return rows.length;
+  return row?.c ?? 0;
 }

@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { IperfChart } from "./iperf-chart";
+import { IperfChart } from "./iperf-chart-dynamic";
 import { SpeedtestLatest } from "./speedtest-latest";
 import { CommittedRateForm } from "./committed-rate-form";
 

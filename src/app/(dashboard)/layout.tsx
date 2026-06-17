@@ -35,9 +35,13 @@ export default async function DashboardLayout({
   if (user.mustChangePassword) redirect("/account/change-password");
 
   const scope = await getUserScope(user);
-  const tree = await getNavTree({ districtIds: scope.all ? null : scope.districtIds });
-  const b = await getBranding();
-  const assistant = await getAssistantIdentity();
+  // These three are mutually independent; load them concurrently rather than
+  // stacking their latencies on every page navigation.
+  const [tree, b, assistant] = await Promise.all([
+    getNavTree({ districtIds: scope.all ? null : scope.districtIds }),
+    getBranding(),
+    getAssistantIdentity(),
+  ]);
 
   return (
     <SidebarProvider>
