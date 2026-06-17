@@ -8,7 +8,7 @@
  */
 import "server-only";
 import { cache } from "react";
-import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, max, min, ne, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, exists, gte, ilike, inArray, isNotNull, isNull, lte, max, min, ne, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./index";
@@ -2221,15 +2221,28 @@ function hostOs(attributes: unknown): string | null {
 async function getFdbAttachments(
   schoolId: number,
 ): Promise<Map<string, { switchIp: string; port: string | null }>> {
-  // Latest scan PER SENSOR that produced FDB rows — computed in SQL so we don't
-  // load 30 days of forwarding-table history just to keep the freshest scan
-  // (this was a major device-detail + map slowdown).
+  // Latest scan PER SENSOR that produced FDB rows. FDB only lands on the periodic
+  // SNMP/topology crawl (not every scan), so we need the latest scan that HAS
+  // forwarding-table rows. Find it by MAXing scan_runs.id and probing the indexed
+  // host_switch_ports.scan_run_id via EXISTS — instead of aggregating
+  // max(host_switch_ports.scan_run_id) over 30 days of FDB history, which scanned
+  // the entire (huge, per-MAC-per-scan) table and was the residual switch-detail +
+  // map slowdown after the INV-6 fix only optimized the subsequent data load.
   const latestRows = await db
-    .select({ sensorId: scanRuns.sensorId, maxScan: max(hostSwitchPorts.scanRunId) })
-    .from(hostSwitchPorts)
-    .innerJoin(scanRuns, eq(hostSwitchPorts.scanRunId, scanRuns.id))
+    .select({ sensorId: scanRuns.sensorId, maxScan: max(scanRuns.id) })
+    .from(scanRuns)
     .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
-    .where(eq(sensors.schoolId, schoolId))
+    .where(
+      and(
+        eq(sensors.schoolId, schoolId),
+        exists(
+          db
+            .select({ x: sql`1` })
+            .from(hostSwitchPorts)
+            .where(eq(hostSwitchPorts.scanRunId, scanRuns.id)),
+        ),
+      ),
+    )
     .groupBy(scanRuns.sensorId);
   const scanIds = latestRows
     .map((r) => r.maxScan)
