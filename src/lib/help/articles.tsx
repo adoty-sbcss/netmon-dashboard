@@ -637,6 +637,45 @@ const deviceInventory: HelpArticle = {
   ],
 };
 
+const deviceDetail: HelpArticle = {
+  slug: "device-detail-page",
+  title: "Read a device's detail page",
+  summary: "Open any device for its ports, what's plugged into each one, SNMP status, findings, and history — and fix a wrong device type.",
+  category: "Monitoring",
+  kind: "guide",
+  keywords: [
+    "device", "detail", "ports", "poe", "connected", "plugged in", "switch", "host",
+    "snmp", "recategorize", "reclassify", "device type", "duplex", "errors", "stp",
+    "bridge", "fdb", "sightings", "findings",
+  ],
+  updated: "2026-06-16",
+  blocks: [
+    { kind: "callout", tone: "info", text: <>Click any device — on the map, in the device list, or in a switch&apos;s port table — to open its detail page. Switches and routers get a live per-port view; every device shows its identity, history, and any findings about it.</> },
+    { kind: "h", text: "Ports — and what's on them" },
+    { kind: "p", text: <>On a switch or router, the <strong>Ports</strong> card lists every interface with its <strong>status, speed, PoE, duplex, errors, and STP</strong> state. The <strong>Connected device</strong> column shows the device(s) the switch learned on that port, matched to your inventory — click one to jump straight to it.</> },
+    { kind: "steps", items: [
+      <><strong>Hide down ports</strong> trims the table to ports that are up (or still have a device learned on them).</>,
+      <><strong>PoE</strong> reads <em>On</em> with wattage/class when a port is powering a device, or <em>Fault</em> / <em>Searching</em> / <em>Off</em>.</>,
+      <>An <strong>STP</strong> badge of &quot;blocking&quot; shows only on an <em>up</em> port — that&apos;s a redundant link your switches are holding as a standby backup, which is normal. (The PoE, duplex, errors, and STP columns appear as the window gets wider.)</>,
+    ]},
+    { kind: "callout", tone: "info", text: <>PoE and port descriptions fill in only once the sensor has crawled the switch over SNMP. If they stay blank, see <strong>Get your switches to report (SNMP)</strong>.</> },
+    { kind: "h", text: "Where a host is plugged in" },
+    { kind: "p", text: <>On a regular host, <strong>Connected to</strong> names the switch and port it&apos;s attached to (from that switch&apos;s bridge table) — click through to the switch.</> },
+    { kind: "h", text: "Fix a wrong device type" },
+    { kind: "steps", items: [
+      <>Next to the type badge, choose the correct type and click <strong>Set type</strong>. It sticks across future scans and overrides the auto guess everywhere.</>,
+      <><strong>Reset to auto</strong> clears your override. (Setting types is superadmin-only.)</>,
+    ]},
+    { kind: "h", text: "SNMP, findings & history" },
+    { kind: "steps", items: [
+      <>The <strong>SNMP</strong> card shows whether the device answered and, under <strong>Works on this device</strong>, the read community that succeeded (or &quot;none worked&quot;). Superadmins can set the district read-only community right there.</>,
+      <><strong>Findings about this device</strong> gathers any AI / issue findings that mention it.</>,
+      <><strong>Sightings</strong> at the bottom are collapsed by default — expand them to see the device&apos;s history over time.</>,
+    ]},
+    { kind: "callout", tone: "info", text: <>Looking for the whole inventory instead of one device? See <strong>Understanding the device list</strong>.</> },
+  ],
+};
+
 const aiFindings: HelpArticle = {
   slug: "make-sense-of-ai-findings",
   title: "Make sense of AI findings",
@@ -829,6 +868,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   // Monitoring
   networkMap,
   deviceInventory,
+  deviceDetail,
   aiFindings,
   speedBandwidth,
   securityPage,
