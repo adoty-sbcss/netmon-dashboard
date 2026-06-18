@@ -5,6 +5,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -31,9 +32,14 @@ const COLORS = [
 export function IperfChart({
   series,
   keys,
+  referenceY,
+  referenceLabel,
 }: {
   series: Array<Record<string, number>>;
   keys: string[];
+  /** Optional horizontal reference line (e.g. the contracted WAN rate). */
+  referenceY?: number | null;
+  referenceLabel?: string;
 }) {
   if (series.length === 0 || keys.length === 0) {
     return (
@@ -77,6 +83,21 @@ export function IperfChart({
             formatter={(v) => [`${Number(v).toFixed(1)} Mbps`]}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
+          {referenceY != null && referenceY > 0 && (
+            <ReferenceLine
+              y={referenceY}
+              stroke="var(--destructive)"
+              strokeDasharray="6 4"
+              strokeWidth={1.5}
+              ifOverflow="extendDomain"
+              label={{
+                value: referenceLabel ?? `${referenceY} Mbps`,
+                position: "insideTopRight",
+                fontSize: 11,
+                fill: "var(--destructive)",
+              }}
+            />
+          )}
           {keys.map((k, i) => (
             <Line
               key={k}

@@ -5,22 +5,30 @@
  *   npm run seed:demo -- --reset      # wipe the demo district first, then recreate
  *   npm run seed:demo -- --keep-bundles  # leave the generated bundle dirs on disk
  *
- * HOW IT WORKS (hybrid, see the chat that produced this):
- *   1. It SYNTHESIZES extracted NetMon bundle directories on disk (the exact layout
- *      src/ingest/bundle.ts expects) and runs them through the REAL ingest pipeline
- *      (ingestBundle). That produces authentic devices, switch/host entities, the
- *      physical + logical topology maps, device classification, uplink-utilization
- *      samples, and the daily health rollup — all from production code, so it can
- *      never drift out of sync with the schema.
- *   2. It then DIRECTLY SEEDS the `issues` and `ai_analyses` tables, which are NOT
- *      produced from bundles (the sensor's findings.json feeds the time-series
- *      `findings` table; real issues come from the AI reconciler). This is what
- *      gives the demo its open -> acknowledged -> resolved narrative and the
- *      AI-report screen with side-by-side model findings.
+ * Env toggles mirror the flags for the in-Azure job run (az can't pass --force):
+ *   SEED_DEMO_ALLOW_PROD=1  (= --force)   SEED_DEMO_RESET=1  (= --reset)
  *
- * SAFETY: intended for a LOCAL dev database. Everything it creates lives under the
- * district slug `demo-usd`; --reset only ever touches that district. It will refuse
- * to run against a DATABASE_URL that doesn't look local unless --force is passed.
+ * HOW IT WORKS (hybrid):
+ *   1. SYNTHESIZES extracted NetMon bundle dirs (exact src/ingest/bundle.ts layout)
+ *      and runs them through the REAL ingest pipeline → authentic devices, switch/
+ *      host entities, physical+logical maps, device classification (incl. the SNMP
+ *      bridge-table FDB chain so the host detail page shows switch + exact port),
+ *      uplink-utilization samples, and the daily health rollup.
+ *   2. DIRECTLY SEEDS the tables ingest does NOT produce: `issues` (the AI findings
+ *      slate, incl. the hero flapping-port finding with a drafted fix), `ai_analyses`
+ *      (the side-by-side AI report), the school WAN `committed rate`, public
+ *      `speedtest` / internal `iperf` / `latency` results, and patches the demo
+ *      `sensors` rows so they read HEALTHY (recent check-in, on-fleet version).
+ *
+ * SCENARIO ("Highlight Video v1"): Demo Unified School District, two sites.
+ *   • Roosevelt High = HERO: larger (~50 devices), core + 4 access switches, HEALTHY
+ *     WAN; the hero finding is a flapping core port (~40 transitions/hr) with a fix.
+ *   • Lincoln Elementary = supporting: smaller (~20 devices), SATURATED WAN (~95% of
+ *     the contracted rate) so the uplink chart rides the reference line.
+ *
+ * SAFETY: built for a LOCAL dev DB; everything lives under slug `demo-usd`, and
+ * --reset only ever touches that district. Refuses a non-local DATABASE_URL unless
+ * --force / SEED_DEMO_ALLOW_PROD=1.
  *
  * Run under tsx (no Next runtime), same as seed-admin.ts.
  */
@@ -34,22 +42,26 @@ import { db } from "./index";
 import {
   districts,
   schools,
+  sensors,
   topologySnapshots,
   ingestedBundles,
   issues,
   aiAnalyses,
+  schoolCommittedRate,
+  speedtestResults,
+  iperfResults,
+  latencyResults,
 } from "./schema";
 import type { AiFinding } from "./schema/ai";
 import { ingestBundle } from "../ingest/ingest";
 import { issueKeyFromTitle } from "../lib/issues/reconcile";
+import { fleetTopSha } from "../lib/sensor-health";
 
 // ---------------------------------------------------------------------------
 // Tunables
 // ---------------------------------------------------------------------------
 
 const DISTRICT_SLUG = "demo-usd";
-// Clean, realistic name — the amber "Demo" badge (driven by districts.is_demo)
-// is what marks it as sample data, so the name itself stays normal-looking.
 const DISTRICT_NAME = "Demo Unified School District";
 
 const NOW = Date.now();
@@ -58,8 +70,16 @@ const DAY = 24 * HOUR;
 const iso = (ms: number) => new Date(ms).toISOString();
 const date = (ms: number) => new Date(ms);
 
+// Two crawl samples 5 min apart → the uplink rate = octet delta / 300s. Kept
+// recent so "last scan" reads fresh (sensors show healthy, not stalled).
+const SAMPLE_SECS = 300;
+const SCAN1_MS = NOW - 600_000; // 10 min ago
+const SCAN2_MS = NOW - 300_000; // 5 min ago
+/** Octet delta that yields `mbps` over the SAMPLE_SECS window. */
+const octetsFor = (mbps: number) => Math.round((mbps * 1e6 * SAMPLE_SECS) / 8);
+
 // ---------------------------------------------------------------------------
-// Tiny deterministic helpers (stable output across runs — nicer for screenshots)
+// Helpers
 // ---------------------------------------------------------------------------
 
 /** Stable MAC from a seed string + a vendor OUI prefix (so it looks real). */
@@ -73,6 +93,11 @@ function mac(oui: string, seed: string): string {
   return `${oui}:${b(0)}:${b(1)}:${b(2)}`;
 }
 
+/** MAC "ac:bc:32:1a:2b:3c" → decimal-octet OID suffix "172.188.50.26.43.60". */
+function macOctets(m: string): string {
+  return m.split(":").map((h) => parseInt(h, 16)).join(".");
+}
+
 // ---------------------------------------------------------------------------
 // Device / switch / school specs
 // ---------------------------------------------------------------------------
@@ -82,110 +107,68 @@ interface HostSpec {
   vendor: string;
   oui: string;
   ip: string; // last octet appended to the school subnet base
-  /** mDNS/SSDP hint → strong classifier signal (printer|camera|chromecast|...). */
   serviceHint?: string;
   serviceTypes?: string[];
+  /** A device NetMon found but couldn't classify (blank vendor/hostname). */
+  unidentified?: boolean;
 }
 
 interface SwitchSpec {
-  chassis: string; // chassis id (also the entity dedup key)
+  chassis: string;
   name: string;
   descr: string;
   mgmtIp: string;
-  /** This switch's uplink toward the core, for the utilization story. */
-  uplinkIfindex?: string;
-  uplinkSpeed?: number;
-  /** Mark a redundant link from this switch as STP-blocked on the map. */
-  blockedIfindex?: string;
 }
 
 interface SchoolSpec {
   slug: string;
   name: string;
   sensor: string;
-  subnet: string; // e.g. "10.20.10" — hosts get .<ip>
-  cidr: string; // e.g. "10.20.10.0/24"
+  subnet: string;
+  cidr: string;
   gatewayIp: string;
   gatewayMac: string;
   vlan: number;
   core: SwitchSpec;
   access: SwitchSpec[];
   hosts: HostSpec[];
-  /** A second DHCP server seen on the wire = rogue. Drives the critical issue. */
+  // --- WAN uplink (PERF-3) ---
+  committedMbps: number;
+  uplinkInMbps: number;
+  uplinkOutMbps: number;
+  // --- hero finding: a flapping port on the core (Roosevelt only) ---
+  flappingPort?: { ifindex: string; name: string; perHour: number };
+  // --- background findings ---
   rogueDhcpIp?: string;
   rogueDhcpMac?: string;
-  /** A resolver that rewrites NXDOMAIN (ad-injection / captive filter). */
-  nxdomainRewriteResolver?: string;
-  /** Inject an STP topology-change event (access ring flap). */
-  stpFlapBridge?: string;
-  /** Broadcast as a fraction of capture, for the storm narrative. */
+  loop?: boolean; // spanning-tree loop (looped-cable narrative)
   broadcastPct: number;
 }
 
-// ---- LINCOLN ELEMENTARY — the mostly-healthy site ----
+/** Expand a repeated device class into N hosts with sequential names + IPs. */
+function fleet(
+  prefix: string,
+  vendor: string,
+  oui: string,
+  ipStart: number,
+  count: number,
+  extra: Partial<HostSpec> = {},
+): HostSpec[] {
+  return Array.from({ length: count }, (_, i) => ({
+    host: `${prefix}-${String(i + 1).padStart(2, "0")}`,
+    vendor,
+    oui,
+    ip: String(ipStart + i),
+    ...extra,
+  }));
+}
 
-const LINCOLN: SchoolSpec = {
-  slug: "lincoln-es",
-  name: "Lincoln Elementary",
-  sensor: "mdf",
-  subnet: "10.20.10",
-  cidr: "10.20.10.0/24",
-  gatewayIp: "10.20.10.1",
-  gatewayMac: mac("00:1b:17", "lincoln-gw"),
-  vlan: 10,
-  broadcastPct: 1.2,
-  core: {
-    chassis: mac("00:1b:54", "lincoln-core"),
-    name: "lincoln-core-sw1",
-    descr: "Cisco IOS Software, C9300 Software (CAT9K_IOSXE), Version 17.9",
-    mgmtIp: "10.20.10.2",
-    uplinkIfindex: "49",
-    uplinkSpeed: 1000,
-  },
-  access: [
-    {
-      chassis: mac("00:1b:54", "lincoln-asw1"),
-      name: "lincoln-asw-1",
-      descr: "Cisco IOS Software, C9200L Software, Version 17.9",
-      mgmtIp: "10.20.10.3",
-    },
-    {
-      chassis: mac("00:1b:54", "lincoln-asw2"),
-      name: "lincoln-asw-2",
-      descr: "Aruba JL675A 6300M Switch Software, Version 10.10",
-      mgmtIp: "10.20.10.4",
-    },
-  ],
-  hosts: [
-    { host: "lib-laserjet-01", vendor: "HP Inc.", oui: "3c:52:82", ip: "31",
-      serviceHint: "printer", serviceTypes: ["_ipp._tcp.local", "_pdl-datastream._tcp.local"] },
-    { host: "office-mfp-canon", vendor: "Canon Inc.", oui: "00:1e:8f", ip: "32",
-      serviceHint: "printer", serviceTypes: ["_ipp._tcp.local"] },
-    { host: "rm12-appletv", vendor: "Apple, Inc.", oui: "ac:bc:32", ip: "40",
-      serviceHint: "apple-av", serviceTypes: ["_airplay._tcp.local", "_raop._tcp.local"] },
-    { host: "library-chromecast", vendor: "Google, Inc.", oui: "f4:f5:d8", ip: "41",
-      serviceHint: "chromecast", serviceTypes: ["_googlecast._tcp.local"] },
-    { host: "promethean-rm8", vendor: "Promethean Limited", oui: "00:23:a7", ip: "45" },
-    { host: "ap-bldg-a-1", vendor: "Aruba Networks", oui: "20:4c:03", ip: "11" },
-    { host: "ap-bldg-a-2", vendor: "Aruba Networks", oui: "20:4c:03", ip: "12" },
-    { host: "ap-bldg-b-1", vendor: "Aruba Networks", oui: "20:4c:03", ip: "13" },
-    { host: "axis-cam-frontdoor", vendor: "Axis Communications AB", oui: "ac:cc:8e", ip: "61",
-      serviceHint: "camera", serviceTypes: ["_axis-video._tcp.local", "_rtsp._tcp.local"] },
-    { host: "axis-cam-playground", vendor: "Axis Communications AB", oui: "ac:cc:8e", ip: "62",
-      serviceHint: "camera", serviceTypes: ["_rtsp._tcp.local"] },
-    { host: "srv-dc01", vendor: "Dell Inc.", oui: "00:14:22", ip: "20" },
-    { host: "synology-nas", vendor: "Synology Incorporated", oui: "00:11:32", ip: "22" },
-    { host: "yealink-frontoffice", vendor: "Yealink Network", oui: "80:5e:c0", ip: "70" },
-    { host: "pc-lab204-01", vendor: "Dell Inc.", oui: "18:db:f2", ip: "120" },
-    { host: "pc-lab204-02", vendor: "Dell Inc.", oui: "18:db:f2", ip: "121" },
-    { host: "cb-cart-a-01", vendor: "Google, Inc.", oui: "a4:77:33", ip: "130" },
-    { host: "cb-cart-a-02", vendor: "Google, Inc.", oui: "a4:77:33", ip: "131" },
-    { host: "cb-cart-a-03", vendor: "Google, Inc.", oui: "a4:77:33", ip: "132" },
-    { host: "fw-edge-01", vendor: "Fortinet, Inc.", oui: "00:09:0f", ip: "1" },
-  ],
-};
+const AP = "Cisco Meraki";
+const HP = "HP Inc.";
+const DELL = "Dell Inc.";
+const GOOG = "Google, Inc.";
 
-// ---- ROOSEVELT HIGH — the problem site (drives the critical/high issues) ----
+// ---- ROOSEVELT HIGH — the HERO site ----
 
 const ROOSEVELT: SchoolSpec = {
   slug: "roosevelt-hs",
@@ -196,100 +179,183 @@ const ROOSEVELT: SchoolSpec = {
   gatewayIp: "10.30.20.1",
   gatewayMac: mac("00:1b:17", "roosevelt-gw"),
   vlan: 20,
-  broadcastPct: 7.8, // storm
+  committedMbps: 1000,
+  uplinkInMbps: 310, // ~31% of contracted — healthy headroom
+  uplinkOutMbps: 120,
+  flappingPort: { ifindex: "12", name: "GigabitEthernet1/0/12", perHour: 40 },
   rogueDhcpIp: "10.30.20.205",
-  rogueDhcpMac: mac("b8:27:eb", "roosevelt-rogue"), // Raspberry Pi OUI — classic rogue
-  nxdomainRewriteResolver: "10.30.20.1",
-  stpFlapBridge: mac("00:1b:54", "roosevelt-asw3"),
+  rogueDhcpMac: mac("b8:27:eb", "roosevelt-rogue"),
+  loop: true,
+  broadcastPct: 2.1,
   core: {
     chassis: mac("00:1b:54", "roosevelt-core"),
     name: "roosevelt-core-sw1",
-    descr: "Cisco IOS Software, C9500 Software (CAT9K), Version 17.12",
+    descr: "Cisco IOS Software, C9500 (CAT9K), Version 17.12",
     mgmtIp: "10.30.20.2",
-    uplinkIfindex: "49",
-    uplinkSpeed: 1000, // 1G uplink — saturated in this demo
   },
   access: [
-    {
-      chassis: mac("00:1b:54", "roosevelt-asw1"),
-      name: "roosevelt-asw-1",
-      descr: "Cisco IOS Software, C9200L Software, Version 17.9",
-      mgmtIp: "10.30.20.3",
-    },
-    {
-      chassis: mac("00:1b:54", "roosevelt-asw2"),
-      name: "roosevelt-asw-2",
-      descr: "Cisco IOS Software, C9200L Software, Version 17.9",
-      mgmtIp: "10.30.20.4",
-    },
-    {
-      chassis: mac("00:1b:54", "roosevelt-asw3"),
-      name: "roosevelt-asw-3-gym",
-      descr: "Aruba JL678A 6300M Switch Software, Version 10.10",
-      mgmtIp: "10.30.20.5",
-      blockedIfindex: "50", // redundant gym uplink — STP blocking (shown on the map)
-    },
+    { chassis: mac("00:1b:54", "roosevelt-asw1"), name: "roosevelt-asw-200hall",
+      descr: "Cisco IOS Software, C9200L, Version 17.9", mgmtIp: "10.30.20.3" },
+    { chassis: mac("00:1b:54", "roosevelt-asw2"), name: "roosevelt-asw-300hall",
+      descr: "Cisco IOS Software, C9200L, Version 17.9", mgmtIp: "10.30.20.4" },
+    { chassis: mac("00:1b:54", "roosevelt-asw3"), name: "roosevelt-asw-gym",
+      descr: "Aruba 6300M, Version 10.10", mgmtIp: "10.30.20.5" },
+    // "Undocumented" switch — only reached via the neighbor crawl, not cabled to
+    // the sensor; NetMon auto-discovered it walking the fabric.
+    { chassis: mac("00:1b:54", "roosevelt-asw4"), name: "roosevelt-asw-library",
+      descr: "Aruba 6300M, Version 10.10", mgmtIp: "10.30.20.6" },
   ],
   hosts: [
-    { host: "gym-laserjet-09", vendor: "HP Inc.", oui: "3c:52:82", ip: "33",
+    { host: "fw-edge-01", vendor: "Fortinet, Inc.", oui: "00:09:0f", ip: "1" },
+    // wireless
+    ...fleet("ap-200hall", AP, "0c:8d:db", 11, 2),
+    ...fleet("ap-300hall", AP, "0c:8d:db", 13, 2),
+    { host: "ap-gym-01", vendor: AP, oui: "0c:8d:db", ip: "15" },
+    { host: "ap-library-01", vendor: AP, oui: "0c:8d:db", ip: "16" },
+    { host: "ap-cafeteria-01", vendor: AP, oui: "0c:8d:db", ip: "17" },
+    // servers / storage
+    { host: "srv-app01", vendor: DELL, oui: "00:14:22", ip: "20" },
+    { host: "srv-sql01", vendor: DELL, oui: "00:14:22", ip: "21" },
+    { host: "qnap-backup", vendor: "QNAP Systems", oui: "24:5e:be", ip: "23" },
+    // printers
+    { host: "gym-laserjet-09", vendor: HP, oui: "3c:52:82", ip: "31",
       serviceHint: "printer", serviceTypes: ["_ipp._tcp.local"] },
-    { host: "admin-mfp-ricoh", vendor: "Ricoh Company", oui: "00:26:73", ip: "34",
+    { host: "admin-mfp-ricoh", vendor: "Ricoh Company", oui: "00:26:73", ip: "32",
       serviceHint: "printer", serviceTypes: ["_ipp._tcp.local", "_printer._tcp.local"] },
+    { host: "library-laserjet-02", vendor: HP, oui: "3c:52:82", ip: "33",
+      serviceHint: "printer", serviceTypes: ["_ipp._tcp.local"] },
+    // AV / displays
     { host: "auditorium-appletv", vendor: "Apple, Inc.", oui: "ac:bc:32", ip: "42",
       serviceHint: "apple-av", serviceTypes: ["_airplay._tcp.local"] },
-    { host: "rm210-chromecast", vendor: "Google, Inc.", oui: "f4:f5:d8", ip: "43",
+    { host: "rm210-chromecast", vendor: GOOG, oui: "f4:f5:d8", ip: "43",
       serviceHint: "chromecast", serviceTypes: ["_googlecast._tcp.local"] },
-    { host: "promethean-rm210", vendor: "Promethean Limited", oui: "00:23:a7", ip: "46" },
-    { host: "ap-200hall-1", vendor: "Cisco Meraki", oui: "0c:8d:db", ip: "14" },
-    { host: "ap-200hall-2", vendor: "Cisco Meraki", oui: "0c:8d:db", ip: "15" },
-    { host: "ap-gym-1", vendor: "Cisco Meraki", oui: "0c:8d:db", ip: "16" },
-    { host: "ap-library-1", vendor: "Cisco Meraki", oui: "0c:8d:db", ip: "17" },
-    { host: "hik-cam-parkinglot", vendor: "Hangzhou Hikvision", oui: "44:19:b6", ip: "63",
+    { host: "promethean-rm210", vendor: "Promethean Limited", oui: "00:23:a7", ip: "45" },
+    { host: "promethean-rm305", vendor: "Promethean Limited", oui: "00:23:a7", ip: "46" },
+    // cameras
+    { host: "hik-cam-parkinglot", vendor: "Hangzhou Hikvision", oui: "44:19:b6", ip: "61",
       serviceHint: "camera", serviceTypes: ["_rtsp._tcp.local"] },
-    { host: "hik-cam-mainhall", vendor: "Hangzhou Hikvision", oui: "44:19:b6", ip: "64",
+    { host: "hik-cam-mainhall", vendor: "Hangzhou Hikvision", oui: "44:19:b6", ip: "62",
       serviceHint: "camera", serviceTypes: ["_rtsp._tcp.local"] },
-    { host: "srv-app01", vendor: "Dell Inc.", oui: "00:14:22", ip: "20" },
-    { host: "srv-sql01", vendor: "Dell Inc.", oui: "00:14:22", ip: "21" },
-    { host: "qnap-backup", vendor: "QNAP Systems", oui: "24:5e:be", ip: "23" },
+    { host: "hik-cam-gym", vendor: "Hangzhou Hikvision", oui: "44:19:b6", ip: "63",
+      serviceHint: "camera", serviceTypes: ["_rtsp._tcp.local"] },
+    { host: "axis-cam-busloop", vendor: "Axis Communications AB", oui: "ac:cc:8e", ip: "64",
+      serviceHint: "camera", serviceTypes: ["_axis-video._tcp.local", "_rtsp._tcp.local"] },
+    // VoIP phones
     { host: "yealink-mainoffice", vendor: "Yealink Network", oui: "80:5e:c0", ip: "71" },
     { host: "yealink-counseling", vendor: "Yealink Network", oui: "80:5e:c0", ip: "72" },
-    { host: "pc-lab301-01", vendor: "Dell Inc.", oui: "18:db:f2", ip: "140" },
-    { host: "pc-lab301-02", vendor: "Dell Inc.", oui: "18:db:f2", ip: "141" },
-    { host: "pc-lab301-03", vendor: "Dell Inc.", oui: "18:db:f2", ip: "142" },
-    { host: "cb-cart-c-01", vendor: "Google, Inc.", oui: "a4:77:33", ip: "150" },
-    { host: "cb-cart-c-02", vendor: "Google, Inc.", oui: "a4:77:33", ip: "151" },
-    { host: "rpi-unknown-205", vendor: "Raspberry Pi Foundation", oui: "b8:27:eb", ip: "205" },
-    { host: "fw-edge-01", vendor: "Fortinet, Inc.", oui: "00:09:0f", ip: "1" },
+    { host: "yealink-attendance", vendor: "Yealink Network", oui: "80:5e:c0", ip: "73" },
+    { host: "yealink-library", vendor: "Yealink Network", oui: "80:5e:c0", ip: "74" },
+    // workstations (hostname "...-pc-0N" → classifies as computer)
+    ...fleet("lab301-pc", DELL, "18:db:f2", 120, 6),
+    ...fleet("frontoffice-pc", DELL, "18:db:f2", 126, 2),
+    ...fleet("library-pc", DELL, "18:db:f2", 128, 2),
+    // chromebook carts (hostname contains "chromebook" → computer)
+    ...fleet("chromebook-cart-c", GOOG, "a4:77:33", 140, 8),
+    ...fleet("chromebook-cart-d", GOOG, "a4:77:33", 150, 6),
+    // the mystery device — found, but NetMon can't classify it
+    { host: "", vendor: "", oui: "9c:8e:99", ip: "209", unidentified: true },
   ],
 };
 
-const SCHOOLS = [LINCOLN, ROOSEVELT];
+// ---- LINCOLN ELEMENTARY — supporting site (saturated WAN) ----
+
+const LINCOLN: SchoolSpec = {
+  slug: "lincoln-es",
+  name: "Lincoln Elementary",
+  sensor: "mdf",
+  subnet: "10.20.10",
+  cidr: "10.20.10.0/24",
+  gatewayIp: "10.20.10.1",
+  gatewayMac: mac("00:1b:17", "lincoln-gw"),
+  vlan: 10,
+  committedMbps: 200,
+  uplinkInMbps: 190, // ~95% of contracted — riding the line
+  uplinkOutMbps: 28,
+  broadcastPct: 1.4,
+  core: {
+    chassis: mac("00:1b:54", "lincoln-core"),
+    name: "lincoln-core-sw1",
+    descr: "Cisco IOS Software, C9300 (CAT9K_IOSXE), Version 17.9",
+    mgmtIp: "10.20.10.2",
+  },
+  access: [
+    { chassis: mac("00:1b:54", "lincoln-asw1"), name: "lincoln-asw-1",
+      descr: "Cisco IOS Software, C9200L, Version 17.9", mgmtIp: "10.20.10.3" },
+  ],
+  hosts: [
+    { host: "fw-edge-01", vendor: "Fortinet, Inc.", oui: "00:09:0f", ip: "1" },
+    { host: "ap-bldg-a-01", vendor: "Aruba Networks", oui: "20:4c:03", ip: "11" },
+    { host: "ap-bldg-b-01", vendor: "Aruba Networks", oui: "20:4c:03", ip: "12" },
+    { host: "srv-dc01", vendor: DELL, oui: "00:14:22", ip: "20" },
+    { host: "synology-nas", vendor: "Synology Incorporated", oui: "00:11:32", ip: "22" },
+    { host: "lib-laserjet-01", vendor: HP, oui: "3c:52:82", ip: "31",
+      serviceHint: "printer", serviceTypes: ["_ipp._tcp.local", "_pdl-datastream._tcp.local"] },
+    { host: "rm12-appletv", vendor: "Apple, Inc.", oui: "ac:bc:32", ip: "40",
+      serviceHint: "apple-av", serviceTypes: ["_airplay._tcp.local", "_raop._tcp.local"] },
+    { host: "promethean-rm8", vendor: "Promethean Limited", oui: "00:23:a7", ip: "45" },
+    { host: "axis-cam-frontdoor", vendor: "Axis Communications AB", oui: "ac:cc:8e", ip: "61",
+      serviceHint: "camera", serviceTypes: ["_axis-video._tcp.local", "_rtsp._tcp.local"] },
+    { host: "yealink-frontoffice", vendor: "Yealink Network", oui: "80:5e:c0", ip: "71" },
+    ...fleet("lab204-pc", DELL, "18:db:f2", 120, 4),
+    ...fleet("chromebook-cart-a", GOOG, "a4:77:33", 130, 6),
+  ],
+};
+
+const SCHOOLS = [ROOSEVELT, LINCOLN];
+
+const hostMac = (s: SchoolSpec, h: HostSpec) =>
+  h.host === "fw-edge-01" ? s.gatewayMac : mac(h.oui, `${s.slug}-${h.host}-${h.ip}`);
+
+/**
+ * Deterministically attach each host (except the WAN edge) to an access switch +
+ * port. Same mapping across both scans so the FDB chain is stable. Returns the
+ * per-host {switch, port, ifIndex, ifName} used by both snmp FDB rows + nothing else.
+ */
+function attachments(s: SchoolSpec) {
+  const perSwitch = new Map<string, number>();
+  const out: { h: HostSpec; sw: SwitchSpec; port: number; ifIndex: number; ifName: string }[] = [];
+  let i = 0;
+  for (const h of s.hosts) {
+    if (h.host === "fw-edge-01") continue; // the WAN edge isn't on an access port
+    const sw = s.access[i % s.access.length];
+    i++;
+    const port = (perSwitch.get(sw.mgmtIp) ?? 0) + 1;
+    perSwitch.set(sw.mgmtIp, port);
+    out.push({ h, sw, port, ifIndex: 10000 + port, ifName: `Gi1/0/${port}` });
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
-// Bundle synthesis — write one extracted bundle dir for a (school, time) point
+// Bundle synthesis
 // ---------------------------------------------------------------------------
 
 interface BundlePoint {
   scanId: number;
   startedMs: number;
-  /** Monotonically increasing uplink octet counters for the rate computation. */
   coreInOctets: number;
   coreOutOctets: number;
 }
 
 function deviceCsv(s: SchoolSpec): string {
   const head = "ip,mac,hostname,vendor,source,first_seen_at,last_seen_at";
-  const rows = s.hosts.map((h) => {
-    const ip = `${s.subnet}.${h.ip}`;
-    const m = h.host === "fw-edge-01" ? s.gatewayMac : mac(h.oui, `${s.slug}-${h.host}`);
-    return [ip, m, h.host, `"${h.vendor}"`, "arp+nmap", iso(NOW - 6 * DAY), iso(NOW - HOUR)].join(",");
-  });
+  const rows = s.hosts.map((h) =>
+    [
+      `${s.subnet}.${h.ip}`,
+      hostMac(s, h),
+      h.host,
+      `"${h.vendor}"`,
+      "arp+nmap",
+      iso(NOW - 6 * DAY),
+      iso(SCAN2_MS),
+    ].join(","),
+  );
   return [head, ...rows].join("\n") + "\n";
 }
 
 function lldpNeighbors(s: SchoolSpec) {
-  // The sensor is directly attached to the core — one LLDP neighbor. The rest of
-  // the fabric comes from the SNMP crawl (snmp_topology.json).
+  // Sensor is directly attached to the core; the rest of the fabric comes from
+  // the SNMP crawl (snmp_topology.json) — i.e. NetMon auto-discovers it.
   return [
     {
       local_port: "eth0",
@@ -302,14 +368,13 @@ function lldpNeighbors(s: SchoolSpec) {
       vlan_id: s.vlan,
       mgmt_ip: s.core.mgmtIp,
       capabilities: ["bridge", "router"],
-      seen_at: iso(NOW - HOUR),
+      seen_at: iso(SCAN2_MS),
     },
   ];
 }
 
 function dhcpObserved(s: SchoolSpec) {
   const out: Record<string, unknown>[] = [];
-  // Legitimate server (the gateway).
   for (let i = 0; i < 6; i++) {
     out.push({
       message_type: i % 2 === 0 ? "DISCOVER" : "ACK",
@@ -319,13 +384,12 @@ function dhcpObserved(s: SchoolSpec) {
       offered_ip: i % 2 === 0 ? null : `${s.subnet}.${120 + i}`,
       subnet_mask: "255.255.255.0",
       router: s.gatewayIp,
-      dns_servers: `${s.gatewayIp}, 8.8.8.8`,
+      dns_servers: `${s.gatewayIp}, 1.1.1.1`,
       vendor_class_id: "MSFT 5.0",
       client_hostname: `pc-dhcp-${i}`,
-      seen_at: iso(NOW - HOUR + i * 60_000),
+      seen_at: iso(SCAN2_MS - i * 60_000),
     });
   }
-  // Rogue server (a 2nd box answering DHCP) — drives the critical issue.
   if (s.rogueDhcpIp) {
     for (let i = 0; i < 3; i++) {
       out.push({
@@ -333,11 +397,11 @@ function dhcpObserved(s: SchoolSpec) {
         server_ip: s.rogueDhcpIp,
         server_mac: s.rogueDhcpMac,
         client_mac: mac("18:db:f2", `${s.slug}-victim-${i}`),
-        offered_ip: `192.168.8.${50 + i}`, // hands out a DIFFERENT subnet → red flag
+        offered_ip: `192.168.8.${50 + i}`,
         subnet_mask: "255.255.255.0",
         router: s.rogueDhcpIp,
         dns_servers: s.rogueDhcpIp,
-        seen_at: iso(NOW - HOUR + 30_000 + i * 45_000),
+        seen_at: iso(SCAN2_MS - 30_000 - i * 45_000),
       });
     }
   }
@@ -345,83 +409,82 @@ function dhcpObserved(s: SchoolSpec) {
 }
 
 function dnsHealth(s: SchoolSpec) {
-  const rewrites = !!s.nxdomainRewriteResolver;
   const probes = [
     { resolver_ip: s.gatewayIp, resolver_source: "dhcp", query_name: "www.google.com",
-      query_type: "A", expected_status: "NOERROR", status: "NOERROR", query_time_ms: 14,
-      answer_count: 1, probed_at: iso(NOW - HOUR) },
-    { resolver_ip: s.gatewayIp, resolver_source: "dhcp",
-      query_name: "no-such-name-xyzzy.invalid", query_type: "A",
-      expected_status: "NXDOMAIN", status: rewrites ? "NOERROR" : "NXDOMAIN",
-      query_time_ms: 22, answer_count: rewrites ? 1 : 0,
-      answers_text: rewrites ? "10.30.20.1 (block page)" : "", probed_at: iso(NOW - HOUR) },
-    { resolver_ip: "8.8.8.8", resolver_source: "static", query_name: "www.cloudflare.com",
-      query_type: "A", expected_status: "NOERROR", status: "NOERROR", query_time_ms: 18,
-      answer_count: 2, probed_at: iso(NOW - HOUR) },
+      query_type: "A", expected_status: "NOERROR", status: "NOERROR", query_time_ms: 12,
+      answer_count: 1, probed_at: iso(SCAN2_MS) },
+    { resolver_ip: "1.1.1.1", resolver_source: "static", query_name: "www.cloudflare.com",
+      query_type: "A", expected_status: "NOERROR", status: "NOERROR", query_time_ms: 9,
+      answer_count: 2, probed_at: iso(SCAN2_MS) },
   ];
   return {
     probe_count: probes.length,
     by_resolver: [
-      { resolver_ip: s.gatewayIp, resolver_source: "dhcp", probes: 2, ok: 2, errors: 0,
-        nxdomain_rewrite: rewrites, mean_ms: 18 },
-      { resolver_ip: "8.8.8.8", resolver_source: "static", probes: 1, ok: 1, errors: 0,
-        nxdomain_rewrite: false, mean_ms: 18 },
+      { resolver_ip: s.gatewayIp, resolver_source: "dhcp", probes: 1, ok: 1, errors: 0,
+        nxdomain_rewrite: false, mean_ms: 12 },
+      { resolver_ip: "1.1.1.1", resolver_source: "static", probes: 1, ok: 1, errors: 0,
+        nxdomain_rewrite: false, mean_ms: 9 },
     ],
     probes,
   };
 }
 
 function stpEvents(s: SchoolSpec) {
-  if (!s.stpFlapBridge) return [];
+  if (!s.loop) return [];
+  const b = s.access[0].chassis;
   return [
-    { bpdu_type: "TCN", root_bridge_id: `32768.${s.core.chassis}`, bridge_id: `32768.${s.stpFlapBridge}`,
-      port_id: "128.50", root_path_cost: 8, topology_change: true, seen_at: iso(NOW - 2 * HOUR) },
-    { bpdu_type: "Config", root_bridge_id: `32768.${s.core.chassis}`, bridge_id: `32768.${s.stpFlapBridge}`,
-      port_id: "128.50", root_path_cost: 8, topology_change: true, seen_at: iso(NOW - 2 * HOUR + 5000) },
+    { bpdu_type: "TCN", root_bridge_id: `32768.${s.core.chassis}`, bridge_id: `32768.${b}`,
+      port_id: "128.40", root_path_cost: 8, topology_change: true, seen_at: iso(SCAN2_MS - 90_000) },
+    { bpdu_type: "Config", root_bridge_id: `32768.${s.core.chassis}`, bridge_id: `32768.${b}`,
+      port_id: "128.40", root_path_cost: 8, topology_change: true, seen_at: iso(SCAN2_MS - 60_000) },
   ];
 }
 
 function trafficStats(s: SchoolSpec, pt: BundlePoint) {
-  const total = 4_200_000;
-  const broadcast = Math.round((total * s.broadcastPct) / 100);
-  const multicast = Math.round(total * 0.03);
+  const total = 3_800_000;
   return [
     {
       interface: "eth0",
       bucket_start: iso(pt.startedMs),
       bucket_end: iso(pt.startedMs + 5 * 60_000),
       rx_packets: total,
-      rx_bytes: total * 540,
-      rx_errors: s.broadcastPct > 5 ? 1200 : 0,
-      rx_dropped: s.broadcastPct > 5 ? 800 : 0,
-      tx_packets: Math.round(total * 0.4),
-      tx_bytes: total * 200,
-      broadcast_packets: broadcast,
-      multicast_packets: multicast,
+      rx_bytes: total * 560,
+      rx_errors: 0,
+      rx_dropped: 0,
+      tx_packets: Math.round(total * 0.45),
+      tx_bytes: total * 240,
+      broadcast_packets: Math.round((total * s.broadcastPct) / 100),
+      multicast_packets: Math.round(total * 0.025),
       tshark_total_packets: total,
     },
   ];
 }
 
 function snmpPolls(s: SchoolSpec, pt: BundlePoint) {
-  // Minimal-but-real SNMP: sys identity per switch so ENTITY/identity enrich works.
   const rows: Record<string, unknown>[] = [];
-  const all = [s.core, ...s.access];
-  for (const sw of all) {
-    rows.push({ device_ip: sw.mgmtIp, oid: "1.3.6.1.2.1.1.5.0", oid_name: "sysName",
-      value: sw.name, polled_at: iso(pt.startedMs) });
-    rows.push({ device_ip: sw.mgmtIp, oid: "1.3.6.1.2.1.1.1.0", oid_name: "sysDescr",
-      value: sw.descr, polled_at: iso(pt.startedMs) });
+  const at = iso(pt.startedMs);
+  for (const sw of [s.core, ...s.access]) {
+    rows.push({ device_ip: sw.mgmtIp, oid: "1.3.6.1.2.1.1.5.0", oid_name: "sysName", value: sw.name, polled_at: at });
+    rows.push({ device_ip: sw.mgmtIp, oid: "1.3.6.1.2.1.1.1.0", oid_name: "sysDescr", value: sw.descr, polled_at: at });
+  }
+  // BRIDGE-MIB FDB chain so each host resolves to a switch + exact port:
+  //   dot1dTpFdbPort (mac→bridgePort) → dot1dBasePortIfIndex (port→ifIndex) → ifName.
+  for (const a of attachments(s)) {
+    const dev = a.sw.mgmtIp;
+    rows.push({ device_ip: dev, oid: `1.3.6.1.2.1.17.4.3.1.2.${macOctets(hostMac(s, a.h))}`,
+      oid_name: "dot1dTpFdbTable", value: String(a.port), polled_at: at });
+    rows.push({ device_ip: dev, oid: `1.3.6.1.2.1.17.1.4.1.2.${a.port}`,
+      oid_name: "dot1dBasePortIfIndex", value: String(a.ifIndex), polled_at: at });
+    rows.push({ device_ip: dev, oid: `1.3.6.1.2.1.31.1.1.1.1.${a.ifIndex}`,
+      oid_name: "ifName", value: a.ifName, polled_at: at });
   }
   return rows;
 }
 
 function topologyJson(s: SchoolSpec) {
-  // The local LLDP star + host nodes (drives the per-sensor physical star and the
-  // logical subnet view). The multi-switch fabric is added by snmp_topology.json.
   const self = "self:eth0";
   const nodes: Record<string, unknown>[] = [
-    { id: self, type: "scanner", label: `NetMon (eth0)`, ip: s.cidr },
+    { id: self, type: "scanner", label: "NetMon (eth0)", ip: s.cidr },
     { id: `gw:${s.gatewayIp}`, type: "gateway", label: `gateway ${s.gatewayIp}`, ip: s.gatewayIp, mac: s.gatewayMac },
     { id: `switch:${s.core.chassis}`, type: "switch", label: s.core.name,
       description: s.core.descr, mgmt_ip: s.core.mgmtIp, capabilities: ["bridge", "router"] },
@@ -433,29 +496,34 @@ function topologyJson(s: SchoolSpec) {
   ];
   for (const h of s.hosts) {
     const ip = `${s.subnet}.${h.ip}`;
-    nodes.push({ id: `host:${ip}`, type: "host", label: h.host, ip, vendor: h.vendor, source: "arp" });
+    nodes.push({ id: `host:${ip}`, type: "host", label: h.host || ip, ip, vendor: h.vendor, source: "arp" });
     edges.push({ source: self, target: `host:${ip}`, kind: "l3_seen" });
   }
   return { scan_id: 1, nodes, edges };
 }
 
 function snmpTopologyJson(s: SchoolSpec, pt: BundlePoint) {
-  const coreIface: Record<string, unknown> = {
-    [s.core.uplinkIfindex!]: {
-      name: "GigabitEthernet1/0/49", speed_mbps: s.core.uplinkSpeed, oper_status: "up",
-      in_errors: 0, out_errors: 0, stp_state: "forwarding",
-    },
+  const coreIfaces: Record<string, unknown> = {
+    "49": { name: "GigabitEthernet1/0/49", speed_mbps: 1000, oper_status: "up",
+      in_errors: 0, out_errors: 0, stp_state: "forwarding" },
   };
+  // Hero: a flapping access port shows up as a port logging errors on the core.
+  if (s.flappingPort) {
+    coreIfaces[s.flappingPort.ifindex] = {
+      name: s.flappingPort.name, speed_mbps: 1000, oper_status: "up",
+      in_errors: 4280, out_errors: 3910, stp_state: "forwarding",
+    };
+  }
   const nodes: Record<string, unknown>[] = [
     {
       chassis_id: s.core.chassis, system_name: s.core.name, system_description: s.core.descr,
       mgmt_ips: [s.core.mgmtIp], source: "snmp", capabilities: ["bridge", "router"],
       extra: {
-        interfaces: coreIface,
+        interfaces: coreIfaces,
         uplink: {
-          ifindex: s.core.uplinkIfindex, name: "GigabitEthernet1/0/49",
-          speed_mbps: s.core.uplinkSpeed, in_octets: pt.coreInOctets,
-          out_octets: pt.coreOutOctets, counter_ts: Math.floor(pt.startedMs / 1000),
+          ifindex: "49", name: "GigabitEthernet1/0/49", speed_mbps: 1000,
+          in_octets: pt.coreInOctets, out_octets: pt.coreOutOctets,
+          counter_ts: Math.floor(pt.startedMs / 1000),
         },
       },
     },
@@ -463,35 +531,15 @@ function snmpTopologyJson(s: SchoolSpec, pt: BundlePoint) {
   const edges: Record<string, unknown>[] = [];
   let port = 1;
   for (const a of s.access) {
-    const ifaces: Record<string, unknown> = {};
-    if (a.blockedIfindex) {
-      ifaces[a.blockedIfindex] = {
-        name: `GigabitEthernet1/0/${a.blockedIfindex}`, speed_mbps: 1000,
-        oper_status: "up", stp_state: "blocking",
-      };
-    }
     nodes.push({
       chassis_id: a.chassis, system_name: a.name, system_description: a.descr,
-      mgmt_ips: [a.mgmtIp], source: "snmp", capabilities: ["bridge"],
-      extra: Object.keys(ifaces).length ? { interfaces: ifaces } : null,
+      mgmt_ips: [a.mgmtIp], source: "snmp", capabilities: ["bridge"], extra: null,
     });
-    // Core <-> access link.
     edges.push({
       local_chassis_id: s.core.chassis, local_port_id: String(port),
       local_port_desc: `Gi1/0/${port}`, remote_chassis_id: a.chassis,
       remote_port_id: "49", remote_port_desc: "Gi1/0/49", via: "lldp",
     });
-    // The blocked redundant link (asw <-> asw, STP blocking on the local port).
-    if (a.blockedIfindex) {
-      const other = s.access.find((x) => x !== a);
-      if (other) {
-        edges.push({
-          local_chassis_id: a.chassis, local_port_id: a.blockedIfindex,
-          local_port_desc: `Gi1/0/${a.blockedIfindex}`, remote_chassis_id: other.chassis,
-          remote_port_id: "50", remote_port_desc: "Gi1/0/50", via: "lldp",
-        });
-      }
-    }
     port++;
   }
   return { nodes, edges };
@@ -505,54 +553,64 @@ function reachability(s: SchoolSpec) {
   ];
   return all.map((d, i) => ({
     ip: d.ip, hostname: d.hostname, vendor: d.vendor, source: d.source,
-    ping_alive: true, ping_rtt_ms: 0.8 + i * 0.3, ping_loss_pct: 0,
+    ping_alive: true, ping_rtt_ms: 0.6 + i * 0.3, ping_loss_pct: 0,
     snmp_responded: true, snmp_version: "2c", traceroute_hops: 1 + i,
-    traceroute_path: [s.gatewayIp], checked_at: iso(NOW - HOUR),
+    traceroute_path: [s.gatewayIp], checked_at: iso(SCAN2_MS),
   }));
 }
 
 function serviceDiscovery(s: SchoolSpec) {
-  const devices = s.hosts
-    .filter((h) => h.serviceHint)
-    .map((h) => ({
-      ip: `${s.subnet}.${h.ip}`,
-      source: "mdns",
-      hostname: h.host,
-      service_types: h.serviceTypes ?? [],
-      device_hint: h.serviceHint,
-    }));
-  return { devices };
+  return {
+    devices: s.hosts
+      .filter((h) => h.serviceHint)
+      .map((h) => ({
+        ip: `${s.subnet}.${h.ip}`,
+        source: "mdns",
+        hostname: h.host,
+        service_types: h.serviceTypes ?? [],
+        device_hint: h.serviceHint,
+      })),
+  };
 }
 
 function findingsJson(s: SchoolSpec) {
-  // Sensor-side rule findings (these feed the time-series `findings` table; the
-  // durable Issues list is seeded separately below).
+  // Rule findings feed the time-series `findings` table → the OVERVIEW "Open
+  // findings" count. The durable Issues slate (with fixes) is seeded separately.
   const out: Record<string, unknown>[] = [];
+  if (s.flappingPort) {
+    out.push({
+      rule: "interface.flapping", severity: "high",
+      title: `Port ${s.flappingPort.name} flapping`,
+      detail: `~${s.flappingPort.perHour} link transitions/hour on ${s.core.name} ${s.flappingPort.name}.`,
+      evidence: { ifName: s.flappingPort.name, per_hour: s.flappingPort.perHour },
+      created_at: iso(SCAN2_MS),
+    });
+  }
   if (s.rogueDhcpIp) {
     out.push({
-      rule: "dhcp.rogue_server", severity: "critical",
-      title: "Multiple DHCP servers answering on this segment",
-      detail: `Saw OFFERs from ${s.rogueDhcpIp} (${s.rogueDhcpMac}) handing out 192.168.8.0/24 — not the sanctioned scope.`,
-      evidence: { authorized: s.gatewayIp, rogue: s.rogueDhcpIp },
-      created_at: iso(NOW - HOUR),
+      rule: "dhcp.unexpected_server", severity: "high",
+      title: "Unexpected DHCP server responding",
+      detail: `OFFERs seen from ${s.rogueDhcpIp} (not the sanctioned scope).`,
+      evidence: { authorized: s.gatewayIp, unexpected: s.rogueDhcpIp },
+      created_at: iso(SCAN2_MS),
     });
   }
-  if (s.nxdomainRewriteResolver) {
+  if (s.committedMbps && s.uplinkInMbps / s.committedMbps >= 0.9) {
     out.push({
-      rule: "dns.nxdomain_rewrite", severity: "high",
-      title: "Resolver rewrites NXDOMAIN to an answer",
-      detail: `Resolver ${s.nxdomainRewriteResolver} returned NOERROR for a guaranteed-bogus name.`,
-      evidence: { resolver: s.nxdomainRewriteResolver },
-      created_at: iso(NOW - HOUR),
+      rule: "uplink.saturation", severity: "high",
+      title: "Internet uplink near capacity",
+      detail: `WAN uplink averaging ~${Math.round((100 * s.uplinkInMbps) / s.committedMbps)}% of the ${s.committedMbps} Mbps contracted rate.`,
+      evidence: { committed_mbps: s.committedMbps, in_mbps: s.uplinkInMbps },
+      created_at: iso(SCAN2_MS),
     });
   }
-  if (s.broadcastPct > 5) {
+  if (s.loop) {
     out.push({
-      rule: "traffic.broadcast_high", severity: "high",
-      title: "Elevated broadcast traffic",
-      detail: `Broadcast is ${s.broadcastPct}% of captured packets (warn >5%).`,
-      evidence: { broadcast_pct: s.broadcastPct },
-      created_at: iso(NOW - HOUR),
+      rule: "stp.topology_change", severity: "medium",
+      title: "Repeated spanning-tree topology changes",
+      detail: "TCN BPDUs recurring on an access switch — possible loop or a cable bridging two ports.",
+      evidence: {},
+      created_at: iso(SCAN2_MS),
     });
   }
   return out;
@@ -562,7 +620,6 @@ function writeBundle(dir: string, s: SchoolSpec, pt: BundlePoint) {
   const scanDir = join(dir, "scans", `scan_${pt.scanId}`);
   const rawDir = join(scanDir, "raw");
   mkdirSync(rawDir, { recursive: true });
-
   const meta = {
     id: pt.scanId,
     started_at: iso(pt.startedMs),
@@ -579,7 +636,6 @@ function writeBundle(dir: string, s: SchoolSpec, pt: BundlePoint) {
     school_slug: s.slug,
     device_slug: s.sensor,
   };
-
   const J = (o: unknown) => JSON.stringify(o, null, 2);
   writeFileSync(join(rawDir, "scan.json"), J(meta));
   writeFileSync(join(scanDir, "devices.csv"), deviceCsv(s));
@@ -612,60 +668,46 @@ interface IssueSeed {
   occurrences: number;
   firstSeenDaysAgo: number;
   lastSeenHoursAgo: number;
-  resolvedHoursAgo?: number;
-  note?: string;
 }
 
 function issuesFor(slug: string): IssueSeed[] {
   if (slug === "roosevelt-hs") {
     return [
-      { severity: "critical", confidence: "definite", source: "ai", status: "open",
-        title: "Rogue DHCP server on VLAN 20",
-        detail: "A second device (10.30.20.205, Raspberry Pi Foundation OUI) is answering DHCP and handing clients 192.168.8.0/24 with itself as the gateway and DNS — a man-in-the-middle / outage risk.",
-        recommendation: "Locate the MAC on the access switch FDB, shut the port, and enable DHCP snooping on VLAN 20 with the core as the only trusted port.",
-        occurrences: 9, firstSeenDaysAgo: 1, lastSeenHoursAgo: 1 },
+      // HERO — plain-language finding + drafted fix (renders "Fix:" on the Issues list).
       { severity: "high", confidence: "definite", source: "ai", status: "open",
-        title: "DNS resolver rewriting NXDOMAIN responses",
-        detail: "Resolver 10.30.20.1 returned NOERROR with an answer for a guaranteed-nonexistent name, indicating NXDOMAIN rewriting (content filter or ad-injection) that breaks software relying on negative answers.",
-        recommendation: "Confirm whether the upstream filter is intentional; if not, disable NXDOMAIN redirection on the FortiGate DNS profile.",
-        occurrences: 14, firstSeenDaysAgo: 3, lastSeenHoursAgo: 1 },
-      { severity: "high", confidence: "suggestive", source: "ai", status: "acknowledged",
-        title: "Sustained broadcast traffic above 5% on VLAN 20",
-        detail: "Broadcast is averaging ~7.8% of captured packets with rising RX errors/drops on the sensor uplink — consistent with a loop or a chatty misconfigured host.",
-        recommendation: "Check for an STP loop on asw-3 (gym) and look for an unmanaged switch plugged into a wall port.",
-        occurrences: 6, firstSeenDaysAgo: 2, lastSeenHoursAgo: 1, note: "Network team investigating gym wing — suspect a daisy-chained switch." },
-      { severity: "medium", confidence: "suggestive", source: "ai-topology", status: "open",
-        title: "Core uplink Gi1/0/49 averaging over 80% utilization",
-        detail: "The 1 Gbps uplink from roosevelt-core-sw1 is sustaining ~850 Mbps inbound during the school day, leaving little headroom for testing windows or backups.",
-        recommendation: "Schedule backups off-peak and evaluate a 10G uplink (or LACP bundle) for the core.",
-        occurrences: 4, firstSeenDaysAgo: 2, lastSeenHoursAgo: 1 },
-      { severity: "medium", confidence: "definite", source: "ai", status: "resolved",
-        title: "Spanning-tree topology changes on asw-3-gym",
-        detail: "Repeated TCN BPDUs from the gym access switch were flapping a redundant link.",
-        recommendation: "Enable PortFast + BPDU guard on edge ports; confirm the redundant uplink is intentional.",
-        occurrences: 11, firstSeenDaysAgo: 6, lastSeenHoursAgo: 50, resolvedHoursAgo: 36,
-        note: "Auto-resolved: STP stabilized after BPDU guard was enabled and the redundant gym link moved to STP blocking." },
-      { severity: "high", confidence: "definite", source: "ai", status: "resolved",
-        title: "Switch idf-3 unreachable (no SNMP, no ping)",
-        detail: "The gym IDF switch stopped responding to ping and SNMP for ~4 hours.",
-        recommendation: "Check PoE budget / power on the IDF; verify the uplink fiber.",
-        occurrences: 7, firstSeenDaysAgo: 5, lastSeenHoursAgo: 28, resolvedHoursAgo: 24,
-        note: "Resolved by site tech — failed PoE injector replaced; switch back online." },
+        title: "Core switch access port flapping (~40 transitions/hour)",
+        detail: "Port GigabitEthernet1/0/12 on roosevelt-core-sw1 has logged about 40 link up/down transitions per hour for the last 6 hours, with a rising interface error count. A port cycling this often drops the devices behind it and can trigger repeated spanning-tree recalculations across the building.",
+        recommendation: "Reseat or replace the cable/SFP on Gi1/0/12, check the attached device's NIC, then enable err-disable auto-recovery with link-flap detection so a bad transceiver self-isolates instead of churning the network.",
+        occurrences: 38, firstSeenDaysAgo: 1, lastSeenHoursAgo: 0 },
+      { severity: "high", confidence: "definite", source: "ai", status: "open",
+        title: "Unexpected DHCP server responding on the network",
+        detail: "A device at 10.30.20.205 is answering DHCP with an off-scope 192.168.8.0/24 lease and itself as gateway and DNS. Clients that accept it lose connectivity or get routed through an untrusted host.",
+        recommendation: "Find the MAC on the access-switch bridge table, shut the port, and turn on DHCP snooping for VLAN 20 with the core uplink as the only trusted port.",
+        occurrences: 7, firstSeenDaysAgo: 1, lastSeenHoursAgo: 0 },
+      { severity: "medium", confidence: "suggestive", source: "ai", status: "open",
+        title: "Possible network loop on an access switch",
+        detail: "Recurring spanning-tree topology-change notifications from roosevelt-asw-200hall suggest a port repeatedly entering forwarding — often a patch cable bridging two wall jacks, or an unmanaged switch plugged in.",
+        recommendation: "Trace the TCN source port; enable PortFast + BPDU guard on edge ports so an accidental loop is shut automatically.",
+        occurrences: 5, firstSeenDaysAgo: 2, lastSeenHoursAgo: 1 },
+      { severity: "low", confidence: "suggestive", source: "ai", status: "open",
+        title: "Unidentified device on the network",
+        detail: "A host at 10.30.20.209 responds to discovery but advertises no vendor, hostname, or service NetMon can use to classify it. Worth confirming it's a sanctioned device.",
+        recommendation: "Check the switch port it's on (visible on its device page) and physically confirm the endpoint; label it in inventory once identified.",
+        occurrences: 3, firstSeenDaysAgo: 2, lastSeenHoursAgo: 1 },
+      { severity: "info", confidence: "definite", source: "ai-topology", status: "open",
+        title: "New switch discovered via neighbor crawl",
+        detail: "NetMon found roosevelt-asw-library (10.30.20.6) by walking LLDP/SNMP neighbors from the core — it wasn't in any manual inventory. It's now stitched into the map.",
+        recommendation: "Confirm the switch is expected and add it to your documented inventory.",
+        occurrences: 1, firstSeenDaysAgo: 1, lastSeenHoursAgo: 1 },
     ];
   }
-  // lincoln-es — mostly healthy
+  // lincoln-es — the saturated-uplink site
   return [
-    { severity: "medium", confidence: "suggestive", source: "ai", status: "open",
-      title: "Printer lib-laserjet-01 not responding",
-      detail: "The library HP LaserJet (10.20.10.31) stopped answering ping and mDNS in the last two scans, though it was healthy earlier this week.",
-      recommendation: "Verify the printer is powered on and check the access-switch port; confirm it pulled a DHCP lease.",
-      occurrences: 2, firstSeenDaysAgo: 1, lastSeenHoursAgo: 1 },
-    { severity: "low", confidence: "suggestive", source: "ai", status: "resolved",
-      title: "Duplicate IP detected in 10.20.10.0/24",
-      detail: "Two MACs briefly claimed 10.20.10.45 (a static-assigned Promethean panel and a DHCP client).",
-      recommendation: "Exclude statically-assigned addresses from the DHCP scope.",
-      occurrences: 3, firstSeenDaysAgo: 4, lastSeenHoursAgo: 72, resolvedHoursAgo: 60,
-      note: "Auto-resolved after the DHCP exclusion range was added." },
+    { severity: "high", confidence: "definite", source: "ai-topology", status: "open",
+      title: "Internet uplink sustained near capacity (~95%)",
+      detail: "Lincoln's WAN uplink is averaging about 190 Mbps against a 200 Mbps contracted circuit during the school day — almost no headroom, so testing windows and large downloads will feel slow and time out.",
+      recommendation: "Review the contracted rate with the ISP, shift backups/large syncs off-peak, and confirm no single host is monopolizing the circuit.",
+      occurrences: 12, firstSeenDaysAgo: 3, lastSeenHoursAgo: 0 },
   ];
 }
 
@@ -674,37 +716,31 @@ function aiProseFor(slug: string, schoolName: string): string {
     return [
       `## ${schoolName} — daily network health`,
       "",
-      "Overall posture is **degraded** today, driven by one critical and two high-severity findings that are likely related.",
+      "Posture is **stable with one item to action today.** Discovery is healthy across the core and four access switches, device classification is high-confidence, and the **WAN uplink has comfortable headroom** (~31% of the contracted 1 Gbps).",
       "",
-      "The most urgent item is a **rogue DHCP server at 10.30.20.205** (a Raspberry Pi-class device) handing clients an unauthorized 192.168.8.0/24 scope with itself as gateway and DNS. Any client that accepts that lease is effectively cut off and potentially routed through an untrusted host. This should be contained today via DHCP snooping and a port shut.",
+      "The finding to act on is a **flapping access port — GigabitEthernet1/0/12 on roosevelt-core-sw1 — cycling roughly 40 times an hour** with a climbing error count. That repeatedly drops whatever is behind it and can ripple into spanning-tree recalcs. The fix is a cable/SFP swap plus link-flap err-disable so a bad transceiver self-isolates.",
       "",
-      "Separately, the **edge resolver (10.30.20.1) is rewriting NXDOMAIN** into positive answers. If that is an intentional content filter it is worth documenting; if not, it will silently break captive-portal detection and a range of client software.",
-      "",
-      "Capacity-wise, the **core uplink is running near saturation (~850 Mbps on a 1 Gbps link)** during instructional hours, and **broadcast traffic on VLAN 20 is elevated (~7.8%)** with rising interface errors — the latter often points at a loop or an unmanaged switch in the gym wing, which also aligns with the recent (now-resolved) STP flapping on asw-3.",
-      "",
-      "Two earlier incidents — the gym IDF switch outage and the STP topology changes — have **auto-resolved** and are retained here for history.",
+      "Lower-priority items: an **unexpected DHCP server at 10.30.20.205** (contain via DHCP snooping), signs of a **possible loop** on the 200-hall switch, and one **unidentified endpoint** worth confirming. NetMon also auto-discovered a previously-undocumented library switch while crawling the fabric.",
     ].join("\n");
   }
   return [
     `## ${schoolName} — daily network health`,
     "",
-    "Posture is **good**. Discovery is stable across two access switches and the core, device classification is high-confidence, and DNS/DHCP look healthy with a single sanctioned server.",
+    "Discovery and device classification are healthy. The one thing standing out is **capacity, not faults**: the **internet uplink is riding ~95% of the contracted 200 Mbps** through the instructional day, so the circuit has almost no headroom.",
     "",
-    "The only open item is the **library LaserJet (10.20.10.31) going quiet** in the last two scans — most likely powered off overnight, worth a quick confirm. An earlier duplicate-IP blip has auto-resolved after a DHCP exclusion was added.",
+    "Utilization is measured against the *contracted* rate (the dashed line on the uplink chart), not the physical port speed — which is why a 1 Gbps switch port can still be a bottleneck at 200 Mbps of paid transport. Worth an ISP conversation or moving large transfers off-peak.",
   ].join("\n");
 }
 
 function aiFindingsFor(slug: string): AiFinding[] {
-  return issuesFor(slug)
-    .filter((i) => i.status !== "resolved")
-    .map((i) => ({
-      severity: i.severity,
-      confidence: i.confidence,
-      title: i.title,
-      detail: i.detail,
-      evidence: `${i.source}: seen ${i.occurrences}x; demo seed data for ${slug}.`,
-      recommendation: i.recommendation,
-    }));
+  return issuesFor(slug).map((i) => ({
+    severity: i.severity,
+    confidence: i.confidence,
+    title: i.title,
+    detail: i.detail,
+    evidence: `demo seed data for ${slug}`,
+    recommendation: i.recommendation,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -716,20 +752,13 @@ async function resetDemo(): Promise<void> {
   if (!d) return;
   const schoolRows = await db.select().from(schools).where(eq(schools.districtId, d.id));
   const schoolIds = schoolRows.map((s) => s.id);
-
-  // topology_snapshots key off scopeId (= school id) with no FK → no cascade.
   if (schoolIds.length) {
     await db
       .delete(topologySnapshots)
       .where(and(eq(topologySnapshots.scopeType, "school"), inArray(topologySnapshots.scopeId, schoolIds)));
   }
   await db.delete(topologySnapshots).where(and(eq(topologySnapshots.scopeType, "district"), eq(topologySnapshots.scopeId, d.id)));
-
-  // ingested_bundles key off slugs (no FK) → no cascade.
   await db.delete(ingestedBundles).where(eq(ingestedBundles.districtSlug, DISTRICT_SLUG));
-
-  // Deleting the district cascades schools/sensors/scan_runs+time-series,
-  // entities_*, issues, ai_analyses, health_rollup, topology_positions, uplink_samples.
   await db.delete(districts).where(eq(districts.id, d.id));
   console.log(`  reset: removed existing district "${DISTRICT_SLUG}" (${schoolIds.length} schools).`);
 }
@@ -740,10 +769,6 @@ async function resetDemo(): Promise<void> {
 
 async function main() {
   const args = process.argv.slice(2);
-  // Env toggles mirror the CLI flags so this can run as an in-Azure Container Apps
-  // Job: `az containerapp job start` can't pass leading-dash args (`--force`) and a
-  // command-override execution doesn't inherit the job's env, so the in-Azure run
-  // re-injects DATABASE_URL via secretref and sets SEED_DEMO_ALLOW_PROD=1 instead.
   const reset = args.includes("--reset") || process.env.SEED_DEMO_RESET === "1";
   const keepBundles = args.includes("--keep-bundles") || process.env.SEED_DEMO_KEEP_BUNDLES === "1";
   const force = args.includes("--force") || process.env.SEED_DEMO_ALLOW_PROD === "1";
@@ -756,10 +781,8 @@ async function main() {
   }
   if (!looksLocal && !force) {
     console.error(
-      `Refusing to seed demo data: DATABASE_URL does not look local.\n` +
-        `  ${url.replace(/:[^:@/]*@/, ":****@")}\n` +
-        `This script is for a LOCAL dev database. Re-run with --force (or set ` +
-        `SEED_DEMO_ALLOW_PROD=1) only if you are certain.`,
+      `Refusing to seed demo data: DATABASE_URL does not look local.\n  ${url.replace(/:[^:@/]*@/, ":****@")}\n` +
+        `This script is for a LOCAL dev database. Re-run with --force (or set SEED_DEMO_ALLOW_PROD=1).`,
     );
     process.exit(1);
   }
@@ -767,16 +790,16 @@ async function main() {
   console.log(`Seeding demo district "${DISTRICT_NAME}" (${DISTRICT_SLUG})…`);
   if (reset) await resetDemo();
 
-  // 1) Synthesize + ingest bundles (two time points per school for uplink rates).
+  // 1) Synthesize + ingest bundles (two crawl samples per school for uplink rates).
   const root = join(tmpdir(), `netmon-demo-bundles-${NOW}`);
   for (const s of SCHOOLS) {
+    const baseIn = 5_000_000_000;
+    const baseOut = 2_000_000_000;
     const points: BundlePoint[] = [
-      { scanId: 1, startedMs: NOW - 2 * HOUR, coreInOctets: 10_000_000_000, coreOutOctets: 4_000_000_000 },
-      // ~850 Mbps in over the 2h gap would be huge; use a realistic 300s window by
-      // sampling the second point only 5 min later (the rate is delta/elapsed).
-      { scanId: 2, startedMs: NOW - 2 * HOUR + 300_000,
-        coreInOctets: 10_000_000_000 + Math.round((850e6 * 300) / 8),
-        coreOutOctets: 4_000_000_000 + Math.round((180e6 * 300) / 8) },
+      { scanId: 1, startedMs: SCAN1_MS, coreInOctets: baseIn, coreOutOctets: baseOut },
+      { scanId: 2, startedMs: SCAN2_MS,
+        coreInOctets: baseIn + octetsFor(s.uplinkInMbps),
+        coreOutOctets: baseOut + octetsFor(s.uplinkOutMbps) },
     ];
     for (const pt of points) {
       const dir = join(root, `${s.slug}-${s.sensor}-scan${pt.scanId}`);
@@ -785,33 +808,113 @@ async function main() {
       console.log(
         `  ingested ${s.slug}/${s.sensor} scan ${pt.scanId}: ` +
           `${res.counts.entities_host} hosts, ${res.counts.entities_switch} switches, ` +
-          `${res.counts.devices} device rows`,
+          `${res.counts.host_switch_ports} host-port maps`,
       );
     }
   }
 
-  // Resolve the created district + schools for the direct seeds.
+  // Resolve + flag the district.
   const [district] = await db.select().from(districts).where(eq(districts.slug, DISTRICT_SLUG));
-
-  // ingest creates the district with name=slug and is_demo=false (the default).
-  // Flag it as a demo + give it the friendly name: this is what makes the AI sweep
-  // skip it and the maintenance purge spare its time-series (see app.ts isDemo).
-  await db
-    .update(districts)
-    .set({ name: DISTRICT_NAME, isDemo: true })
-    .where(eq(districts.id, district.id));
+  await db.update(districts).set({ name: DISTRICT_NAME, isDemo: true }).where(eq(districts.id, district.id));
 
   const schoolRows = await db.select().from(schools).where(eq(schools.districtId, district.id));
   const schoolBySlug = new Map(schoolRows.map((s) => [s.slug, s]));
 
-  // 2) Seed issues per school scope.
+  // Sensor id per school (ingest created one per school: slug "mdf").
+  const sensorRows = await db
+    .select({ id: sensors.id, schoolId: sensors.schoolId })
+    .from(sensors)
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .where(eq(schools.districtId, district.id));
+  const sensorBySchool = new Map(sensorRows.map((r) => [r.schoolId, r.id]));
+
+  // 2) Patch the demo sensors so they read HEALTHY (recent check-in, on-fleet
+  //    version → no "behind"/"never checked in" flags). Match the real fleet's
+  //    top SHA so the demo boxes don't show as drifting.
+  const realShas = await db
+    .select({ sha: sensors.reportedSha, ver: sensors.agentVersion })
+    .from(sensors)
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .innerJoin(districts, eq(schools.districtId, districts.id))
+    .where(eq(districts.isDemo, false));
+  const fleetSha = fleetTopSha(realShas.map((r) => r.sha)) ?? "0".repeat(40);
+  const fleetVer = realShas.find((r) => r.sha === fleetSha)?.ver ?? realShas.find((r) => r.ver)?.ver ?? "stable";
+
+  for (const s of SCHOOLS) {
+    const school = schoolBySlug.get(s.slug);
+    if (!school) continue;
+    const sensorId = sensorBySchool.get(school.id);
+    if (!sensorId) continue;
+    await db
+      .update(sensors)
+      .set({
+        lastCheckinAt: date(NOW - 90_000),
+        reportedSha: fleetSha,
+        reportedChannel: "stable",
+        agentVersion: fleetVer,
+        lastUpdateStatus: "ok",
+        lastUpdateAt: iso(NOW - HOUR),
+        reportedConfigVersion: 1,
+        localIp: `${s.subnet}.9`,
+        iface: "eth0",
+        ifaceCidr: s.cidr,
+        reportedSnmpEnabled: true,
+        reportedSftpEnabled: true,
+        reportedHostMetrics: { cpu: 11, mem: 37, disk: 42, os: "Ubuntu 22.04 LTS", uptimeSec: 1_894_000, tempC: 46 },
+        reportedMetricsAt: date(NOW - 90_000),
+      })
+      .where(eq(sensors.id, sensorId));
+  }
+
+  // 3) Committed WAN rate + speed/iperf/latency results (direct — not from bundles).
+  for (const s of SCHOOLS) {
+    const school = schoolBySlug.get(s.slug);
+    if (!school) continue;
+    const sensorId = sensorBySchool.get(school.id)!;
+
+    await db
+      .insert(schoolCommittedRate)
+      .values({ schoolId: school.id, committedMbps: s.committedMbps, label: "ISP circuit" })
+      .onConflictDoUpdate({ target: schoolCommittedRate.schoolId, set: { committedMbps: s.committedMbps, label: "ISP circuit" } });
+
+    const healthy = s.slug === "roosevelt-hs";
+    // Public internet speed test.
+    await db.insert(speedtestResults).values({
+      sensorId, trigger: "scheduled", provider: "cloudflare",
+      downloadMbps: healthy ? 934 : 118, uploadMbps: healthy ? 212 : 24,
+      latencyMs: healthy ? 7.4 : 31, jitterMs: healthy ? 1.2 : 6.5, lossPct: healthy ? 0 : 0.4,
+      server: "Cloudflare", isp: "Demo ISP", ok: true, startedAt: date(NOW - 40 * 60_000),
+    });
+    // Internal iperf (validates the LAN/uplink can hit rate) — Roosevelt is the healthy one.
+    if (healthy) {
+      for (const dir of ["down", "up"] as const) {
+        await db.insert(iperfResults).values({
+          sensorId, trigger: "scheduled", serverHost: "10.0.0.250", serverPort: 5201,
+          protocol: "tcp", direction: dir, durationSec: 10,
+          throughputMbps: dir === "down" ? 951 : 944, retransmits: 4, jitterMs: 0.8, lossPct: 0,
+          ok: true, startedAt: date(NOW - 35 * 60_000),
+        });
+      }
+    }
+    // Latency to internet / gateway / DNS.
+    const lat: [string, string, number][] = healthy
+      ? [["internet", "1.1.1.1", 8.1], ["gateway", s.gatewayIp, 0.7], ["dns", "8.8.8.8", 9.3]]
+      : [["internet", "1.1.1.1", 34], ["gateway", s.gatewayIp, 1.1], ["dns", "8.8.8.8", 28]];
+    for (const [label, target, ms] of lat) {
+      await db.insert(latencyResults).values({
+        sensorId, trigger: "scheduled", label, target,
+        latencyMs: ms, jitterMs: healthy ? 0.9 : 5.2, lossPct: healthy ? 0 : 0.3,
+        ok: true, startedAt: date(NOW - 30 * 60_000),
+      });
+    }
+  }
+
+  // 4) Issues slate.
   let issueCount = 0;
   for (const s of SCHOOLS) {
     const school = schoolBySlug.get(s.slug);
     if (!school) continue;
     for (const it of issuesFor(s.slug)) {
-      const firstSeen = NOW - it.firstSeenDaysAgo * DAY;
-      const lastSeen = NOW - it.lastSeenHoursAgo * HOUR;
       await db.insert(issues).values({
         districtId: district.id,
         scopeType: "school",
@@ -825,20 +928,16 @@ async function main() {
         status: it.status,
         source: it.source,
         occurrences: it.occurrences,
-        missedRuns: it.status === "resolved" ? 2 : 0,
-        firstSeenAt: date(firstSeen),
-        lastSeenAt: date(lastSeen),
-        resolvedAt: it.resolvedHoursAgo ? date(NOW - it.resolvedHoursAgo * HOUR) : null,
-        acknowledgedAt: it.status === "acknowledged" ? date(NOW - 3 * HOUR) : null,
-        note: it.note ?? null,
-        updatedAt: date(lastSeen),
+        missedRuns: 0,
+        firstSeenAt: date(NOW - it.firstSeenDaysAgo * DAY),
+        lastSeenAt: date(NOW - it.lastSeenHoursAgo * HOUR),
+        updatedAt: date(NOW - it.lastSeenHoursAgo * HOUR),
       });
       issueCount++;
     }
   }
 
-  // 3) Seed AI analyses per school scope — two providers sharing a runId so the
-  //    side-by-side model comparison renders.
+  // 5) AI analyses (two providers sharing a runId → side-by-side comparison).
   let aiCount = 0;
   const PROVIDERS = [
     { providerId: "anthropic", model: "claude-opus-4-8" },
@@ -850,23 +949,11 @@ async function main() {
     const runId = `demo-${s.slug}-${NOW}`;
     for (const p of PROVIDERS) {
       await db.insert(aiAnalyses).values({
-        runId,
-        scopeType: "school",
-        scopeId: school.id,
-        districtId: district.id,
-        windowStart: date(NOW - DAY),
-        windowEnd: date(NOW),
-        trigger: "scheduled",
-        kind: "general",
-        providerId: p.providerId,
-        model: p.model,
-        status: "ok",
-        prose: aiProseFor(s.slug, s.name),
-        findings: aiFindingsFor(s.slug),
-        tokensIn: 6200,
-        tokensOut: 1400,
-        costUsd: 0.04,
-        latencyMs: 5200,
+        runId, scopeType: "school", scopeId: school.id, districtId: district.id,
+        windowStart: date(NOW - DAY), windowEnd: date(NOW), trigger: "scheduled", kind: "general",
+        providerId: p.providerId, model: p.model, status: "ok",
+        prose: aiProseFor(s.slug, s.name), findings: aiFindingsFor(s.slug),
+        tokensIn: 6400, tokensOut: 1500, costUsd: 0.05, latencyMs: 5100,
         completedAt: date(NOW - 30 * 60_000),
       });
       aiCount++;
@@ -874,25 +961,20 @@ async function main() {
   }
 
   if (!keepBundles) {
-    try {
-      rmSync(root, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
-    }
+    try { rmSync(root, { recursive: true, force: true }); } catch { /* best-effort */ }
   } else {
     console.log(`  bundle dirs kept at: ${root}`);
   }
 
+  const totalHosts = SCHOOLS.reduce((n, s) => n + s.hosts.length, 0);
   console.log(
     `\nDone. District "${DISTRICT_NAME}" seeded:\n` +
-      `  • ${SCHOOLS.length} schools, ${SCHOOLS.length} sensors\n` +
-      `  • ${issueCount} issues (open / acknowledged / resolved)\n` +
-      `  • ${aiCount} AI analysis rows (${PROVIDERS.length} providers × ${SCHOOLS.length} schools)\n` +
-      `  • physical + logical maps, device classification, uplink samples, health rollup\n\n` +
-      `Sign in and open the "${DISTRICT_NAME}" district to record the demo.\n` +
-      `Re-run with --reset to rebuild from scratch.`,
+      `  • ${SCHOOLS.length} schools, ${SCHOOLS.length} sensors (healthy), ~${totalHosts} devices\n` +
+      `  • ${issueCount} open issues (hero: flapping core port w/ fix)\n` +
+      `  • ${aiCount} AI analysis rows; committed-rate + speed/iperf/latency seeded\n` +
+      `  • maps, classification, host→switch-port (FDB), uplink samples, health rollup\n\n` +
+      `Re-run with --reset (or SEED_DEMO_RESET=1) to rebuild.`,
   );
-
   process.exit(0);
 }
 

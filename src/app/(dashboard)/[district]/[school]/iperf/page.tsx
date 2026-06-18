@@ -521,7 +521,12 @@ export default async function IperfPage({
                     <p className="mb-2 text-xs font-medium text-muted-foreground">
                       Daily average · last 30 days
                     </p>
-                    <IperfChart series={upDailySeries} keys={upDailyKeys} />
+                    <IperfChart
+                      series={upDailySeries}
+                      keys={upDailyKeys}
+                      referenceY={committedMbps}
+                      referenceLabel="Contracted rate"
+                    />
                   </div>
                 )}
                 {upKeys.length > 0 && (
@@ -529,7 +534,12 @@ export default async function IperfPage({
                     <p className="mb-2 text-xs font-medium text-muted-foreground">
                       Hourly · last 24 hours
                     </p>
-                    <IperfChart series={upSeries} keys={upKeys} />
+                    <IperfChart
+                      series={upSeries}
+                      keys={upKeys}
+                      referenceY={committedMbps}
+                      referenceLabel="Contracted rate"
+                    />
                   </div>
                 )}
                 <div className="overflow-x-auto">
