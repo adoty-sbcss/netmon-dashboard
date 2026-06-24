@@ -28,7 +28,6 @@ import {
   dnsResolverHealth,
   dnsProbes,
   stpEvents,
-  trafficStats,
   snmpPolls,
   hostSwitchPorts,
   findings as findingsTbl,
@@ -79,8 +78,25 @@ const SNMP_KEEP_OID_NAMES = new Set([
   "sysUpTime",
   "ifName",
   "dot1dBasePortIfIndex",
-  "dot1dTpFdbTable",
   "dot1dStpPortTable",
+]);
+
+/**
+ * Large bulk OIDs that are NEVER stored in the hot snmp_polls table: ifTable +
+ * ipNetToMediaTable (SNMP ARP cache) + the bridge FDB tables (dot1dTpFdbTable /
+ * dot1qTpFdbPort). These are the dominant DB-bloat source — uncapped, polled
+ * hourly, one row per interface / ARP entry / learned MAC (millions of rows on a
+ * stacked switch) — and NOTHING reads them: the per-host switch-port chain is
+ * derived from the FULL bundle snmp set (deriveHostSwitchPorts(scan.snmp) below),
+ * not from these stored rows, and the device/switch SNMP cards already exclude
+ * ifTable. The complete raw set still lives in the bundle ZIP for back-extract,
+ * so this is reversible and loses nothing the app surfaces.
+ */
+const SNMP_DROP_OID_NAMES = new Set([
+  "ifTable",
+  "ipNetToMediaTable",
+  "dot1dTpFdbTable",
+  "dot1qTpFdbPort",
 ]);
 /**
  * Cap applied only to non-priority bulk rows (ifTable, ipNetToMediaTable,
@@ -903,32 +919,18 @@ export async function ingestBundle(
         healthStp += stpRows.length;
       }
 
-      // traffic
-      const trafficRows = scan.traffic.map((t) => ({
-        scanRunId,
-        interface: str(t.interface),
-        bucketStart: toDate(t.bucket_start),
-        bucketEnd: toDate(t.bucket_end),
-        rxPackets: toNum(t.rx_packets),
-        rxBytes: toNum(t.rx_bytes),
-        rxErrors: toNum(t.rx_errors),
-        rxDropped: toNum(t.rx_dropped),
-        txPackets: toNum(t.tx_packets),
-        txBytes: toNum(t.tx_bytes),
-        broadcastPackets: toNum(t.broadcast_packets),
-        multicastPackets: toNum(t.multicast_packets),
-        tsharkTotalPackets: toNum(t.tshark_total_packets),
-      }));
-      if (trafficRows.length) {
-        await tx.insert(trafficStats).values(trafficRows);
-        counts.traffic_stats += trafficRows.length;
-      }
+      // traffic_stats: no longer stored. It was written every scan but never read
+      // by any query, page, count, or AI context (pure dead weight). The raw
+      // traffic buckets remain in the bundle ZIP. (scan.traffic intentionally unused.)
 
-      // snmp (curated: keep priority OIDs in full, cap only the bulk tables)
+      // snmp (curated: DROP the never-read bulk FDB/ifTable/ARP OIDs entirely,
+      // keep priority OIDs in full, cap any remaining bulk tables)
       const keptSnmp: typeof scan.snmp = [];
       const bulkSnmp: typeof scan.snmp = [];
       for (const p of scan.snmp) {
-        if (SNMP_KEEP_OID_NAMES.has(str(p.oid_name) ?? "")) keptSnmp.push(p);
+        const name = str(p.oid_name) ?? "";
+        if (SNMP_DROP_OID_NAMES.has(name)) continue; // never stored (raw stays in the ZIP)
+        if (SNMP_KEEP_OID_NAMES.has(name)) keptSnmp.push(p);
         else bulkSnmp.push(p);
       }
       const snmpSlice =

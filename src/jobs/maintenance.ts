@@ -31,10 +31,10 @@ import "dotenv/config";
 
 import Client from "ssh2-sftp-client";
 import postgres from "postgres";
-import { and, eq, isNotNull, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lt, notInArray, sql } from "drizzle-orm";
 
 import { db } from "../db";
-import { scanRuns } from "../db/schema/netmon";
+import { scanRuns, hostSwitchPorts, dnsProbes, networkReachability } from "../db/schema/netmon";
 import { districts, ingestedBundles } from "../db/schema/app";
 import { resolveSftpConfig } from "../lib/ingest/settings";
 import { evaluateStpRules } from "../lib/rules/stp";
@@ -45,6 +45,9 @@ function intEnv(name: string, dflt: number): number {
 }
 
 const RETENTION_DAYS = intEnv("RETENTION_DAYS", 30);
+// High-volume tables the app only ever reads at their NEWEST scan (FDB / DNS
+// probes / reachability) are trimmed to this shorter window instead of 30d.
+const SHORT_RETENTION_DAYS = intEnv("SHORT_RETENTION_DAYS", 7);
 const SFTP_GRACE_DAYS = intEnv("SFTP_GRACE_DAYS", 7);
 const DRY_RUN = process.env.MAINTENANCE_DRY_RUN === "1";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -104,6 +107,44 @@ async function purgeTimeSeries(): Promise<void> {
   }
   await db.delete(scanRuns).where(where);
   console.log(`Time-series purge: deleted ${n} scan_run(s) older than ${RETENTION_DAYS}d (cascaded their per-scan rows).`);
+}
+
+/**
+ * Step 1b: trim the high-volume, latest-scan-only tables (FDB host_switch_ports /
+ * dns_probes / network_reachability) to a SHORTER window than the global 30d. The
+ * app reads each only at its newest scan, so older rows are pure bloat. Deletes by
+ * scan age WITHOUT removing scan_runs, so the 30d tier (devices/neighbors/snmp/…)
+ * is untouched. Demo districts are spared, same as the main purge.
+ */
+async function purgeShortRetention(): Promise<void> {
+  if (SHORT_RETENTION_DAYS >= RETENTION_DAYS) {
+    console.log(
+      `Short-retention trim: SHORT_RETENTION_DAYS=${SHORT_RETENTION_DAYS} not below RETENTION_DAYS=${RETENTION_DAYS}; skipping.`,
+    );
+    return;
+  }
+  const cutoff = new Date(Date.now() - SHORT_RETENTION_DAYS * DAY_MS);
+  const demoSlugs = (
+    await db.select({ slug: districts.slug }).from(districts).where(eq(districts.isDemo, true))
+  ).map((r) => r.slug);
+  const scanWhere =
+    demoSlugs.length > 0
+      ? and(lt(scanRuns.ingestedAt, cutoff), notInArray(scanRuns.districtSlug, demoSlugs))
+      : lt(scanRuns.ingestedAt, cutoff);
+  const oldScanIds = db.select({ id: scanRuns.id }).from(scanRuns).where(scanWhere);
+
+  if (DRY_RUN) {
+    console.log(
+      `[dry-run] would trim host_switch_ports / dns_probes / network_reachability older than ${SHORT_RETENTION_DAYS}d (keeps scan_runs).`,
+    );
+    return;
+  }
+  await db.delete(hostSwitchPorts).where(inArray(hostSwitchPorts.scanRunId, oldScanIds));
+  await db.delete(dnsProbes).where(inArray(dnsProbes.scanRunId, oldScanIds));
+  await db.delete(networkReachability).where(inArray(networkReachability.scanRunId, oldScanIds));
+  console.log(
+    `Short-retention trim: trimmed host_switch_ports / dns_probes / network_reachability older than ${SHORT_RETENTION_DAYS}d.`,
+  );
 }
 
 /** Step 2: deterministic rules → Issues tracker (STP instability for now). */
@@ -226,6 +267,7 @@ async function main() {
   };
 
   await step("time-series purge", purgeTimeSeries);
+  await step("short-retention trim", purgeShortRetention);
   await step("deterministic rules", deterministicRules);
   await step("vacuum", vacuum);
   await step("sftp prune", pruneSftp);
