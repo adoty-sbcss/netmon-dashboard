@@ -1198,42 +1198,31 @@ export async function getSwitchDetail(
     .orderBy(desc(scanRuns.startedAt))
     .limit(200);
 
+  // Identity attributes (sys*, ifName, …); the bulk ifTable rows are excluded.
+  // The interface COUNT comes from `ports.length` below, NOT a count() over
+  // snmp_polls: ifTable is an UNCAPPED bulk OID (one row per interface per scan),
+  // so for a big stacked switch that count traversed MILLIONS of rows (× a
+  // scan_runs→sensors join) — the ~60s switch-detail bottleneck. ports.length is
+  // the live interface count and matches what the ports table renders.
   let snmp: SnmpAttr[] = [];
-  let interfaceCount = 0;
   if (sw.mgmtIp) {
-    const [attrs, [ifc]] = await Promise.all([
-      db
-        .select({
-          oidName: snmpPolls.oidName,
-          value: snmpPolls.value,
-          deviceIp: snmpPolls.deviceIp,
-        })
-        .from(snmpPolls)
-        .innerJoin(scanRuns, eq(snmpPolls.scanRunId, scanRuns.id))
-        .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
-        .where(
-          and(
-            eq(sensors.schoolId, schoolId),
-            eq(snmpPolls.deviceIp, sw.mgmtIp),
-            sql`${snmpPolls.oidName} <> 'ifTable'`,
-          ),
-        )
-        .limit(40),
-      db
-        .select({ c: count() })
-        .from(snmpPolls)
-        .innerJoin(scanRuns, eq(snmpPolls.scanRunId, scanRuns.id))
-        .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
-        .where(
-          and(
-            eq(sensors.schoolId, schoolId),
-            eq(snmpPolls.deviceIp, sw.mgmtIp),
-            eq(snmpPolls.oidName, "ifTable"),
-          ),
+    snmp = await db
+      .select({
+        oidName: snmpPolls.oidName,
+        value: snmpPolls.value,
+        deviceIp: snmpPolls.deviceIp,
+      })
+      .from(snmpPolls)
+      .innerJoin(scanRuns, eq(snmpPolls.scanRunId, scanRuns.id))
+      .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+      .where(
+        and(
+          eq(sensors.schoolId, schoolId),
+          eq(snmpPolls.deviceIp, sw.mgmtIp),
+          sql`${snmpPolls.oidName} <> 'ifTable'`,
         ),
-    ]);
-    snmp = attrs;
-    interfaceCount = ifc?.c ?? 0;
+      )
+      .limit(40);
   }
 
   const [ports, connectedDevices, reachRow, credRow] = await Promise.all([
@@ -1287,7 +1276,7 @@ export async function getSwitchDetail(
     attributes: (sw.attributes ?? {}) as Record<string, unknown>,
     appearances,
     snmp,
-    interfaceCount,
+    interfaceCount: ports.length,
     ports,
     connectedDevices,
     snmpResponded: reachRow[0]?.snmpResponded ?? null,
