@@ -31,6 +31,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SpeedScoreboard } from "@/app/(dashboard)/[district]/[school]/iperf/speed-scoreboard";
+import type {
+  SpeedCardVM,
+  IperfCardVM,
+} from "@/app/(dashboard)/[district]/[school]/iperf/summary";
+import type { UplinkGlanceProps } from "@/app/(dashboard)/[district]/[school]/iperf/uplink-glance";
 
 const DISTRICTS = [
   { name: "San Bernardino CSS", schools: 12, sensors: 18, hosts: "1,284", findings: 3, updated: "4m ago" },
@@ -43,6 +49,59 @@ const SENSORS = [
   { name: "North-MDF", slug: "north-mdf", devices: "312", scan: "4m ago", checkin: "2m ago", agent: "v2.4.1" },
   { name: "Annex-Closet-2", slug: "annex-closet-2", devices: "198", scan: "9m ago", checkin: "3m ago", agent: "v2.4.0" },
 ];
+
+// Mock Speed & Bandwidth scoreboard data. NOW read at module scope (not in the
+// render body) so the harness mirrors the real page's purity discipline.
+const NOW = Date.now();
+const min = (m: number) => new Date(NOW - m * 60_000);
+
+const MOCK_INTERNET: SpeedCardVM[] = [
+  {
+    sensorSlug: "north-idf",
+    sensorName: "North IDF",
+    ok: true,
+    when: min(9),
+    downloadMbps: 785.3,
+    uploadMbps: 760.8,
+    latencyMs: 46,
+    jitterMs: 52.5,
+    provider: "cloudflare",
+    error: null,
+    trendDown: [772, 781, 769, 790, 766, 785, 778, 792, 770, 785],
+    trendUp: [744, 751, 760, 738, 755, 749, 761, 744, 758, 760],
+    status: "ok",
+    statusReason: "Healthy",
+  },
+];
+
+const MOCK_IPERF: IperfCardVM[] = [
+  {
+    sensorSlug: "north-idf",
+    sensorName: "North IDF",
+    down: { mbps: 942.0, ok: true, when: min(12), error: null },
+    up: { mbps: 488.1, ok: true, when: min(14), error: null },
+    protocol: "tcp",
+    retransmits: 14,
+    jitterMs: null,
+    lossPct: null,
+    trendDown: [938, 941, 939, 942, 940, 941, 942, 940, 942, 942],
+    trendUp: [902, 880, 866, 720, 640, 560, 512, 498, 491, 488],
+    status: "warn",
+    statusReason: "A direction is running below its recent best",
+    when: min(12),
+  },
+];
+
+const MOCK_UPLINK: UplinkGlanceProps = {
+  committedMbps: 1000,
+  inMbps: 384,
+  outMbps: 121,
+  inPct: 38.4,
+  outPct: 12.1,
+  wanName: "Te1/1/1 → ISP",
+  when: min(7),
+  portSpeedMbps: 10000,
+};
 
 export default function PreviewPage() {
   return (
@@ -205,6 +264,20 @@ export default function PreviewPage() {
             </div>
           </CardContent>
         </Card>
+      </section>
+
+      <hr className="border-dashed" />
+
+      {/* ====================== SPEED & BANDWIDTH ====================== */}
+      <section className="flex flex-col gap-6">
+        <span className="w-fit rounded-full border bg-background px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+          School page · Speed &amp; Bandwidth (scoreboard)
+        </span>
+        <PageHeader
+          title="Speed & Bandwidth"
+          description="North Elementary · internet speed tests + internal throughput"
+        />
+        <SpeedScoreboard internet={MOCK_INTERNET} iperf={MOCK_IPERF} uplink={MOCK_UPLINK} />
       </section>
     </div>
   );

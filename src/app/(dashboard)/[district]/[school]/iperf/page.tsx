@@ -29,8 +29,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { IperfChart } from "./iperf-chart-dynamic";
-import { SpeedtestLatest } from "./speedtest-latest";
 import { CommittedRateForm } from "./committed-rate-form";
+import { SpeedScoreboard } from "./speed-scoreboard";
+import { CollapsibleRuns } from "./collapsible-runs";
+import { buildInternetCards, buildIperfCards } from "./summary";
+import type { UplinkGlanceProps } from "./uplink-glance";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +59,20 @@ async function safeQuery<T>(p: Promise<T>, fallback: T, label: string): Promise<
 function withinLast24h(samples: UplinkSampleRow[]): UplinkSampleRow[] {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   return samples.filter((s) => (s.sampledAt ?? s.createdAt).getTime() >= cutoff);
+}
+
+/** Recent-runs tables collapse to this window by default (CollapsibleRuns). */
+const RECENT_WINDOW_MS = 5 * 60 * 60 * 1000;
+/** ...but always show at least this many newest rows, so a quiet site whose last
+ *  run predates the window still shows something instead of an empty table. */
+const MIN_VISIBLE_ROWS = 3;
+
+/** For a newest-first row list, flag which rows fall outside the recent window
+ *  and should hide while the table is collapsed. Date.now() kept out of the
+ *  render body, matching withinLast24h above. */
+function tagOlder<T>(rows: T[], ts: (r: T) => number): boolean[] {
+  const cutoff = Date.now() - RECENT_WINDOW_MS;
+  return rows.map((r, i) => i >= MIN_VISIBLE_ROWS && ts(r) < cutoff);
 }
 
 /** PERF-3: tint utilization as it approaches/exceeds the committed rate. */
@@ -191,13 +208,7 @@ export default async function IperfPage({
   const series = [...seriesMap.values()].sort((a, b) => a.ts - b.ts);
   const keys = [...keySet];
 
-  // --- speed test: latest result per sensor + download/upload trend ---------
-  const stLatestMap = new Map<string, (typeof speedtests)[number]>();
-  for (const r of speedtests) {
-    if (!stLatestMap.has(r.sensorSlug)) stLatestMap.set(r.sensorSlug, r);
-  }
-  const stLatest = [...stLatestMap.values()];
-
+  // --- speed test: download/upload trend (latest-per-sensor → scoreboard) ----
   const stSeriesMap = new Map<number, Record<string, number>>();
   const stKeySet = new Set<string>();
   for (const r of speedtests) {
@@ -292,6 +303,33 @@ export default async function IperfPage({
   );
   const hasUplinkData = uplinkRows.length > 0;
 
+  // --- scoreboard view-models (the at-a-glance hero) -------------------------
+  const internetCards = buildInternetCards(speedtests);
+  const iperfCards = buildIperfCards(rows);
+  const uplinkGlance: UplinkGlanceProps | null = hasUplinkData
+    ? {
+        committedMbps,
+        inMbps: wanCurrentIn,
+        outMbps: wanCurrentOut,
+        inPct: utilInPct,
+        outPct: utilOutPct,
+        wanName,
+        when: wanLatest?.sampledAt ?? null,
+        portSpeedMbps: wanSpeedMbps,
+      }
+    : null;
+
+  // --- recent-runs collapse: tag rows past the 5h window (newest-first) -------
+  const stRows = speedtests.slice(0, 50);
+  const stOlder = tagOlder(stRows, (r) => (r.startedAt ?? r.createdAt).getTime());
+  const stOlderCount = stOlder.filter(Boolean).length;
+  const iperfRows = rows.slice(0, 50);
+  const iperfOlder = tagOlder(iperfRows, (r) => (r.startedAt ?? r.createdAt).getTime());
+  const iperfOlderCount = iperfOlder.filter(Boolean).length;
+  const sampleRowsDesc = [...wanSamples24h].reverse();
+  const sampleOlder = tagOlder(sampleRowsDesc, (s) => (s.sampledAt ?? s.createdAt).getTime());
+  const sampleOlderCount = sampleOlder.filter(Boolean).length;
+
   const configured = Boolean(cfg.enabled && cfg.serverHost);
 
   return (
@@ -302,11 +340,14 @@ export default async function IperfPage({
         description={`${schoolName} · internet speed tests + internal throughput`}
       />
 
+      {/* --- At-a-glance scoreboard: internet + iperf side by side, WAN strip --- */}
+      <SpeedScoreboard internet={internetCards} iperf={iperfCards} uplink={uplinkGlance} />
+
       {/* --- Internet speed (public speed tests: Ookla + Cloudflare) --- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <Globe className="size-4 text-primary" /> Internet speed (public tests)
+            <Globe className="size-4 text-primary" /> Internet speed · history
           </CardTitle>
         </CardHeader>
         <CardContent className="px-0 sm:px-6">
@@ -318,7 +359,6 @@ export default async function IperfPage({
             </p>
           ) : (
             <div className="flex flex-col gap-6">
-              <SpeedtestLatest items={stLatest} />
               {stKeys.length > 0 && (
                 <div className="px-6 sm:px-0">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">
@@ -327,9 +367,10 @@ export default async function IperfPage({
                   <IperfChart series={stSeries} keys={stKeys} />
                 </div>
               )}
+              <CollapsibleRuns olderCount={stOlderCount} triggerClassName="px-6 sm:px-0">
               <div className="overflow-x-auto">
                 <p className="mb-2 px-6 text-xs font-medium text-muted-foreground sm:px-0">
-                  Recent runs
+                  Recent runs <span className="font-normal">· last 5 hours</span>
                 </p>
               <Table>
                 <TableHeader>
@@ -345,8 +386,11 @@ export default async function IperfPage({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {speedtests.slice(0, 50).map((r) => (
-                    <TableRow key={r.id}>
+                  {stRows.map((r, i) => (
+                    <TableRow
+                      key={r.id}
+                      className={stOlder[i] ? "group-data-[expanded=false]/runs:hidden" : undefined}
+                    >
                       <TableCell
                         className="whitespace-nowrap text-muted-foreground"
                         title={dateTime(r.startedAt ?? r.createdAt)}
@@ -403,6 +447,7 @@ export default async function IperfPage({
                 </TableBody>
               </Table>
               </div>
+              </CollapsibleRuns>
             </div>
           )}
         </CardContent>
@@ -544,13 +589,14 @@ export default async function IperfPage({
                 )}
                 <div className="overflow-x-auto">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">
-                    Recent samples · last 24 hours
+                    Recent samples <span className="font-normal">· last 5 hours</span>
                   </p>
-                  {wanSamples24h.length === 0 ? (
+                  {sampleRowsDesc.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       No uplink samples in the last 24 hours.
                     </p>
                   ) : (
+                  <CollapsibleRuns olderCount={sampleOlderCount}>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -563,9 +609,7 @@ export default async function IperfPage({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {[...wanSamples24h]
-                        .reverse()
-                        .map((s) => {
+                      {sampleRowsDesc.map((s, i) => {
                           const pIn = utilPct(s.inMbps);
                           const pOut = utilPct(s.outMbps);
                           const peak =
@@ -573,7 +617,10 @@ export default async function IperfPage({
                               ? Math.max(pIn ?? 0, pOut ?? 0)
                               : null;
                           return (
-                            <TableRow key={s.id}>
+                            <TableRow
+                              key={s.id}
+                              className={sampleOlder[i] ? "group-data-[expanded=false]/runs:hidden" : undefined}
+                            >
                               <TableCell
                                 className="whitespace-nowrap text-muted-foreground"
                                 title={s.sampledAt ? dateTime(s.sampledAt) : ""}
@@ -598,6 +645,7 @@ export default async function IperfPage({
                         })}
                     </TableBody>
                   </Table>
+                  </CollapsibleRuns>
                   )}
                 </div>
               </>
@@ -721,9 +769,13 @@ export default async function IperfPage({
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Recent runs</CardTitle>
+              <CardTitle className="text-base">
+                Recent runs{" "}
+                <span className="text-sm font-normal text-muted-foreground">· last 5 hours</span>
+              </CardTitle>
             </CardHeader>
             <CardContent className="px-0 sm:px-6">
+              <CollapsibleRuns olderCount={iperfOlderCount} triggerClassName="px-6 sm:px-0">
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -739,8 +791,11 @@ export default async function IperfPage({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.slice(0, 50).map((r) => (
-                      <TableRow key={r.id}>
+                    {iperfRows.map((r, i) => (
+                      <TableRow
+                        key={r.id}
+                        className={iperfOlder[i] ? "group-data-[expanded=false]/runs:hidden" : undefined}
+                      >
                         <TableCell
                           className="whitespace-nowrap text-muted-foreground"
                           title={dateTime(r.startedAt ?? r.createdAt)}
@@ -767,6 +822,7 @@ export default async function IperfPage({
                   </TableBody>
                 </Table>
               </div>
+              </CollapsibleRuns>
             </CardContent>
           </Card>
         </>

@@ -4,20 +4,9 @@ import { ArrowDownToLine, ArrowUpFromLine, Clock } from "lucide-react";
 
 import { dateTime, relativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
-
-export interface SpeedtestLatestRow {
-  sensorSlug: string;
-  sensorName: string | null;
-  provider: string | null;
-  downloadMbps: number | null;
-  uploadMbps: number | null;
-  latencyMs: number | null;
-  jitterMs: number | null;
-  ok: boolean;
-  error: string | null;
-  startedAt: Date | null;
-  createdAt: Date | null;
-}
+import { StatusDot } from "@/components/status-dot";
+import { Sparkline } from "@/components/sparkline";
+import { DOWN_COLOR, UP_COLOR, type SpeedCardVM } from "./summary";
 
 function f1(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(1);
@@ -55,26 +44,30 @@ function Metric({
 }
 
 /**
- * "Latest speed test" cards — one per sensor, showing the most recent result as
- * big download/upload numbers with proportional bars + latency/jitter chips.
- * Presentational (server-rendered); the historical trend is the chart below it.
+ * "Latest internet speed" cards — one per sensor, showing the most recent public
+ * speed test as big download/upload numbers with proportional bars, a health dot,
+ * a 24h sparkline, and latency/jitter chips. Presentational (server-rendered);
+ * the historical trend chart lives below it on the page.
  */
-export function SpeedtestLatest({ items }: { items: SpeedtestLatestRow[] }) {
+export function SpeedtestLatest({ items }: { items: SpeedCardVM[] }) {
   if (items.length === 0) return null;
   return (
-    <div className="grid gap-3 px-6 sm:grid-cols-2 sm:px-0 xl:grid-cols-3">
+    <div className="flex flex-col gap-3">
       {items.map((r) => {
-        const when = r.startedAt ?? r.createdAt;
         const max = Math.max(r.downloadMbps ?? 0, r.uploadMbps ?? 0, 1);
+        const hasTrend = r.trendDown.length > 1 || r.trendUp.length > 1;
         return (
           <div key={r.sensorSlug} className="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-medium">{r.sensorName || r.sensorSlug}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <StatusDot tone={r.status} title={r.statusReason} />
+                <span className="truncate font-medium">{r.sensorName || r.sensorSlug}</span>
+              </span>
               <span
                 className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
-                title={when ? dateTime(when) : undefined}
+                title={r.when ? dateTime(r.when) : undefined}
               >
-                <Clock className="size-3" /> {when ? relativeTime(when) : "—"}
+                <Clock className="size-3" /> {r.when ? relativeTime(r.when) : "—"}
               </span>
             </div>
             {!r.ok ? (
@@ -91,6 +84,15 @@ export function SpeedtestLatest({ items }: { items: SpeedtestLatestRow[] }) {
               <>
                 <Metric label="Download" value={r.downloadMbps} max={max} tone="bg-blue-500" Icon={ArrowDownToLine} />
                 <Metric label="Upload" value={r.uploadMbps} max={max} tone="bg-emerald-500" Icon={ArrowUpFromLine} />
+                {hasTrend && (
+                  <Sparkline
+                    series={[
+                      { points: r.trendDown, color: DOWN_COLOR },
+                      { points: r.trendUp, color: UP_COLOR },
+                    ]}
+                    className="mt-0.5"
+                  />
+                )}
                 <div className="flex flex-wrap gap-1.5 pt-0.5">
                   <Badge variant="outline" className="text-[11px] font-normal">
                     latency {f1(r.latencyMs)} ms
