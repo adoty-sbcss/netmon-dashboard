@@ -14,7 +14,8 @@ import { Rocket, Copy, Check, TriangleAlert, Download } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 const REPO_URL = "https://github.com/adoty-sbcss/net_mon.git";
 
@@ -174,15 +175,11 @@ exec ./install.sh
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Rocket className="size-4 text-primary" />
-          Deploy a sensor here
-          <span className="text-xs font-normal text-muted-foreground">
-            {districtSlug}/{schoolSlug}
-          </span>
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader
+        icon={Rocket}
+        title="Deploy a sensor here"
+        meta={`${districtSlug}/${schoolSlug}`}
+      />
       <CardContent className="flex flex-col gap-3 text-sm">
         <p className="text-muted-foreground">
           On a fresh Ubuntu box for this site, run the steps below. The box installs

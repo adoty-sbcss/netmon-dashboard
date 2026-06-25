@@ -21,6 +21,7 @@ import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { AiFindingsCard } from "@/components/ai-findings-card";
+import { SectionHeader } from "@/components/section-header";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -167,13 +168,11 @@ export default async function SchoolPage({
       </div>
 
       {/* AI analysis — under the telemetry it summarizes (Neighbors/DHCP/etc.). */}
-      <AiFindingsCard summary={aiSummary} href={`/${district.slug}/${school.slug}/ai`} />
+      <AiFindingsCard summary={aiSummary} href={`/${district.slug}/${school.slug}/ai`} accent />
 
       {/* Sensors */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Sensors</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Radio} title="Sensors" />
         <CardContent className="px-0 sm:px-6">
           {sensors.length === 0 ? (
             <p className="px-6 py-6 text-sm text-muted-foreground">

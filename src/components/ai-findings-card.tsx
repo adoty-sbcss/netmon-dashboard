@@ -7,6 +7,7 @@ import { SeverityBadge } from "@/components/severity-badge";
 import { AskAssistantButton } from "@/components/ai-chat/ask-assistant-button";
 import { buildFindingFixPrompt } from "@/lib/ai/finding-prompt";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 const MAX_FINDINGS = 6;
 
@@ -18,33 +19,44 @@ export function AiFindingsCard({
   summary,
   href,
   title = "AI analysis",
+  accent = false,
 }: {
   summary: LatestAiSummary | null;
   /** Link to the full per-scope AI page (comparison + Run button). */
   href: string;
   title?: string;
+  /** Render the soft-blue section band header (overview pages). */
+  accent?: boolean;
 }) {
+  const meta = summary
+    ? `${relativeTime(summary.createdAt)} · ${
+        summary.trigger === "scheduled" ? "daily run" : "manual run"
+      }${summary.providerCount > 1 ? ` · ${summary.providerCount} models` : ""}`
+    : undefined;
+  const fullLink = (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1 text-sm font-normal text-primary hover:underline"
+    >
+      Full analysis <ArrowRight className="size-3.5" />
+    </Link>
+  );
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Sparkles className="size-4 text-primary" />
-          {title}
-          {summary && (
-            <span className="text-sm font-normal text-muted-foreground">
-              {relativeTime(summary.createdAt)} ·{" "}
-              {summary.trigger === "scheduled" ? "daily run" : "manual run"}
-              {summary.providerCount > 1 ? ` · ${summary.providerCount} models` : ""}
-            </span>
-          )}
-          <Link
-            href={href}
-            className="ml-auto inline-flex items-center gap-1 text-sm font-normal text-primary hover:underline"
-          >
-            Full analysis <ArrowRight className="size-3.5" />
-          </Link>
-        </CardTitle>
-      </CardHeader>
+      {accent ? (
+        <SectionHeader icon={Sparkles} title={title} meta={meta} action={fullLink} />
+      ) : (
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <Sparkles className="size-4 text-primary" />
+            {title}
+            {meta && (
+              <span className="text-sm font-normal text-muted-foreground">{meta}</span>
+            )}
+            <span className="ml-auto">{fullLink}</span>
+          </CardTitle>
+        </CardHeader>
+      )}
       <CardContent className="flex flex-col gap-4 text-sm">
         {!summary ? (
           <p className="text-muted-foreground">
