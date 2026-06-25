@@ -37,6 +37,8 @@ import type {
   IperfCardVM,
 } from "@/app/(dashboard)/[district]/[school]/iperf/summary";
 import type { UplinkGlanceProps } from "@/app/(dashboard)/[district]/[school]/iperf/uplink-glance";
+import { IperfScheduleEditor } from "@/app/(dashboard)/[district]/[school]/sensor/[id]/iperf-schedule-editor";
+import type { IperfScheduleEntry } from "@/lib/iperf-actions";
 
 const DISTRICTS = [
   { name: "San Bernardino CSS", schools: 12, sensors: 18, hosts: "1,284", findings: 3, updated: "4m ago" },
@@ -102,6 +104,11 @@ const MOCK_UPLINK: UplinkGlanceProps = {
   when: min(7),
   portSpeedMbps: 10000,
 };
+
+const MOCK_IPERF_SCHEDULES: IperfScheduleEntry[] = [
+  { protocol: "tcp", direction: "up", duration: 10, times: ["05:00", "17:00"], days: [0, 1, 2, 3, 4, 5, 6] },
+  { protocol: "udp", direction: "both", duration: 20, times: ["01:00"], days: [0, 2, 4] },
+];
 
 export default function PreviewPage() {
   return (
@@ -278,6 +285,18 @@ export default function PreviewPage() {
           description="North Elementary · internet speed tests + internal throughput"
         />
         <SpeedScoreboard internet={MOCK_INTERNET} iperf={MOCK_IPERF} uplink={MOCK_UPLINK} />
+      </section>
+
+      <hr className="border-dashed" />
+
+      {/* ====================== IPERF SCHEDULE EDITOR ====================== */}
+      <section className="flex flex-col gap-6">
+        <span className="w-fit rounded-full border bg-background px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+          Sensor page · iPerf schedule editor
+        </span>
+        <form className="max-w-2xl">
+          <IperfScheduleEditor initial={MOCK_IPERF_SCHEDULES} />
+        </form>
       </section>
     </div>
   );

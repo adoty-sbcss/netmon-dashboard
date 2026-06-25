@@ -15,6 +15,7 @@ import {
 import { db } from "@/db";
 import { sensors as sensorsTable } from "@/db/schema/app";
 import { getDistrictIperf, listIperfResults, listSpeedtestResults } from "@/lib/iperf";
+import type { IperfScheduleEntry } from "@/lib/iperf-actions";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { sensorHealthFlags, worstLevel } from "@/lib/sensor-health";
 import { SensorManagementPanel } from "./sensor-management";
@@ -108,10 +109,9 @@ export default async function SensorDetailPage({
   const dcfg = (mgmt?.config ?? {}) as Record<string, unknown>;
   const iperfSchedule = {
     enabled: Boolean(dcfg.iperf_enabled),
-    scheduleSec: typeof dcfg.iperf_schedule_sec === "number" ? dcfg.iperf_schedule_sec : 3600,
-    duration: typeof dcfg.iperf_duration === "number" ? dcfg.iperf_duration : 10,
-    direction: typeof dcfg.iperf_direction === "string" ? dcfg.iperf_direction : "down",
-    protocol: typeof dcfg.iperf_protocol === "string" ? dcfg.iperf_protocol : "tcp",
+    schedules: Array.isArray(dcfg.iperf_schedules)
+      ? (dcfg.iperf_schedules as IperfScheduleEntry[])
+      : [],
   };
   const speedtestSchedule = {
     enabled: Boolean(dcfg.speedtest_enabled),

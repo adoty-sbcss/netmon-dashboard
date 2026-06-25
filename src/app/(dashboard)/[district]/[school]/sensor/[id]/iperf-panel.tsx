@@ -8,9 +8,11 @@ import {
   runIperfAction,
   saveIperfScheduleAction,
   type IperfActionState,
+  type IperfScheduleEntry,
 } from "@/lib/iperf-actions";
 import type { IperfResultRow } from "@/lib/iperf";
 import { relativeTime } from "@/lib/format";
+import { IperfScheduleEditor } from "./iperf-schedule-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,10 +38,7 @@ const selectCls =
 
 export interface IperfSchedule {
   enabled: boolean;
-  scheduleSec: number;
-  duration: number;
-  direction: string;
-  protocol: string;
+  schedules: IperfScheduleEntry[];
 }
 
 export function IperfPanel({
@@ -129,34 +128,13 @@ export function IperfPanel({
                 />
                 <span className="text-sm font-medium">Run on a schedule</span>
               </label>
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Every (seconds)</label>
-                  <Input name="scheduleSec" type="number" min={300} defaultValue={schedule.scheduleSec} className="w-28" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Direction</label>
-                  <select name="direction" defaultValue={schedule.direction} className={selectCls}>
-                    <option value="down">Download</option>
-                    <option value="up">Upload</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Protocol</label>
-                  <select name="protocol" defaultValue={schedule.protocol} className={selectCls}>
-                    <option value="tcp">TCP</option>
-                    <option value="udp">UDP</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Seconds</label>
-                  <Input name="duration" type="number" min={1} max={60} defaultValue={schedule.duration} className="w-20" />
-                </div>
+              <IperfScheduleEditor initial={schedule.schedules} />
+              <div className="flex flex-wrap items-center gap-3">
                 <Button type="submit" variant="outline" disabled={savingSched}>
                   {savingSched ? "Saving…" : "Save schedule"}
                 </Button>
+                <Notice state={schedState} />
               </div>
-              <Notice state={schedState} />
               <p className="text-xs text-muted-foreground">
                 Pushed to the box on its next check-in (via desired config).
               </p>
