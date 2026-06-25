@@ -7,6 +7,7 @@ import {
   getDistrictBySlug,
   getSchoolBySlug,
   getSensorDetail,
+  getSensorNetworks,
   listConfigBackups,
   getSensorManagement,
   type SensorDetail,
@@ -21,6 +22,7 @@ import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { SpeedtestPanel } from "./speedtest-panel";
 import { VlanPanel } from "./vlan-panel";
+import { NetworksCard } from "./networks-card";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +74,9 @@ export default async function SensorDetailPage({
     .where(eq(sensorsTable.id, sensor.id))
     .limit(1);
 
+  // Per-network / per-VLAN rollup (ungated, like the Status + Health cards).
+  const networks = await getSensorNetworks(sensor.id);
+
   const user = await getSessionUser();
   const isAdmin = user?.role === "superadmin";
   const [backups, mgmt] = isAdmin
@@ -117,6 +122,15 @@ export default async function SensorDetailPage({
     latencyEnabled: Boolean(dcfg.latency_enabled),
   };
   const basePath = `/${district.slug}/${school.slug}`;
+
+  // Networks card: configured trunk VLANs + whether the box has applied the
+  // current config (drives the "no data yet" vs "not applied" labels).
+  const configuredVlans = String(dcfg.trunk_vlans ?? "")
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((v) => Number.isInteger(v) && v >= 1 && v <= 4094);
+  const trunkParent = (dcfg.trunk_parent as string) || null;
+  const configApplied = (sensor.reportedConfigVersion ?? -1) >= (mgmt?.configVersion ?? 0);
 
   // Attention flags — same logic as the fleet view. fleetTopSha isn't available
   // here (single sensor), so the "behind the fleet" check is skipped; the rest
@@ -216,6 +230,14 @@ export default async function SensorDetailPage({
           {sensor.lastUpdateStatus && <LastUpdateBanner sensor={sensor} />}
         </CardContent>
       </Card>
+
+      {/* Networks / VLANs — which are collecting + the IP each got */}
+      <NetworksCard
+        networks={networks}
+        configuredVlans={configuredVlans}
+        configApplied={configApplied}
+        trunkParent={trunkParent}
+      />
 
       {/* Sensor self-health — CPU/RAM/disk/OS/uptime + heartbeat */}
       <SensorHealthCard

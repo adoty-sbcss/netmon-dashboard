@@ -2779,6 +2779,105 @@ export async function getSensorDetail(
   };
 }
 
+export interface SensorNetwork {
+  /** Scanning interface, e.g. "enp0s31f6" (uplink) or "enp0s31f6.30" (VLAN 30). */
+  interface: string;
+  /** Parsed from the interface suffix (eth0.30 -> 30); null for a plain NIC. */
+  vlanId: number | null;
+  /** Parent NIC for a VLAN sub-interface (eth0.30 -> eth0); null otherwise. */
+  parent: string | null;
+  /** The CIDR the box scanned from on this network (its DHCP/static lease). */
+  cidr: string | null;
+  gatewayIp: string | null;
+  isPrimary: boolean;
+  lastScanAt: Date | null;
+  deviceCount: number;
+  /** Scanned recently enough (≤ ~3 rescan intervals) to count as collecting. */
+  fresh: boolean;
+}
+
+/** Derive (vlanId, parent) from a sub-interface name like "eth0.30" -> (30, "eth0"). */
+function vlanOf(iface: string): { vlanId: number | null; parent: string | null } {
+  const m = /^(.+)\.(\d{1,4})$/.exec(iface);
+  if (!m) return { vlanId: null, parent: null };
+  const vid = Number(m[2]);
+  return vid >= 1 && vid <= 4094 ? { vlanId: vid, parent: m[1] } : { vlanId: null, parent: null };
+}
+
+/**
+ * Per-network rollup for a sensor: the most recent scan per interface within a
+ * recent window, with the IP it scanned from and how many devices it found.
+ * Drives the sensor "Networks" card so an operator can see which VLANs are
+ * actually collecting vs configured-but-silent. The dashboard has no vlan_id
+ * column on scan_runs, so the VLAN id is parsed from the interface name.
+ */
+export async function getSensorNetworks(
+  sensorId: number,
+  withinDays = 14,
+): Promise<SensorNetwork[]> {
+  const since = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      id: scanRuns.id,
+      iface: scanRuns.interface,
+      cidr: scanRuns.interfaceCidr,
+      gatewayIp: scanRuns.gatewayIp,
+      isPrimary: scanRuns.isPrimary,
+      startedAt: scanRuns.startedAt,
+    })
+    .from(scanRuns)
+    .where(
+      and(
+        eq(scanRuns.sensorId, sensorId),
+        gte(scanRuns.startedAt, since),
+        isNotNull(scanRuns.interface),
+      ),
+    )
+    .orderBy(desc(scanRuns.startedAt));
+
+  // Keep the most recent scan per interface name (rows are newest-first).
+  const latest = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    if (r.iface && !latest.has(r.iface)) latest.set(r.iface, r);
+  }
+  const latestRows = [...latest.values()];
+  if (latestRows.length === 0) return [];
+
+  // Device count for each network's most recent scan.
+  const ids = latestRows.map((r) => r.id);
+  const counts = await db
+    .select({ scanId: devices.scanRunId, n: count() })
+    .from(devices)
+    .where(inArray(devices.scanRunId, ids))
+    .groupBy(devices.scanRunId);
+  const countByScan = new Map(counts.map((c) => [c.scanId, Number(c.n)]));
+
+  const freshMs = 3 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  return latestRows
+    .map((r) => {
+      const { vlanId, parent } = vlanOf(r.iface ?? "");
+      return {
+        interface: r.iface ?? "",
+        vlanId,
+        parent,
+        cidr: r.cidr,
+        gatewayIp: r.gatewayIp,
+        isPrimary: r.isPrimary,
+        lastScanAt: r.startedAt,
+        deviceCount: countByScan.get(r.id) ?? 0,
+        fresh: r.startedAt != null && nowMs - r.startedAt.getTime() <= freshMs,
+      };
+    })
+    .sort((a, b) => {
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      if (a.vlanId != null && b.vlanId != null) return a.vlanId - b.vlanId;
+      if (a.vlanId == null) return -1;
+      if (b.vlanId == null) return 1;
+      return a.interface.localeCompare(b.interface);
+    });
+}
+
 export interface ConfigBackupRow {
   id: number;
   filename: string;
