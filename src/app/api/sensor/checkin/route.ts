@@ -64,6 +64,21 @@ export async function POST(req: NextRequest) {
     };
     // The box's own self-health snapshot { cpu, mem, disk, os, uptimeSec, tempC }.
     hostMetrics?: Record<string, unknown>;
+    // PROV-5 Phase 2: the box's live interface list (uplink + VLAN sub-ifs).
+    interfaces?: Array<{
+      name?: string;
+      cidr?: string | null;
+      up?: boolean;
+      vlan?: number | null;
+      primary?: boolean;
+    }> | null;
+    // Outcome of the last host-level action (apply-vlan / restart / reboot / …).
+    lastHostAction?: {
+      action?: string;
+      status?: string;
+      reason?: string;
+      at?: string;
+    } | null;
   };
 
   const cc = body.currentConfig;
@@ -94,6 +109,12 @@ export async function POST(req: NextRequest) {
         : {}),
       ...(body.hostMetrics && typeof body.hostMetrics === "object"
         ? { reportedHostMetrics: body.hostMetrics, reportedMetricsAt: sql`now()` }
+        : {}),
+      ...(Array.isArray(body.interfaces)
+        ? { reportedInterfaces: body.interfaces, reportedInterfacesAt: sql`now()` }
+        : {}),
+      ...(body.lastHostAction && typeof body.lastHostAction === "object"
+        ? { lastHostAction: body.lastHostAction }
         : {}),
       ...(cc
         ? {

@@ -23,7 +23,7 @@ import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { SpeedtestPanel } from "./speedtest-panel";
 import { VlanPanel } from "./vlan-panel";
-import { NetworksCard } from "./networks-card";
+import { NetworksCard, type ReportedInterface, type LastHostAction } from "./networks-card";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +70,8 @@ export default async function SensorDetailPage({
     .select({
       metrics: sensorsTable.reportedHostMetrics,
       metricsAt: sensorsTable.reportedMetricsAt,
+      reportedInterfaces: sensorsTable.reportedInterfaces,
+      lastHostAction: sensorsTable.lastHostAction,
     })
     .from(sensorsTable)
     .where(eq(sensorsTable.id, sensor.id))
@@ -237,6 +239,8 @@ export default async function SensorDetailPage({
         configuredVlans={configuredVlans}
         configApplied={configApplied}
         trunkParent={trunkParent}
+        reportedInterfaces={(health?.reportedInterfaces as ReportedInterface[] | null) ?? null}
+        lastHostAction={(health?.lastHostAction as LastHostAction) ?? null}
       />
 
       {/* Sensor self-health — CPU/RAM/disk/OS/uptime + heartbeat */}

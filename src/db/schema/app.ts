@@ -131,6 +131,16 @@ export const sensors = pgTable(
     lastUpdateFrom: text("last_update_from"),
     lastUpdateTo: text("last_update_to"),
     lastUpdateAt: text("last_update_at"), // box-local ISO timestamp of the update run
+    // --- PROV-5 Phase 2: the box's LIVE interface list reported at check-in
+    //     (uplink + VLAN sub-ifs: name/cidr/up/vlan/primary), so the dashboard
+    //     shows which VLANs actually came up + got a lease instead of inferring
+    //     it from scan data. See checkin.py:_interfaces.
+    reportedInterfaces: jsonb("reported_interfaces"),
+    reportedInterfacesAt: timestamp("reported_interfaces_at", { withTimezone: true }),
+    // --- last HOST-level action outcome ({ action, status, reason, at }) reported
+    //     at check-in from /var/lib/netmon/host-action-result (scripts/host-action.sh).
+    //     Makes a failed VLAN apply / restart / reboot visible instead of journal-only.
+    lastHostAction: jsonb("last_host_action"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

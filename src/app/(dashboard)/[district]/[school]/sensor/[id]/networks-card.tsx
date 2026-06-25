@@ -1,4 +1,4 @@
-import { Waypoints, CircleCheck, AlertTriangle, Clock, Globe } from "lucide-react";
+import { Waypoints, CircleCheck, AlertTriangle, Clock, Globe, Plug } from "lucide-react";
 
 import type { SensorNetwork } from "@/db/queries";
 import { num, relativeTime } from "@/lib/format";
@@ -15,7 +15,32 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-type NetState = "collecting" | "stale" | "no-data" | "pending";
+/** The box's live interface (reported at check-in — PROV-5 Phase 2). */
+export type ReportedInterface = {
+  name: string;
+  cidr: string | null;
+  up: boolean;
+  vlan: number | null;
+  primary: boolean;
+};
+export type LastHostAction = {
+  action?: string;
+  status?: string;
+  reason?: string;
+  at?: string;
+} | null;
+
+// collecting/stale come from scan data. leased/no-lease/not-up are the PRECISE
+// states from the box's live interface report; no-data/pending are the fallback
+// (older boxes that don't report interfaces yet).
+type NetState =
+  | "collecting"
+  | "stale"
+  | "leased"
+  | "no-lease"
+  | "not-up"
+  | "no-data"
+  | "pending";
 
 type NetRow = {
   interface: string;
@@ -28,8 +53,10 @@ type NetRow = {
   state: NetState;
 };
 
+const HEALTHY: NetState[] = ["collecting", "leased"];
+
 function chip(state: NetState, isPrimary: boolean) {
-  if (isPrimary && state === "collecting")
+  if (isPrimary && (state === "collecting" || state === "leased"))
     return { tone: "text-primary bg-primary/10", Icon: Globe, text: "Primary uplink" };
   switch (state) {
     case "collecting":
@@ -38,8 +65,18 @@ function chip(state: NetState, isPrimary: boolean) {
         Icon: CircleCheck,
         text: "Collecting",
       };
+    case "leased":
+      return { tone: "text-primary bg-primary/10", Icon: Plug, text: "Up · scan pending" };
     case "stale":
       return { tone: "text-[var(--warning)] bg-[var(--warning)]/10", Icon: AlertTriangle, text: "Stale" };
+    case "no-lease":
+      return {
+        tone: "text-[var(--warning)] bg-[var(--warning)]/10",
+        Icon: AlertTriangle,
+        text: "Up, no DHCP lease",
+      };
+    case "not-up":
+      return { tone: "text-muted-foreground bg-muted", Icon: Clock, text: "Not up on the box" };
     case "no-data":
       return {
         tone: "text-[var(--warning)] bg-[var(--warning)]/10",
@@ -58,24 +95,31 @@ function chip(state: NetState, isPrimary: boolean) {
 /**
  * Per-network / per-VLAN status for a sensor — which networks are actually
  * collecting data, the IP each got, last scan and device count. Built from
- * scan_runs (one row per interface) and diffed against the configured trunk
- * VLANs so a VLAN that's configured but silent (no DHCP lease, or the box
- * hasn't applied the config yet) surfaces instead of just being absent.
- * Display-only (Phase 1); the precise "why it's silent" sharpens once the box
- * reports its live interface list (Phase 2).
+ * scan_runs and diffed against the configured trunk VLANs. When the box reports
+ * its live interface list (PROV-5 Phase 2) a silent VLAN's status is PRECISE —
+ * "up, no DHCP lease" vs "not up on the box" — instead of inferred from the
+ * config version; and a failed host action (e.g. a VLAN apply that crashed) shows
+ * as a banner instead of being invisible.
  */
 export function NetworksCard({
   networks,
   configuredVlans,
   configApplied,
   trunkParent,
+  reportedInterfaces,
+  lastHostAction,
 }: {
   networks: SensorNetwork[];
   configuredVlans: number[];
   configApplied: boolean;
   trunkParent: string | null;
+  reportedInterfaces?: ReportedInterface[] | null;
+  lastHostAction?: LastHostAction;
 }) {
   const scannedVlans = new Set(networks.map((n) => n.vlanId).filter((v): v is number => v != null));
+  const reported = reportedInterfaces && reportedInterfaces.length > 0 ? reportedInterfaces : null;
+  const ifaceByVlan = new Map<number, ReportedInterface>();
+  if (reported) for (const i of reported) if (i.vlan != null) ifaceByVlan.set(i.vlan, i);
 
   const rows: NetRow[] = networks.map((n) => ({
     interface: n.interface,
@@ -88,22 +132,38 @@ export function NetworksCard({
     state: n.fresh ? "collecting" : "stale",
   }));
 
-  // Configured VLANs that produced no scan at all — surface them as silent.
+  // Configured VLANs that produced no scan — give each a PRECISE state from the
+  // box's live interface report when we have it, else fall back to the config-version guess.
   for (const vid of configuredVlans) {
     if (scannedVlans.has(vid)) continue;
+    const ri = ifaceByVlan.get(vid);
+    let state: NetState;
+    let cidr: string | null = null;
+    if (reported) {
+      if (!ri || !ri.up) state = "not-up"; // sub-interface never came up (apply failed / NM)
+      else if (ri.cidr) {
+        state = "leased"; // up + has a lease — just hasn't scanned yet
+        cidr = ri.cidr;
+      } else state = "no-lease"; // up but no DHCP on this VLAN
+    } else {
+      state = configApplied ? "no-data" : "pending";
+    }
     rows.push({
-      interface: trunkParent ? `${trunkParent}.${vid}` : `vlan${vid}`,
+      interface: ri?.name ?? (trunkParent ? `${trunkParent}.${vid}` : `vlan${vid}`),
       vlanId: vid,
       label: `VLAN ${vid}`,
-      cidr: null,
+      cidr,
       lastScanAt: null,
       deviceCount: null,
       isPrimary: false,
-      state: configApplied ? "no-data" : "pending",
+      state,
     });
   }
 
-  if (rows.length === 0) {
+  const actionFailed = lastHostAction?.status === "failed";
+  const actionAt = lastHostAction?.at ? new Date(lastHostAction.at) : null;
+
+  if (rows.length === 0 && !actionFailed) {
     return (
       <Card>
         <CardHeader>
@@ -131,7 +191,7 @@ export function NetworksCard({
   });
 
   const collecting = rows.filter((r) => r.state === "collecting").length;
-  const attention = rows.filter((r) => r.state !== "collecting").length;
+  const attention = rows.filter((r) => !HEALTHY.includes(r.state)).length;
 
   return (
     <Card>
@@ -148,12 +208,26 @@ export function NetworksCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0 sm:px-6">
+        {actionFailed && (
+          <div className="mx-6 mb-3 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs sm:mx-0">
+            <span className="font-medium text-destructive">Last host action failed</span>
+            {lastHostAction?.action && (
+              <span className="font-mono"> · {lastHostAction.action}</span>
+            )}
+            {actionAt && !Number.isNaN(actionAt.getTime()) && (
+              <span className="text-muted-foreground"> · {relativeTime(actionAt)}</span>
+            )}
+            {lastHostAction?.reason && (
+              <div className="mt-0.5 text-muted-foreground">{lastHostAction.reason}</div>
+            )}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Network</TableHead>
-                <TableHead>Scanned from</TableHead>
+                <TableHead>IP / lease</TableHead>
                 <TableHead className="hidden sm:table-cell">Last scan</TableHead>
                 <TableHead className="text-right">Devices</TableHead>
                 <TableHead>Status</TableHead>
@@ -205,10 +279,11 @@ export function NetworksCard({
         </div>
         <p className="mt-3 px-6 text-xs text-muted-foreground sm:px-0">
           <span className="text-emerald-600 dark:text-emerald-400">Collecting</span> = a fresh
-          scan exists. <span className="text-[var(--warning)]">No data / no lease</span> = the
-          sub-interface produced no scan (often no DHCP server on that VLAN).{" "}
-          <span className="text-muted-foreground">Not applied</span> = pushed to the box but not
-          brought up yet. Configure VLANs in the panel below.
+          scan exists. <span className="text-[var(--warning)]">Up, no DHCP lease</span> = the
+          sub-interface came up but no DHCP server answered on that VLAN.{" "}
+          <span className="text-muted-foreground">Not up on the box</span> = the VLAN is configured
+          but its sub-interface never came up (the apply may have failed). Configure VLANs in the
+          panel below.
         </p>
       </CardContent>
     </Card>
