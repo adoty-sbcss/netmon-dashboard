@@ -11,6 +11,7 @@ import {
   Search,
   Server,
   ShieldCheck,
+  Users,
 } from "lucide-react";
 
 import type {
@@ -27,7 +28,8 @@ import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -193,16 +195,14 @@ export function DhcpAnalysisView({
       {/* Authorize DHCP servers — one click, no trip to settings */}
       {serversToOffer.length > 0 && (
         <Card className={hasPolicy ? "border-destructive/40" : "border-[var(--warning)]/40"}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle
-                className={`size-4 ${hasPolicy ? "text-destructive" : "text-[var(--warning)]"}`}
-              />
-              {hasPolicy
+          <SectionHeader
+            icon={AlertTriangle}
+            title={
+              hasPolicy
                 ? `Unauthorized DHCP server${serversToOffer.length > 1 ? "s" : ""}`
-                : "Authorize your DHCP servers"}
-            </CardTitle>
-          </CardHeader>
+                : "Authorize your DHCP servers"
+            }
+          />
           <CardContent className="flex flex-col gap-2.5">
             <p className="text-sm text-muted-foreground">
               {hasPolicy
@@ -242,12 +242,7 @@ export function DhcpAnalysisView({
       {/* Issues */}
       {issues.length > 0 && (
         <Card className="border-[var(--warning)]/40">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="size-4 text-[var(--warning)]" />
-              What to look at
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader icon={AlertTriangle} title="What to look at" />
           <CardContent className="flex flex-col gap-3">
             {issues.map((iss, i) => (
               <div key={i} className="flex items-start gap-2.5">
@@ -273,15 +268,11 @@ export function DhcpAnalysisView({
 
       {/* Scopes */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Layers className="size-4 text-primary" />
-            Scopes
-            <span className="text-sm font-normal text-muted-foreground">
-              derived from captured OFFER/ACK options
-            </span>
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader
+          icon={Layers}
+          title="Scopes"
+          meta="derived from captured OFFER/ACK options"
+        />
         <CardContent className="px-0 sm:px-6">
           {analysis.scopes.length === 0 ? (
             <p className="px-6 py-6 text-sm text-muted-foreground">
@@ -373,9 +364,7 @@ export function DhcpAnalysisView({
 
       {/* Clients */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Clients</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Users} title="Clients" />
         <CardContent className="flex flex-col gap-3 px-0 sm:px-6">
           <div className="flex flex-wrap items-center gap-2 px-6 sm:px-0">
             <div className="relative w-full max-w-xs">

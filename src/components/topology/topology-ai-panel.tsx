@@ -10,8 +10,9 @@ import {
 import type { AnalysisRun } from "@/lib/ai/queries";
 import { relativeTime } from "@/lib/format";
 import { SeverityBadge } from "@/components/severity-badge";
+import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -63,29 +64,24 @@ export function TopologyAiPanel({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Sparkles className="size-4 text-primary" />
-          AI topology review
-          {run && (
-            <span className="text-sm font-normal text-muted-foreground">
-              last run {relativeTime(run.createdAt)}
-            </span>
-          )}
-          {canRun && (
+      <SectionHeader
+        icon={Sparkles}
+        title="AI topology review"
+        meta={run ? `last run ${relativeTime(run.createdAt)}` : undefined}
+        action={
+          canRun ? (
             <Button
               type="button"
               size="sm"
-              className="ml-auto"
               onClick={analyze}
               disabled={stillRunning}
             >
               {stillRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
               {stillRunning ? "Analyzing…" : run ? "Re-analyze layout" : "Analyze layout"}
             </Button>
-          )}
-        </CardTitle>
-      </CardHeader>
+          ) : undefined
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         {error && (
           <p className="flex items-center gap-2 text-sm text-destructive">

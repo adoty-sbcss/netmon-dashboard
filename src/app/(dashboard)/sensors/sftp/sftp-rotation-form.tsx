@@ -6,7 +6,8 @@ import { AlertCircle, CheckCircle2, UploadCloud } from "lucide-react";
 import { bulkSetSftpAction, type SensorActionState } from "@/lib/admin/sensor-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
+import { Card, CardContent } from "@/components/ui/card";
 
 /** Fleet-wide SFTP push form (superadmin). Submits to bulkSetSftpAction. */
 export function SftpRotationForm({ sensorCount }: { sensorCount: number }) {
@@ -16,12 +17,10 @@ export function SftpRotationForm({ sensorCount }: { sensorCount: number }) {
   );
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <UploadCloud className="size-4 text-primary" />
-          Push SFTP credentials to all {sensorCount} sensor{sensorCount === 1 ? "" : "s"}
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader
+        icon={UploadCloud}
+        title={`Push SFTP credentials to all ${sensorCount} sensor${sensorCount === 1 ? "" : "s"}`}
+      />
       <CardContent>
         <form action={action} className="flex max-w-xl flex-col gap-3">
           <input type="hidden" name="basePath" value="/sensors/sftp" />

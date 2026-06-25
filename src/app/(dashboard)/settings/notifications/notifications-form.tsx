@@ -9,12 +9,14 @@ import {
   Mail,
   Send,
   Trash2,
+  Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   saveNotificationSettingsAction,
   addRecipientAction,
@@ -93,11 +95,7 @@ export function NotificationsForm({
     <div className="flex flex-col gap-6">
       {/* Email transport status + send test */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Mail className="size-4 text-primary" /> Email delivery
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Mail} title="Email delivery" />
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {emailConfigured ? (
@@ -141,11 +139,7 @@ export function NotificationsForm({
       {/* Report + alert settings (one save) */}
       <form action={cfgAction}>
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FileText className="size-4 text-primary" /> Monthly summary
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader icon={FileText} title="Monthly summary" />
           <CardContent className="flex flex-col gap-4">
             <Check
               name="reportEnabled"
@@ -176,11 +170,7 @@ export function NotificationsForm({
         </Card>
 
         <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Bell className="size-4 text-primary" /> Alerts
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader icon={Bell} title="Alerts" />
           <CardContent className="flex flex-col gap-4">
             <Check
               name="alertsEnabled"
@@ -247,9 +237,7 @@ export function NotificationsForm({
 
       {/* Recipients */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Recipients</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Users} title="Recipients" />
         <CardContent className="flex flex-col gap-4">
           {recipients.length === 0 ? (
             <p className="text-sm text-muted-foreground">

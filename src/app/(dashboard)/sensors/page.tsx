@@ -16,9 +16,10 @@ import { AlertTriangle, Radar, Rocket } from "lucide-react";
 import { FleetUpdateAll } from "./fleet-update-all";
 import { FleetApplyDefaults } from "./fleet-apply-defaults";
 import { PageHeader } from "@/components/page-header";
+import { SectionHeader } from "@/components/section-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -94,15 +95,11 @@ export default async function FleetSensorsPage() {
 
       {attention.length > 0 && (
         <Card className="border-[var(--warning)]/40">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="size-4 text-[var(--warning)]" />
-              Needs attention
-              <span className="text-xs font-normal text-muted-foreground">
-                {num(attention.length)} sensor{attention.length === 1 ? "" : "s"}
-              </span>
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader
+            icon={AlertTriangle}
+            title="Needs attention"
+            meta={`${num(attention.length)} sensor${attention.length === 1 ? "" : "s"}`}
+          />
           <CardContent className="flex flex-col gap-2">
             {attention.map(({ row, flags }) => (
               <div

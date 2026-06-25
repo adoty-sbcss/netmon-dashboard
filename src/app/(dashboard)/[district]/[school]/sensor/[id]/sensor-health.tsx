@@ -1,7 +1,8 @@
 import { Activity, Cpu, HardDrive, MemoryStick } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import { relativeTime } from "@/lib/format";
 
 /** Shape of the collector's host_metrics.collect() payload (all fields best-effort). */
@@ -105,20 +106,18 @@ export function SensorHealthCard({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Activity className="size-4 text-primary" />
-          Sensor health
-          <Badge variant="outline" className={beat.cls}>
-            {beat.label}
-          </Badge>
-          {lastCheckinAt && (
-            <span className="text-sm font-normal text-muted-foreground">
-              checked in {relativeTime(lastCheckinAt)}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader
+        icon={Activity}
+        title="Sensor health"
+        meta={
+          <>
+            <Badge variant="outline" className={beat.cls}>
+              {beat.label}
+            </Badge>
+            {lastCheckinAt && <span>checked in {relativeTime(lastCheckinAt)}</span>}
+          </>
+        }
+      />
       <CardContent>
         {!hasData ? (
           <p className="text-sm text-muted-foreground">

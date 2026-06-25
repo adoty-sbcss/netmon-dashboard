@@ -15,7 +15,8 @@ import { relativeTime } from "@/lib/format";
 import { IperfScheduleEditor } from "./iperf-schedule-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 function Notice({ state }: { state: IperfActionState }) {
   if (state.error)
@@ -69,14 +70,11 @@ export function IperfPanel({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Gauge className="size-4 text-primary" /> iperf3 throughput
-          {serverConfigured && (
-            <span className="text-sm font-normal text-muted-foreground">→ {serverLabel}</span>
-          )}
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader
+        icon={Gauge}
+        title="iperf3 throughput"
+        meta={serverConfigured ? `→ ${serverLabel}` : undefined}
+      />
       <CardContent className="flex flex-col gap-4">
         {!serverConfigured ? (
           <p className="text-sm text-muted-foreground">

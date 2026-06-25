@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Radar, Rocket, UploadCloud } from "lucide-react";
+import { Radar, Rocket, Settings, SlidersHorizontal, UploadCloud } from "lucide-react";
 
 import { getSessionUser } from "@/lib/auth/current-user";
 import { listAuthorizedDhcpServers } from "@/lib/dhcp-policy";
@@ -12,8 +12,9 @@ import {
 } from "@/db/settings-queries";
 import { titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { CapabilityMatrix } from "./capability-matrix";
 import { SnmpCommunityForm } from "./snmp-community-form";
 import { DhcpServersManager } from "../../[district]/settings/dhcp-servers-manager";
@@ -120,12 +121,7 @@ async function NetworkSettingsForDistrict({
       {/* 1. Per-sensor capabilities — the headline: enable each capability on the
             boxes that need it. */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Radar className="size-4 text-primary" />
-            Per-sensor capabilities
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Radar} title="Per-sensor capabilities" />
         <CardContent>
           <CapabilityMatrix basePath={basePath} sensors={sensors} />
         </CardContent>
@@ -133,9 +129,7 @@ async function NetworkSettingsForDistrict({
 
       {/* 2. Shared settings the capabilities use. */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Shared settings (this district)</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={SlidersHorizontal} title="Shared settings (this district)" />
         <CardContent className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
             <SnmpCommunityForm districtId={districtId} basePath={basePath} current={currentCommunity} />
@@ -151,9 +145,7 @@ async function NetworkSettingsForDistrict({
 
       {/* 4. Deeper/per-sensor settings that live elsewhere. */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">More</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Settings} title="More" />
         <CardContent className="flex flex-wrap gap-2">
           <Button asChild variant="outline" size="sm">
             <Link href="/sensors/sftp"><UploadCloud className="size-4" /> SFTP destination (fleet)</Link>

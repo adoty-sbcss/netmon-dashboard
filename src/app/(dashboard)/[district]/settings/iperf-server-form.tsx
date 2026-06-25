@@ -7,7 +7,8 @@ import { saveDistrictIperfAction, type IperfActionState } from "@/lib/iperf-acti
 import type { DistrictIperfView } from "@/lib/iperf";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 function Notice({ state }: { state: IperfActionState }) {
   if (state.error)
@@ -40,11 +41,7 @@ export function IperfServerForm({
 
   return (
     <Card className="max-w-2xl">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Gauge className="size-4 text-primary" /> iperf3 throughput server
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={Gauge} title="iperf3 throughput server" />
       <CardContent>
         <form action={action} className="flex flex-col gap-4">
           <input type="hidden" name="districtSlug" value={districtSlug} />

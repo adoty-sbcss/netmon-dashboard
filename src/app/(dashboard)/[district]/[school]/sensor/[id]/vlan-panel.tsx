@@ -10,7 +10,8 @@ import {
 } from "@/lib/vlan-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 function Notice({ state }: { state: VlanActionState }) {
   if (state.error)
@@ -57,13 +58,11 @@ export function VlanPanel({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Network className="size-4 text-primary" />
-          VLAN trunk monitoring
-          <span className="text-xs font-normal text-muted-foreground">802.1Q sub-interfaces</span>
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader
+        icon={Network}
+        title="VLAN trunk monitoring"
+        meta="802.1Q sub-interfaces"
+      />
       <CardContent className="flex flex-col gap-4">
         <p className="text-xs text-muted-foreground">
           For a box on a switch <strong>trunk</strong> port: list the VLANs to monitor. The box adds

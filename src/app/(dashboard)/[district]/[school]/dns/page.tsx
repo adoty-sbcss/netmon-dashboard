@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { Globe, Info, ShieldAlert } from "lucide-react";
+import { Globe, Info, Search, ShieldAlert } from "lucide-react";
 
 import {
   getDistrictBySlug,
@@ -13,7 +13,8 @@ import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { SnapshotPicker } from "@/components/snapshot-picker";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -75,14 +76,11 @@ export default async function DnsPage({
 
       {/* Resolver health */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Resolver health
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              {resolvers.length} resolver{resolvers.length === 1 ? "" : "s"}
-            </span>
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader
+          icon={Globe}
+          title="Resolver health"
+          meta={`${resolvers.length} resolver${resolvers.length === 1 ? "" : "s"}`}
+        />
         <CardContent className="px-0 sm:px-6">
           {resolvers.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-center">
@@ -160,14 +158,11 @@ export default async function DnsPage({
       {/* Probe detail */}
       {probes.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Probe detail
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {probes.length} quer{probes.length === 1 ? "y" : "ies"}
-              </span>
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader
+            icon={Search}
+            title="Probe detail"
+            meta={`${probes.length} quer${probes.length === 1 ? "y" : "ies"}`}
+          />
           <CardContent className="px-0 sm:px-6">
             <div className="overflow-x-auto">
               <Table>

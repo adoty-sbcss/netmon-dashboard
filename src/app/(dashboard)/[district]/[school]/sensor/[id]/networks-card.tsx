@@ -5,7 +5,8 @@ import { num, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 // Freshness is computed in getSensorNetworks (server query), not here — calling
 // Date.now() during render is impure and unstable across re-renders.
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -166,12 +167,7 @@ export function NetworksCard({
   if (rows.length === 0 && !actionFailed) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Waypoints className="size-4 text-primary" />
-            Networks
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Waypoints} title="Networks" />
         <CardContent>
           <p className="text-sm text-muted-foreground">
             No scans yet. Once the sensor scans its uplink (and any monitored VLANs),
@@ -195,18 +191,18 @@ export function NetworksCard({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Waypoints className="size-4 text-primary" />
-          Networks
-          <span className="text-sm font-normal text-muted-foreground">
+      <SectionHeader
+        icon={Waypoints}
+        title="Networks"
+        meta={
+          <>
             {num(rows.length)} monitored · {num(collecting)} collecting
             {attention > 0 && (
               <span className="text-[var(--warning)]"> · {num(attention)} need attention</span>
             )}
-          </span>
-        </CardTitle>
-      </CardHeader>
+          </>
+        }
+      />
       <CardContent className="px-0 sm:px-6">
         {actionFailed && (
           <div className="mx-6 mb-3 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs sm:mx-0">

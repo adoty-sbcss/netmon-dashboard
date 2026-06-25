@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Trash2,
   UserPlus,
+  Users,
 } from "lucide-react";
 
 import {
@@ -24,7 +25,8 @@ import { relativeTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 type District = { id: number; name: string };
 
@@ -118,12 +120,7 @@ export function UsersAdmin({
     <div className="flex max-w-3xl flex-col gap-6">
       {/* Add user */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <UserPlus className="size-4 text-primary" />
-            Add a user
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={UserPlus} title="Add a user" />
         <CardContent>
           <form action={addAction} className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -184,12 +181,7 @@ export function UsersAdmin({
 
       {/* Existing users */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Users
-            <span className="ml-2 text-sm font-normal text-muted-foreground">{users.length}</span>
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Users} title="Users" meta={users.length} />
         <CardContent className="flex flex-col gap-2">
           <Notice state={disState} />
           <Notice state={delState} />

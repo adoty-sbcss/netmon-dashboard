@@ -1,7 +1,14 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { CheckCircle2, AlertCircle, PlugZap, RefreshCw } from "lucide-react";
+import {
+  CheckCircle2,
+  AlertCircle,
+  PlugZap,
+  RefreshCw,
+  Server,
+  DownloadCloud,
+} from "lucide-react";
 
 import {
   saveSettingsAction,
@@ -12,12 +19,8 @@ import {
 import type { IngestSettingsView } from "@/lib/ingest/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 // Client-safe mirror of the cadences in src/lib/ingest/settings.ts (kept inline
 // so this client component doesn't pull the server-only settings module).
@@ -79,9 +82,7 @@ export function IngestionSettingsForm({
     <div className="flex max-w-2xl flex-col gap-6">
       {/* ---- Connection settings ---- */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Connection</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Server} title="Connection" />
         <CardContent>
           <form action={saveAction} className="flex flex-col gap-4">
             <label className="flex items-center gap-2.5">
@@ -277,9 +278,7 @@ export function IngestionSettingsForm({
 
       {/* ---- Actions: test + sync ---- */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Pull data</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={DownloadCloud} title="Pull data" />
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <form action={testAction}>

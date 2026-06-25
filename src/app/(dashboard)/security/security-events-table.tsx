@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, ScrollText } from "lucide-react";
 
 import { SeverityBadge } from "@/components/severity-badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -42,9 +43,7 @@ export function SecurityEventsTable({ events }: { events: SecurityEventItem[] })
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Recent security events</CardTitle>
-      </CardHeader>
+      <SectionHeader icon={ScrollText} title="Recent security events" />
       <CardContent className="px-0 sm:px-6">
         {events.length === 0 ? (
           <p className="px-6 py-10 text-center text-sm text-muted-foreground">

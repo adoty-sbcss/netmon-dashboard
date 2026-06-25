@@ -12,7 +12,8 @@ import type { SpeedtestResultRow } from "@/lib/iperf";
 import { relativeTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 function Notice({ state }: { state: SpeedtestActionState }) {
   if (state.error)
@@ -60,12 +61,7 @@ export function SpeedtestPanel({
   );
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-          <Globe className="size-4 text-primary" /> Internet speed test
-          <span className="text-sm font-normal text-muted-foreground">Cloudflare</span>
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={Globe} title="Internet speed test" meta="Cloudflare" />
       <CardContent className="flex flex-col gap-4">
         {/* Run now (Cloudflare) */}
         <form action={runAction} className="flex flex-wrap items-center gap-2 border-b pb-4">

@@ -9,6 +9,7 @@ import {
   KeyRound,
   BarChart3,
   Activity,
+  CalendarClock,
 } from "lucide-react";
 
 import { relativeTime } from "@/lib/format";
@@ -33,12 +34,8 @@ import {
 } from "@/lib/ai/catalog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 interface ProviderProp {
   id: string;
@@ -152,17 +149,15 @@ function ProviderCard({ provider }: { provider: ProviderProp }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-2 text-base">
-          <span className="flex items-center gap-2">
-            <Sparkles className="size-4 text-primary" />
-            {label}
-          </span>
+      <SectionHeader
+        icon={Sparkles}
+        title={label}
+        action={
           <span className="text-xs font-normal text-muted-foreground">
             {view.hasKey ? (view.keyFromEnv ? "key from env" : "key set") : "no key"}
           </span>
-        </CardTitle>
-      </CardHeader>
+        }
+      />
       <CardContent className="flex flex-col gap-4">
         <form action={saveAction} className="flex flex-col gap-4">
           <input type="hidden" name="providerId" value={id} />
@@ -290,9 +285,7 @@ function GlobalCard({ settings }: { settings: AiGlobalSettings }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Schedule &amp; limits</CardTitle>
-      </CardHeader>
+      <SectionHeader icon={CalendarClock} title="Schedule & limits" />
       <CardContent>
         <form action={action} className="flex flex-col gap-4">
           <input type="hidden" name="section" value="schedule" />
@@ -393,11 +386,7 @@ function AssistantCard({ settings }: { settings: AiGlobalSettings }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Sparkles className="size-4 text-primary" /> Assistant (in-app chatbot)
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={Sparkles} title="Assistant (in-app chatbot)" />
       <CardContent>
         <form action={action} className="flex flex-col gap-4">
           <input type="hidden" name="section" value="assistant" />
@@ -516,11 +505,7 @@ function UsageCard({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <BarChart3 className="size-4 text-primary" /> Usage this month
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={BarChart3} title="Usage this month" />
       <CardContent className="flex flex-col gap-3 text-sm">
         {usage.length === 0 ? (
           <p className="text-muted-foreground">No analysis runs yet this month.</p>
@@ -576,11 +561,7 @@ function CategoryUsageCard({ categories }: { categories: CategoryUsage[] }) {
   const total = categories.reduce((a, c) => a + c.costUsd, 0);
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <BarChart3 className="size-4 text-primary" /> Spend by category this month
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={BarChart3} title="Spend by category this month" />
       <CardContent className="flex flex-col gap-3 text-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
@@ -651,11 +632,7 @@ function ActivityCard({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="size-4 text-primary" /> AI activity
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={Activity} title="AI activity" />
       <CardContent className="flex flex-col gap-5 text-sm">
         <div className="flex flex-col gap-1.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

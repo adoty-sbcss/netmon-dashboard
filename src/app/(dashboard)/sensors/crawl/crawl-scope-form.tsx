@@ -6,7 +6,8 @@ import { AlertCircle, CheckCircle2, Radar } from "lucide-react";
 import { bulkSetCrawlScopeAction, type SensorActionState } from "@/lib/admin/sensor-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
+import { Card, CardContent } from "@/components/ui/card";
 
 const selectCls =
   "h-9 w-full max-w-md rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[2px] focus-visible:ring-ring/50";
@@ -19,12 +20,10 @@ export function CrawlScopeForm({ sensorCount }: { sensorCount: number }) {
   );
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Radar className="size-4 text-primary" />
-          Push crawl scope to all {sensorCount} sensor{sensorCount === 1 ? "" : "s"}
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader
+        icon={Radar}
+        title={`Push crawl scope to all ${sensorCount} sensor${sensorCount === 1 ? "" : "s"}`}
+      />
       <CardContent>
         <form action={action} className="flex max-w-xl flex-col gap-3">
           <input type="hidden" name="basePath" value="/sensors/crawl" />

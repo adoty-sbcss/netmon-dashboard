@@ -12,7 +12,8 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -76,12 +77,7 @@ export default async function SwitchDetailPage({
 
       {/* Identity */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Network className="size-4 text-primary" />
-            Identity
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Network} title="Identity" />
         <CardContent>
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="System name" value={sw.systemName} />
@@ -127,12 +123,7 @@ export default async function SwitchDetailPage({
       {/* SNMP — settings + identity. */}
       {sw.mgmtIp && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="size-4 text-primary" />
-              SNMP
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader icon={Network} title="SNMP" />
           <CardContent className="flex flex-col gap-4">
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="min-w-0">

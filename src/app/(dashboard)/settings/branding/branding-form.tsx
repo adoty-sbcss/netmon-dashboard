@@ -1,7 +1,15 @@
 "use client";
 
 import { useActionState, useState, type CSSProperties } from "react";
-import { CheckCircle2, AlertCircle, Upload, Trash2 } from "lucide-react";
+import {
+  CheckCircle2,
+  AlertCircle,
+  Upload,
+  Trash2,
+  Palette,
+  Image as ImageIcon,
+  Star,
+} from "lucide-react";
 
 import {
   saveBrandingTextAction,
@@ -13,12 +21,8 @@ import type { BrandingView } from "@/lib/branding";
 import { BrandLogo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 const labelCls = "text-sm font-medium";
 const fieldCls = "flex flex-col gap-1.5";
@@ -109,9 +113,7 @@ export function BrandingForm({ branding }: { branding: BrandingView }) {
     <div className="flex max-w-2xl flex-col gap-6">
       {/* ---- Identity & colors ---- */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Identity &amp; colors</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Palette} title="Identity & colors" />
         <CardContent className="flex flex-col gap-4">
           {/* live preview */}
           <div
@@ -197,9 +199,7 @@ export function BrandingForm({ branding }: { branding: BrandingView }) {
 
       {/* ---- Logo ---- */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Logo</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={ImageIcon} title="Logo" />
         <CardContent className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             SVG or PNG, max 512 KB. Square works best. Leave empty to use the built-in star.
@@ -230,9 +230,7 @@ export function BrandingForm({ branding }: { branding: BrandingView }) {
 
       {/* ---- Favicon ---- */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Favicon</CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Star} title="Favicon" />
         <CardContent className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             ICO, PNG, or SVG, max 512 KB. Leave empty to use the default icon.

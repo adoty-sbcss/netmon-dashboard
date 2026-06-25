@@ -10,7 +10,8 @@ import {
 } from "@/lib/admin/sensor-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
+import { Card, CardContent } from "@/components/ui/card";
 
 const selectCls =
   "h-8 rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[2px] focus-visible:ring-ring/50";
@@ -39,11 +40,7 @@ export function PinStableForm({ currentSha }: { currentSha: string | null }) {
   );
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Pin className="size-4 text-primary" /> Stable release pointer
-        </CardTitle>
-      </CardHeader>
+      <SectionHeader icon={Pin} title="Stable release pointer" />
       <CardContent>
         <form action={action} className="flex max-w-xl flex-col gap-3">
           <input type="hidden" name="basePath" value="/sensors/releases" />

@@ -8,7 +8,8 @@ import type { SwitchPort, ConnectedDevice } from "@/db/queries";
 import { num } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import { DeviceTypeBadge } from "@/components/device-type-badge";
 import {
   Table,
@@ -145,17 +146,17 @@ export function SwitchPortsTable({
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Cable className="size-4 text-primary" />
-            Ports
-            <span className="ml-1 text-sm font-normal text-muted-foreground">
-              {num(ports.length)} interfaces
-              {connectedDevices.length > 0 && ` · ${connectedDevices.length} connected`}
-            </span>
-          </CardTitle>
-          {downCount > 0 && (
+      <SectionHeader
+        icon={Cable}
+        title="Ports"
+        meta={
+          <>
+            {num(ports.length)} interfaces
+            {connectedDevices.length > 0 && ` · ${connectedDevices.length} connected`}
+          </>
+        }
+        action={
+          downCount > 0 ? (
             <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
               <input
                 type="checkbox"
@@ -165,9 +166,9 @@ export function SwitchPortsTable({
               />
               Hide down ports ({downCount})
             </label>
-          )}
-        </div>
-      </CardHeader>
+          ) : undefined
+        }
+      />
       <CardContent className="px-0 sm:px-6">
         <div className="overflow-x-auto">
           <Table>

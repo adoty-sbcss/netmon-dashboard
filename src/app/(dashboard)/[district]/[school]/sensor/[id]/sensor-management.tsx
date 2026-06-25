@@ -26,7 +26,8 @@ import { dateTime, relativeTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 
 function Notice({ state }: { state: SensorActionState }) {
   if (state.error)
@@ -206,12 +207,7 @@ export function SensorManagementPanel({
     <div className="flex flex-col gap-6">
       {/* Enrollment */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <KeyRound className="size-4 text-primary" />
-            Enrollment
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={KeyRound} title="Enrollment" />
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {mgmt.enrolled ? (
@@ -249,15 +245,11 @@ export function SensorManagementPanel({
 
       {/* Configuration — consolidated into the global Network settings page */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Settings2 className="size-4 text-primary" />
-            Configuration
-            {mgmt.configVersion != null && (
-              <span className="text-sm font-normal text-muted-foreground">desired v{mgmt.configVersion}</span>
-            )}
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader
+          icon={Settings2}
+          title="Configuration"
+          meta={mgmt.configVersion != null ? `desired v${mgmt.configVersion}` : undefined}
+        />
         <CardContent className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             This sensor&apos;s capabilities — SNMP, spine crawl, SFTP upload, iperf, speed tests,
@@ -281,13 +273,11 @@ export function SensorManagementPanel({
           stream into the terminal. Host actions + code update take the queued
           near-live path (host wrapper, next check-in) and land in the history. */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Terminal className="size-4 text-primary" />
-            Remote console and commands
-            <span className="text-xs font-normal text-muted-foreground">live session + maintenance</span>
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader
+          icon={Terminal}
+          title="Remote console and commands"
+          meta="live session + maintenance"
+        />
         <CardContent className="flex flex-col gap-6">
           {/* Live session over the zero-secret tunnel broker (superadmin, approved,
               time-boxed, recorded, kill-switch). Diagnostics + in-container ops +

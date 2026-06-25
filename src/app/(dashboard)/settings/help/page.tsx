@@ -7,7 +7,8 @@ import { getHelpInsights } from "@/lib/help/actions";
 import { getArticle } from "@/lib/help/articles";
 import { relativeTime } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
+import { Card, CardContent } from "@/components/ui/card";
 
 export const metadata = { title: "Help feedback · NetMon Dashboard" };
 export const dynamic = "force-dynamic";
@@ -32,12 +33,11 @@ export default async function HelpInsightsPage() {
       />
 
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Search className="size-4 text-primary" /> Searches with no results
-            <span className="text-xs font-normal text-muted-foreground">most frequent first</span>
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader
+          icon={Search}
+          title="Searches with no results"
+          meta="most frequent first"
+        />
         <CardContent>
           {searchMisses.length === 0 ? (
             <p className="text-sm text-muted-foreground">No empty searches recorded yet.</p>
@@ -55,11 +55,7 @@ export default async function HelpInsightsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ThumbsDown className="size-4 text-primary" /> Articles marked not helpful
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={ThumbsDown} title="Articles marked not helpful" />
         <CardContent className="flex flex-col gap-4">
           {byArticle.length === 0 ? (
             <p className="text-sm text-muted-foreground">No thumbs-down votes yet.</p>

@@ -7,7 +7,8 @@ import type { HostSighting } from "@/db/queries";
 import { dateTime, relativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -41,14 +42,12 @@ export function DeviceSightings({ sightings }: { sightings: HostSighting[] }) {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <History className="size-4 text-primary" />
-            Sightings
-            <span className="ml-1 text-sm font-normal text-muted-foreground">{summary}</span>
-          </CardTitle>
-          {count > 0 && (
+      <SectionHeader
+        icon={History}
+        title="Sightings"
+        meta={summary}
+        action={
+          count > 0 ? (
             <Button
               variant="ghost"
               size="sm"
@@ -58,9 +57,9 @@ export function DeviceSightings({ sightings }: { sightings: HostSighting[] }) {
               {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
               {open ? "Hide" : "Show all"}
             </Button>
-          )}
-        </div>
-      </CardHeader>
+          ) : undefined
+        }
+      />
       {open && count > 0 && (
         <CardContent className="px-0 sm:px-6">
           <div className="overflow-x-auto">

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import {
   ArrowLeft,
   Cpu,
+  Fingerprint,
   Map as MapIcon,
   Network,
   Radio,
@@ -23,7 +24,8 @@ import { PageHeader } from "@/components/page-header";
 import { DeviceTypeBadge } from "@/components/device-type-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -130,12 +132,7 @@ export default async function HostDetailPage({
 
       {/* Identity */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Cpu className="size-4 text-primary" />
-            Identity
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Cpu} title="Identity" />
         <CardContent>
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Hostname" value={host.hostname} />
@@ -218,12 +215,7 @@ export default async function HostDetailPage({
       {/* SNMP — settings + identity (when this host has an IP we can poll). */}
       {host.ip && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="size-4 text-primary" />
-              SNMP
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader icon={Network} title="SNMP" />
           <CardContent className="flex flex-col gap-4">
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="min-w-0">
@@ -330,16 +322,11 @@ export default async function HostDetailPage({
       {/* DHCP fingerprint — identity for endpoints that never speak SNMP. */}
       {host.dhcp && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              DHCP fingerprint
-              {host.dhcp.seenAt && (
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  last seen {relativeTime(host.dhcp.seenAt)}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader
+            icon={Fingerprint}
+            title="DHCP fingerprint"
+            meta={host.dhcp.seenAt ? `last seen ${relativeTime(host.dhcp.seenAt)}` : undefined}
+          />
           <CardContent>
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Vendor class (opt 60)" value={host.dhcp.vendorClassId} />
@@ -353,15 +340,11 @@ export default async function HostDetailPage({
       {/* Findings that mention this device (heuristic match). */}
       {deviceIssues.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <ShieldAlert className="size-4 text-primary" />
-              Findings about this device
-              <span className="ml-1 text-sm font-normal text-muted-foreground">
-                {deviceIssues.length}
-              </span>
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader
+            icon={ShieldAlert}
+            title="Findings about this device"
+            meta={deviceIssues.length}
+          />
           <CardContent className="flex flex-col gap-3">
             {deviceIssues.map((it) => (
               <div key={it.id} className="flex flex-col gap-1 border-b pb-3 last:border-b-0 last:pb-0">

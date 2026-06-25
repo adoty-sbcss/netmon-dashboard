@@ -26,8 +26,9 @@ import { VlanPanel } from "./vlan-panel";
 import { NetworksCard, type ReportedInterface, type LastHostAction } from "./networks-card";
 import { dateTime, num, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { SectionHeader } from "@/components/section-header";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -198,12 +199,7 @@ export default async function SensorDetailPage({
 
       {/* Status */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Radio className="size-4 text-primary" />
-            Status
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Radio} title="Status" />
         <CardContent>
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Scans collected" value={num(sensor.scanCount)} />
@@ -253,11 +249,11 @@ export default async function SensorDetailPage({
       {/* Reported (actual) config from the sensor's last check-in */}
       {isAdmin && reported && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-              <Settings2 className="size-4 text-primary" />
-              Reported config (from the sensor)
-              {sensor.reportedConfigVersion != null && mgmt?.configVersion != null && (
+          <SectionHeader
+            icon={Settings2}
+            title="Reported config (from the sensor)"
+            meta={
+              sensor.reportedConfigVersion != null && mgmt?.configVersion != null ? (
                 <Badge
                   variant="outline"
                   className={
@@ -270,9 +266,9 @@ export default async function SensorDetailPage({
                     ? `up to date (v${sensor.reportedConfigVersion})`
                     : `pending — applied v${sensor.reportedConfigVersion} of v${mgmt.configVersion}`}
                 </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
+              ) : undefined
+            }
+          />
           <CardContent>
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
               <Field
@@ -358,15 +354,11 @@ export default async function SensorDetailPage({
       {/* Config backups (admin) */}
       {isAdmin && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Archive className="size-4 text-primary" />
-              Config backups
-              <span className="text-sm font-normal text-muted-foreground">
-                pulled from the sensor&apos;s daily SFTP backup
-              </span>
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader
+            icon={Archive}
+            title="Config backups"
+            meta="pulled from the sensor's daily SFTP backup"
+          />
           <CardContent className="px-0 sm:px-6">
             {backups.length === 0 ? (
               <p className="px-6 py-6 text-sm text-muted-foreground">

@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { Activity, AlertTriangle, Gauge, Globe, Network, ServerCog } from "lucide-react";
+import { Activity, AlertTriangle, Gauge, Globe, History, Network, Radio, ServerCog } from "lucide-react";
 
 import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
 import {
@@ -19,7 +19,8 @@ import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/section-header";
 import {
   Table,
   TableBody,
@@ -345,11 +346,7 @@ export default async function IperfPage({
 
       {/* --- Internet speed (public speed tests: Ookla + Cloudflare) --- */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Globe className="size-4 text-primary" /> Internet speed · history
-          </CardTitle>
-        </CardHeader>
+        <SectionHeader icon={Globe} title="Internet speed · history" />
         <CardContent className="px-0 sm:px-6">
           {speedtests.length === 0 ? (
             <p className="px-6 text-sm text-muted-foreground sm:px-0">
@@ -456,11 +453,7 @@ export default async function IperfPage({
       {/* --- Latency / jitter / loss (latest per target) --- */}
       {latencyCards.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Activity className="size-4 text-primary" /> Latency &amp; loss (latest)
-            </CardTitle>
-          </CardHeader>
+          <SectionHeader icon={Activity} title="Latency & loss (latest)" />
           <CardContent className="px-0 sm:px-6">
             <div className="overflow-x-auto">
               <Table>
@@ -507,16 +500,17 @@ export default async function IperfPage({
       {/* --- Uplink utilization vs committed rate (PERF-3) --- */}
       {(hasUplinkData || canEditRate || committedMbps != null) && (
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="size-4 text-primary" /> Uplink utilization
-              {committedMbps != null && (
+          <SectionHeader
+            icon={Network}
+            title="Uplink utilization"
+            meta={
+              committedMbps != null ? (
                 <Badge variant="outline" className="font-normal">
                   vs {committedMbps} Mbps committed
                 </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
+              ) : undefined
+            }
+          />
           <CardContent className="flex flex-col gap-6">
             <p className="text-sm text-muted-foreground">
               Measured from SNMP uplink counter deltas on the WAN-facing port,
@@ -696,18 +690,14 @@ export default async function IperfPage({
       ) : (
         <>
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Throughput over time</CardTitle>
-            </CardHeader>
+            <SectionHeader icon={Gauge} title="Throughput over time" />
             <CardContent>
               <IperfChart series={series} keys={keys} />
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">By sensor (slowest first)</CardTitle>
-            </CardHeader>
+            <SectionHeader icon={Radio} title="By sensor (slowest first)" />
             <CardContent className="px-0 sm:px-6">
               <div className="overflow-x-auto">
                 <Table>
@@ -768,12 +758,7 @@ export default async function IperfPage({
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                Recent runs{" "}
-                <span className="text-sm font-normal text-muted-foreground">· last 5 hours</span>
-              </CardTitle>
-            </CardHeader>
+            <SectionHeader icon={History} title="Recent runs" meta="· last 5 hours" />
             <CardContent className="px-0 sm:px-6">
               <CollapsibleRuns olderCount={iperfOlderCount} triggerClassName="px-6 sm:px-0">
               <div className="overflow-x-auto">
