@@ -2221,6 +2221,47 @@ function hostOs(attributes: unknown): string | null {
  * carrying the FEWEST MACs (an edge port usually has one; an uplink has many).
  * Uses the latest scan per sensor. Returns mac(lowercased) -> {switchIp, port}.
  */
+/**
+ * Switch-to-switch UPLINK ports for a school as `${switchIp}|${ifIndex}`, derived
+ * from the physical topology fabric edges. Each crawled fabric edge carries the
+ * LOCAL switch's uplink ifIndex (buildSnmpFabricGraph's `local_ifindex`); mapping
+ * the edge's `switch:<chassis>` source to its mgmt IP gives (switchIp, ifIndex). The
+ * SNMP crawl reports neighbors from both ends, so both sides of a link are covered.
+ * Read-only + best-effort: an empty snapshot just yields an empty set (no exclusion).
+ */
+async function fabricUplinkPorts(schoolId: number): Promise<Set<string>> {
+  const out = new Set<string>();
+  const [snap] = await db
+    .select({ graph: topologySnapshots.graph })
+    .from(topologySnapshots)
+    .where(
+      and(
+        eq(topologySnapshots.scopeType, "school"),
+        eq(topologySnapshots.scopeId, schoolId),
+        eq(topologySnapshots.kind, "physical"),
+      ),
+    )
+    .limit(1);
+  const edges = (snap?.graph as { edges?: unknown } | null)?.edges;
+  if (!Array.isArray(edges) || edges.length === 0) return out;
+  const swRows = await db
+    .select({ chassisId: entitiesSwitch.chassisId, mgmtIp: entitiesSwitch.mgmtIp })
+    .from(entitiesSwitch)
+    .where(eq(entitiesSwitch.schoolId, schoolId));
+  const ipByChassis = new Map(
+    swRows.filter((s) => s.mgmtIp).map((s) => [s.chassisId, s.mgmtIp as string]),
+  );
+  for (const e of edges as Array<{ source?: unknown; target?: unknown; local_ifindex?: unknown }>) {
+    const src = typeof e.source === "string" ? e.source : "";
+    const tgt = typeof e.target === "string" ? e.target : "";
+    if (!src.startsWith("switch:") || !tgt.startsWith("switch:")) continue; // both ends = fabric link
+    const ip = ipByChassis.get(src.slice("switch:".length));
+    const ifidx = e.local_ifindex;
+    if (ip && (typeof ifidx === "string" || typeof ifidx === "number")) out.add(`${ip}|${ifidx}`);
+  }
+  return out;
+}
+
 async function getFdbAttachments(
   schoolId: number,
 ): Promise<Map<string, { switchIp: string; port: string | null }>> {
@@ -2258,9 +2299,17 @@ async function getFdbAttachments(
       switchIp: hostSwitchPorts.sourceDeviceIp,
       mac: hostSwitchPorts.mac,
       ifName: hostSwitchPorts.ifName,
+      ifIndex: hostSwitchPorts.ifIndex,
     })
     .from(hostSwitchPorts)
     .where(inArray(hostSwitchPorts.scanRunId, scanIds));
+
+  // Switch-to-switch UPLINK ports (from the topology fabric edges). A device's MAC
+  // learned on an uplink is in TRANSIT, not plugged in there — excluding those is
+  // what stops an AP/bridge from being attached to a sibling stack it merely routes
+  // through (the "fewest-MAC = access port" heuristic backfires for an AP whose own
+  // access port carries all its wireless clients' MACs).
+  const uplinkPorts = await fabricUplinkPorts(schoolId);
 
   // distinct MAC count per (switch, port)
   const portMacs = new Map<string, Set<string>>();
@@ -2274,10 +2323,14 @@ async function getFdbAttachments(
     }
     set.add(r.mac.toLowerCase());
   }
-  // pick the lowest-MAC-count port per MAC = its access port
+  // pick the lowest-MAC-count port per MAC = its access port, EXCLUDING uplink ports
   const best = new Map<string, { switchIp: string; port: string | null; count: number }>();
   for (const r of fresh) {
     if (!r.switchIp || !r.mac) continue;
+    // A device's MAC learned on a switch-to-switch uplink is in transit, not plugged
+    // in there — drop that candidate. (A MAC seen ONLY on uplinks is genuinely transit
+    // and correctly stays unattached.)
+    if (r.ifIndex != null && uplinkPorts.has(`${r.switchIp}|${r.ifIndex}`)) continue;
     const mac = r.mac.toLowerCase();
     const count = portMacs.get(`${r.switchIp}|${r.ifName ?? ""}`)?.size ?? Number.MAX_SAFE_INTEGER;
     const cur = best.get(mac);
