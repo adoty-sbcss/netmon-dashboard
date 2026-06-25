@@ -16,7 +16,7 @@ import { entitiesHost, entitiesSwitch, registryDevices, schoolPolicy } from "@/d
 import { listReachabilityForSchool } from "@/db/queries";
 import { normalizeMac } from "@/lib/registry/types";
 import { CLASSIFY_REVIEW_THRESHOLD } from "@/lib/classify/constants";
-import { isCiscoIpPhoneName, refineInfraType } from "@/lib/classify/device-hints";
+import { isCiscoIpPhoneName, looksLikePrinter, refineInfraType } from "@/lib/classify/device-hints";
 
 export type SnmpStatus = "responding" | "gap" | "na" | "unknown";
 
@@ -148,6 +148,9 @@ export async function getInventoryForSchool(
     // Cisco IP phones (CDP "SEP<mac>") get crawled as switches — never list them
     // as infrastructure; they belong with the phone endpoints, not the fabric.
     if (isCiscoIpPhoneName(sw.systemName) || isCiscoIpPhoneName(sw.chassisId)) continue;
+    // Printers answer SNMP and get crawled as switches — keep them off the fabric
+    // inventory (they show with the host endpoints instead).
+    if (looksLikePrinter(sw.systemDescription)) continue;
     const ip = sw.mgmtIp;
     const reg = matchRegistry(sw.chassisId, ip);
     if (reg) usedRegistry.add(reg.id);

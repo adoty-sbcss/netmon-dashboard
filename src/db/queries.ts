@@ -49,7 +49,13 @@ import {
   sensorEnrollments,
 } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
-import { isIpPhoneMapNode, refineInfraType } from "../lib/classify/device-hints";
+import {
+  isCiscoIpPhoneName,
+  isIpPhoneMapNode,
+  isPrinterMapNode,
+  looksLikePrinter,
+  refineInfraType,
+} from "../lib/classify/device-hints";
 import type { SnmpInterface } from "../ingest/bundle";
 import { collapseStacksAndLags } from "../lib/topology/graph";
 
@@ -994,7 +1000,7 @@ export interface SwitchRow {
 export async function listSwitchesForSchool(
   schoolId: number,
 ): Promise<SwitchRow[]> {
-  return db
+  const rows = await db
     .select({
       id: entitiesSwitch.id,
       chassisId: entitiesSwitch.chassisId,
@@ -1008,6 +1014,14 @@ export async function listSwitchesForSchool(
     .from(entitiesSwitch)
     .where(eq(entitiesSwitch.schoolId, schoolId))
     .orderBy(entitiesSwitch.systemName);
+  // Printers / Cisco IP phones answer SNMP and get swept into the fabric crawl —
+  // they aren't switches, so drop them from the switch list (they show as endpoints).
+  return rows.filter(
+    (r) =>
+      !looksLikePrinter(r.systemDescription) &&
+      !isCiscoIpPhoneName(r.systemName) &&
+      !isCiscoIpPhoneName(r.chassisId),
+  );
 }
 
 // ---- network-device reachability (ping + SNMP-response + traceroute) ------
@@ -2430,7 +2444,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     // Prune, at read time, IP phones crawled as switches AND any purged/excluded
     // device — both linger forever in the union-merged snapshot otherwise.
     const rawNodes = (Array.isArray(g.nodes) ? g.nodes : []).filter(
-      (n) => !isIpPhoneMapNode(n) && !isExcludedRawNode(n),
+      (n) => !isIpPhoneMapNode(n) && !isPrinterMapNode(n) && !isExcludedRawNode(n),
     );
     return {
       nodes: enrich(kind, rawNodes),
@@ -2456,29 +2470,46 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     const hostByMac = new Map(
       liveHosts.filter((h) => h.mac).map((h) => [h.mac!.toLowerCase(), h]),
     );
-    const present = new Set(physical.nodes.map((n) => n.id));
+    // A device physically sits on ONE switch — but an AP/bridge spreads its base +
+    // radio/BSSID MACs across switches (incl. a transit uplink on a sibling stack),
+    // which previously drew a separate "fdb" link to each, so an AP looked dual-homed.
+    // Collapse each device's MACs to ONE access switch, preferring the attachment of
+    // its CANONICAL MAC (its own/base MAC, learned on its real access port — not
+    // bridged like the client MACs behind it).
+    const attByHost = new Map<
+      number,
+      { host: (typeof liveHosts)[number]; switchIp: string; port: string | null; canonical: boolean }
+    >();
     for (const [mac, att] of fdb) {
-      const swNode = switchNodeByIp.get(att.switchIp);
-      if (!swNode) continue; // its access switch isn't on the map (yet)
+      if (!switchNodeByIp.has(att.switchIp)) continue; // access switch isn't on the map (yet)
       const host = hostByMac.get(mac);
       if (!host) continue; // unidentified MAC — skip until we know the device
+      const canonical = (host.mac ?? "").toLowerCase() === mac;
+      const cur = attByHost.get(host.id);
+      if (!cur || (canonical && !cur.canonical)) {
+        attByHost.set(host.id, { host, switchIp: att.switchIp, port: att.port, canonical });
+      }
+    }
+    const present = new Set(physical.nodes.map((n) => n.id));
+    for (const { host, switchIp, port } of attByHost.values()) {
+      const swNode = switchNodeByIp.get(switchIp)!;
       // Tally toward this switch's connected-devices summary (keyed by switch IP
       // so stack members sharing a mgmt IP aggregate after collapse).
       const t = host.deviceTypeOverride || host.deviceType || "host";
-      const sum = rollupByIp.get(att.switchIp) ?? { count: 0, byType: {} };
+      const sum = rollupByIp.get(switchIp) ?? { count: 0, byType: {} };
       sum.count++;
       sum.byType[t] = (sum.byType[t] ?? 0) + 1;
-      rollupByIp.set(att.switchIp, sum);
+      rollupByIp.set(switchIp, sum);
       const hostNodeId = `host:${host.id}`;
       if (!present.has(hostNodeId)) {
         physical.nodes.push({
           id: hostNodeId,
           type: host.deviceTypeOverride || host.deviceType || "host",
-          label: host.hostname || host.ip || mac,
+          label: host.hostname || host.ip || String(host.mac ?? host.id),
           ip: host.ip,
           vendor: host.vendor ?? null,
           firmware: hostOs(host.attributes),
-          port: att.port ?? null,
+          port: port ?? null,
           entityId: host.id,
           entityKind: "host",
         });

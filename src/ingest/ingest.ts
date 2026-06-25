@@ -59,7 +59,12 @@ import {
 type RawInterfaces = Record<string, SnmpInterface>;
 import { classifyHost } from "../lib/classify";
 import { decodeSysObjectId } from "../lib/oui/sysobjectid";
-import { isCiscoIpPhoneName, isIpPhoneMapNode, isIpPhoneTopoNode } from "../lib/classify/device-hints";
+import {
+  isCiscoIpPhoneName,
+  isIpPhoneMapNode,
+  isIpPhoneTopoNode,
+  isPrinterTopoNode,
+} from "../lib/classify/device-hints";
 import { connectPhysicalGraph, type Graph } from "../lib/topology/graph";
 
 /**
@@ -128,6 +133,7 @@ const ENT_CLASS_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.5."; // entPhysicalClass (3 = c
 const ENT_SERIAL_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.11."; // entPhysicalSerialNum
 const ENT_MODEL_PREFIX = "1.3.6.1.2.1.47.1.1.1.1.13."; // entPhysicalModelName
 const SYS_OBJECTID_OID = "1.3.6.1.2.1.1.2.0"; // sysObjectID -> vendor PEN decode
+const HR_DEVICE_DESCR_PREFIX = "1.3.6.1.2.1.25.3.2.1.3."; // hrDeviceDescr (HOST-RESOURCES-MIB)
 
 const normOid = (oid?: string | null) => (oid ?? "").replace(/^\./, "");
 
@@ -252,6 +258,27 @@ function deriveSwitchIdentity(
     const vendor = decodeSysObjectId(sysoid.get(dev))?.vendor;
     if (best?.serial || best?.model || vendor)
       out.set(dev, { serial: best?.serial, model: best?.model, vendor });
+  }
+  return out;
+}
+
+/**
+ * device_ip -> its hrDeviceDescr text (HOST-RESOURCES-MIB), joining the indexed
+ * entries. Lets ingest spot a printer/UPS that answered SNMP — e.g. an HP OfficeJet
+ * whose sysDescr is the generic "HP ETHERNET MULTI-ENVIRONMENT" but whose
+ * hrDeviceDescr is "HP OfficeJet Pro 9010 series" — and keep it out of the switch
+ * fabric (see isPrinterTopoNode).
+ */
+function deriveHrDeviceDescr(snmp: ScanData["snmp"]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of snmp) {
+    if (!normOid(p.oid).startsWith(HR_DEVICE_DESCR_PREFIX)) continue;
+    const dev = str(p.device_ip);
+    if (!dev) continue;
+    const v = (str(p.value) ?? "").replace(/^"|"$/g, "").trim();
+    if (!v) continue;
+    const prev = out.get(dev);
+    out.set(dev, prev ? `${prev} | ${v}` : v);
   }
   return out;
 }
@@ -1009,9 +1036,11 @@ export async function ingestBundle(
       }
 
       // ---- canonical switches (dedup on chassis_id within district) ----
+      const lldpHrByIp = deriveHrDeviceDescr(scan.snmp);
       for (const n of scan.lldp) {
         const chassis = str(n.chassis_id);
         if (!chassis) continue;
+        if (isPrinterTopoNode(n, lldpHrByIp.get(str(n.mgmt_ip) ?? ""))) continue; // a printer is not a switch
         const seen = toDate(n.seen_at) ?? completedAt;
         await tx
           .insert(entitiesSwitch)
@@ -1140,10 +1169,15 @@ export async function ingestBundle(
     for (const scan of bundle.scans) {
       // Chassis serial # + clean model per polled device (ENTITY-MIB) for inventory.
       const switchIdentity = deriveSwitchIdentity(scan.snmp);
+      const crawlHrByIp = deriveHrDeviceDescr(scan.snmp);
       for (const n of scan.snmpTopology?.nodes ?? []) {
         const chassis = str(n.chassis_id);
         if (!chassis) continue;
         if (isIpPhoneTopoNode(n)) continue; // don't list Cisco IP phones as switches
+        // Printers/UPSes answer SNMP and get crawled as switches; gate them out of
+        // the fabric using sysDescr + hrDeviceDescr (e.g. HP JetDirect / OfficeJet).
+        if (isPrinterTopoNode(n, crawlHrByIp.get((n.mgmt_ips && str(n.mgmt_ips[0])) ?? "")))
+          continue;
         const seen = toDate(scan.meta.completed_at) ?? new Date();
         const swIdent = switchIdentity.get((n.mgmt_ips && str(n.mgmt_ips[0])) ?? "");
         const swAttrs: Record<string, unknown> = {};
