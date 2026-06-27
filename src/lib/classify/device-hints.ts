@@ -41,47 +41,69 @@ export function isIpPhoneMapNode(n: { id?: unknown; label?: unknown }): boolean 
   return isCiscoIpPhoneName(chassis) || isCiscoIpPhoneName(asStr(n.label));
 }
 
-/**
- * Printer / print-server signatures seen in SNMP sysDescr OR hrDeviceDescr. Covers
- * HP JetDirect ("HP ETHERNET MULTI-ENVIRONMENT"), the common laser/inkjet families,
- * and big-vendor MFPs. Used to keep printers — which answer SNMP but are NOT
- * forwarding devices — out of the switch fabric (inventory + map). Conservative:
- * every token is printer-specific so a real switch's sysDescr can't match.
- */
+// Non-forwarding SNMP endpoint signatures (sysDescr OR hrDeviceDescr). These devices
+// answer SNMP and get swept into the fabric crawl as "switches"; each token is
+// endpoint-specific so a real switch can't match, and ingest ALSO guards with
+// bridge/FDB evidence before dropping anything (see ingest's switch loops).
 const PRINTER_RE =
   /jetdirect|hp ethernet multi-?environment|laserjet|officejet|designjet|deskjet|\bprinter\b|imagerunner|\bMFP\b|\bfiery\b|lexmark|kyocera|\bricoh\b|\bxerox\b|magicard|troy group/i;
+const UPS_RE =
+  /smart-ups|symmetra|\bpowernet\b|ups network management|network management card.*ups|\bAPC\b.*\bups\b|eaton.*\bups\b|tripp.?lite|\bliebert\b|powerware|switched rack pdu|\bRPDU\b/i;
+const CAMERA_RE =
+  /\bIP ?camera\b|network camera|\bNVR\b|hikvision|\bdahua\b|axis.*(camera|network camera|video)|geovision|\bONVIF\b|avigilon|vivotek/i;
 
-/** True when an SNMP system description or hrDeviceDescr clearly names a printer. */
+/**
+ * Classify a non-forwarding SNMP ENDPOINT (printer / UPS / camera) from its sysDescr
+ * + hrDeviceDescr. Returns the device type or null. Used to keep these out of the
+ * switch fabric (they answer SNMP but don't bridge/route).
+ */
+export function endpointTypeFromSnmp(
+  sysDescr: string | null | undefined,
+  hrDeviceDescr?: string | null | undefined,
+): "printer" | "ups" | "camera" | null {
+  const s = `${sysDescr ?? ""}\n${hrDeviceDescr ?? ""}`;
+  if (!s.trim()) return null;
+  if (PRINTER_RE.test(s)) return "printer";
+  if (UPS_RE.test(s)) return "ups";
+  if (CAMERA_RE.test(s)) return "camera";
+  return null;
+}
+
+/** True when sysDescr/hrDeviceDescr clearly names a non-forwarding endpoint. */
+export function looksLikeEndpoint(
+  sysDescr: string | null | undefined,
+  hrDeviceDescr?: string | null | undefined,
+): boolean {
+  return endpointTypeFromSnmp(sysDescr, hrDeviceDescr) != null;
+}
+
+/** Printer-specific check (kept for the common case + back-compat). */
 export function looksLikePrinter(
   sysDescr: string | null | undefined,
   hrDeviceDescr?: string | null | undefined,
 ): boolean {
-  return (
-    (!!sysDescr && PRINTER_RE.test(sysDescr)) ||
-    (!!hrDeviceDescr && PRINTER_RE.test(hrDeviceDescr))
-  );
+  return endpointTypeFromSnmp(sysDescr, hrDeviceDescr) === "printer";
 }
 
 /**
- * A raw SNMP topology node that is really a PRINTER (answered SNMP, so the fabric
- * crawl recorded it as a switch). Detected from its sysDescr and, when available,
- * the hrDeviceDescr polled for its management IP. Mirrors isIpPhoneTopoNode so the
- * ingest switch loop can skip it the same way.
+ * A raw SNMP topology node that is really a non-forwarding endpoint (printer / UPS /
+ * camera that answered SNMP, so the crawl recorded it as a switch). Detected from
+ * sysDescr + the hrDeviceDescr polled for its mgmt IP. Mirrors isIpPhoneTopoNode.
  */
-export function isPrinterTopoNode(
+export function isEndpointTopoNode(
   n: { system_description?: unknown },
   hrDeviceDescr?: string | null,
 ): boolean {
-  return looksLikePrinter(asStr(n.system_description), hrDeviceDescr);
+  return looksLikeEndpoint(asStr(n.system_description), hrDeviceDescr);
 }
 
 /**
- * A stored map node (carrying `description`/`label`) that is a printer crawled as a
- * switch — pruned from the union-merged snapshot at read time like isIpPhoneMapNode,
- * so existing data clears without a re-ingest.
+ * A stored map node (carrying `description`/`label`) that is a non-forwarding
+ * endpoint crawled as a switch — pruned at read time like isIpPhoneMapNode so
+ * existing data clears without a re-ingest.
  */
-export function isPrinterMapNode(n: { description?: unknown; label?: unknown }): boolean {
-  return looksLikePrinter(asStr(n.description), asStr(n.label));
+export function isEndpointMapNode(n: { description?: unknown; label?: unknown }): boolean {
+  return looksLikeEndpoint(asStr(n.description), asStr(n.label));
 }
 
 /**
@@ -100,11 +122,12 @@ export function refineInfraType(
   sysDescr: string | null,
 ): string {
   const c = (caps ?? []).map((s) => s.toLowerCase());
-  // A printer that answered SNMP gets swept into the crawl as a "switch" — relabel
-  // it so it leaves the fabric inventory + drops off the infrastructure map. Checked
-  // first: printer signatures are unambiguous and shouldn't be overridden by an
-  // incidental keyword match below.
-  if (looksLikePrinter(sysDescr)) return "printer";
+  // A non-forwarding endpoint (printer/UPS/camera) that answered SNMP gets swept into
+  // the crawl as a "switch" — relabel to its real type so it leaves the fabric
+  // inventory + drops off the infra map. Checked first: the signatures are
+  // unambiguous and shouldn't be overridden by an incidental keyword match below.
+  const ep = endpointTypeFromSnmp(sysDescr);
+  if (ep) return ep;
   if (c.some((x) => x.includes("access-point") || x.includes("wlan") || x === "ap")) return "ap";
   if (
     sysDescr &&

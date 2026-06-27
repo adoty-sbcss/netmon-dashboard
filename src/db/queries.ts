@@ -51,9 +51,9 @@ import {
 import { enrichHost, type DeviceType } from "../lib/oui";
 import {
   isCiscoIpPhoneName,
+  isEndpointMapNode,
   isIpPhoneMapNode,
-  isPrinterMapNode,
-  looksLikePrinter,
+  looksLikeEndpoint,
   refineInfraType,
 } from "../lib/classify/device-hints";
 import type { SnmpInterface } from "../ingest/bundle";
@@ -1014,11 +1014,12 @@ export async function listSwitchesForSchool(
     .from(entitiesSwitch)
     .where(eq(entitiesSwitch.schoolId, schoolId))
     .orderBy(entitiesSwitch.systemName);
-  // Printers / Cisco IP phones answer SNMP and get swept into the fabric crawl —
-  // they aren't switches, so drop them from the switch list (they show as endpoints).
+  // Printers / UPSes / cameras / Cisco IP phones answer SNMP and get swept into the
+  // fabric crawl — they aren't switches, so drop them from the switch list (they show
+  // as endpoints instead).
   return rows.filter(
     (r) =>
-      !looksLikePrinter(r.systemDescription) &&
+      !looksLikeEndpoint(r.systemDescription) &&
       !isCiscoIpPhoneName(r.systemName) &&
       !isCiscoIpPhoneName(r.chassisId),
   );
@@ -2497,7 +2498,7 @@ export async function getSchoolMap(schoolId: number): Promise<SchoolMap> {
     // Prune, at read time, IP phones crawled as switches AND any purged/excluded
     // device — both linger forever in the union-merged snapshot otherwise.
     const rawNodes = (Array.isArray(g.nodes) ? g.nodes : []).filter(
-      (n) => !isIpPhoneMapNode(n) && !isPrinterMapNode(n) && !isExcludedRawNode(n),
+      (n) => !isIpPhoneMapNode(n) && !isEndpointMapNode(n) && !isExcludedRawNode(n),
     );
     return {
       nodes: enrich(kind, rawNodes),

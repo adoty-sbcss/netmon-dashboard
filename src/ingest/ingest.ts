@@ -61,9 +61,9 @@ import { classifyHost } from "../lib/classify";
 import { decodeSysObjectId } from "../lib/oui/sysobjectid";
 import {
   isCiscoIpPhoneName,
+  isEndpointTopoNode,
   isIpPhoneMapNode,
   isIpPhoneTopoNode,
-  isPrinterTopoNode,
 } from "../lib/classify/device-hints";
 import { connectPhysicalGraph, type Graph } from "../lib/topology/graph";
 
@@ -279,6 +279,22 @@ function deriveHrDeviceDescr(snmp: ScanData["snmp"]): Map<string, string> {
     if (!v) continue;
     const prev = out.get(dev);
     out.set(dev, prev ? `${prev} | ${v}` : v);
+  }
+  return out;
+}
+
+/**
+ * device_ips that exposed a bridge forwarding table (dot1dTpFdbPort) — i.e. learning
+ * bridges = real switches. Used as a forwarding-evidence GUARD: never drop one of
+ * these from the fabric even if an endpoint keyword (printer/UPS/camera) happens to
+ * match its sysDescr.
+ */
+function deriveFdbSourceIps(snmp: ScanData["snmp"]): Set<string> {
+  const out = new Set<string>();
+  for (const p of snmp) {
+    if (!normOid(p.oid).startsWith(FDB_PORT_PREFIX)) continue;
+    const d = str(p.device_ip);
+    if (d) out.add(d);
   }
   return out;
 }
@@ -1037,10 +1053,14 @@ export async function ingestBundle(
 
       // ---- canonical switches (dedup on chassis_id within district) ----
       const lldpHrByIp = deriveHrDeviceDescr(scan.snmp);
+      const lldpFdbSourceIps = deriveFdbSourceIps(scan.snmp);
       for (const n of scan.lldp) {
         const chassis = str(n.chassis_id);
         if (!chassis) continue;
-        if (isPrinterTopoNode(n, lldpHrByIp.get(str(n.mgmt_ip) ?? ""))) continue; // a printer is not a switch
+        // Skip non-forwarding endpoints (printer/UPS/camera) that answered SNMP — but
+        // never drop a device that actually bridges (exposed an FDB).
+        const lldpIp = str(n.mgmt_ip) ?? "";
+        if (isEndpointTopoNode(n, lldpHrByIp.get(lldpIp)) && !lldpFdbSourceIps.has(lldpIp)) continue;
         const seen = toDate(n.seen_at) ?? completedAt;
         await tx
           .insert(entitiesSwitch)
@@ -1170,13 +1190,16 @@ export async function ingestBundle(
       // Chassis serial # + clean model per polled device (ENTITY-MIB) for inventory.
       const switchIdentity = deriveSwitchIdentity(scan.snmp);
       const crawlHrByIp = deriveHrDeviceDescr(scan.snmp);
+      const crawlFdbSourceIps = deriveFdbSourceIps(scan.snmp);
       for (const n of scan.snmpTopology?.nodes ?? []) {
         const chassis = str(n.chassis_id);
         if (!chassis) continue;
         if (isIpPhoneTopoNode(n)) continue; // don't list Cisco IP phones as switches
-        // Printers/UPSes answer SNMP and get crawled as switches; gate them out of
-        // the fabric using sysDescr + hrDeviceDescr (e.g. HP JetDirect / OfficeJet).
-        if (isPrinterTopoNode(n, crawlHrByIp.get((n.mgmt_ips && str(n.mgmt_ips[0])) ?? "")))
+        // Non-forwarding endpoints (printer/UPS/camera) answer SNMP and get crawled as
+        // switches; gate them out via sysDescr + hrDeviceDescr — but never drop a real
+        // bridge (one that exposed an FDB), so a forwarding switch is always kept.
+        const crawlIp = (n.mgmt_ips && str(n.mgmt_ips[0])) ?? "";
+        if (isEndpointTopoNode(n, crawlHrByIp.get(crawlIp)) && !crawlFdbSourceIps.has(crawlIp))
           continue;
         const seen = toDate(scan.meta.completed_at) ?? new Date();
         const swIdent = switchIdentity.get((n.mgmt_ips && str(n.mgmt_ips[0])) ?? "");
