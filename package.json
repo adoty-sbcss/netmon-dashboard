@@ -16,6 +16,7 @@
     "db:studio": "drizzle-kit studio",
     "auth:seed": "tsx src/db/seed-admin.ts",
     "seed:demo": "tsx src/db/seed-demo.ts",
+    "seed:reader": "tsx src/db/seed-reader.ts",
     "ingest": "tsx src/ingest/run.ts",
     "ingest:sync": "tsx src/ingest/sync.ts",
     "enrich": "tsx src/ingest/enrich.ts",
