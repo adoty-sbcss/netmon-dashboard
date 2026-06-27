@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { KeyRound, LogOut, UserRound, DownloadCloud, DatabaseZap, Users } from "lucide-react";
 
-import { logoutAction } from "@/lib/auth/actions";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -58,15 +57,17 @@ export function UserMenu({
             </DropdownMenuItem>
           </>
         )}
-        <DropdownMenuItem asChild>
-          <Link href="/account/change-password">
-            <KeyRound />
-            Change password
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        {role !== "viewer" && (
+          <DropdownMenuItem asChild>
+            <Link href="/account/change-password">
+              <KeyRound />
+              Change password
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {role !== "viewer" && <DropdownMenuSeparator />}
         <DropdownMenuItem asChild variant="destructive">
-          <form action={logoutAction}>
+          <form action="/api/auth/logout" method="post">
             <button type="submit" className="flex w-full items-center gap-2">
               <LogOut />
               Sign out

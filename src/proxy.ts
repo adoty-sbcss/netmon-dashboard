@@ -10,6 +10,7 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
 
 const LOGIN_PATH = "/login";
 const CHANGE_PW_PATH = "/account/change-password";
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -66,6 +67,18 @@ export async function proxy(req: NextRequest) {
     url.pathname = LOGIN_PATH;
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Read-only (viewer) sessions: reject every mutation. Server actions and API
+  // writes are all non-GET, so this one check is the airtight enforcement point —
+  // a viewer reads any page they're scoped to but can never change anything,
+  // regardless of what each individual action checks. (Sign-out is a POST too,
+  // but it goes through /api/auth/logout, exempted at the top of this function.)
+  if (claims.ro && !READ_METHODS.has(req.method.toUpperCase())) {
+    return new NextResponse(
+      "This is a read-only account — that action isn't permitted.",
+      { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
+    );
   }
 
   // Authenticated but must change password: trap on the change-password page.
