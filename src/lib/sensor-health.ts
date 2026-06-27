@@ -181,6 +181,20 @@ export function worstLevel(flags: HealthFlag[]): HealthLevel | null {
   return null;
 }
 
+export type Heartbeat = "online" | "late" | "offline" | "never";
+
+/** A simple reachability status from the last check-in, for at-a-glance lists
+ *  (the full picture is sensorHealthFlags; this is just "is it phoning home?").
+ *  Date.now() lives in here, out of any component render body, like ageText. */
+export function heartbeat(lastCheckinAt: Date | null): Heartbeat {
+  const at = asDate(lastCheckinAt);
+  if (!at) return "never";
+  const ms = Date.now() - at.getTime();
+  if (ms <= 15 * MIN) return "online";
+  if (ms <= HOUR) return "late";
+  return "offline";
+}
+
 /**
  * The commit SHA most of the fleet runs — the de-facto current release. Used as
  * the "behind" reference. Ignores blank SHAs. Ties break by first seen.
