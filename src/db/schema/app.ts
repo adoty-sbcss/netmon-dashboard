@@ -22,8 +22,10 @@ import {
 
 // --- enums -----------------------------------------------------------------
 
-/** Top-level role. Authority is refined by `grants`; superadmin = global scope. */
-export const userRole = pgEnum("user_role", ["superadmin", "user"]);
+/** Top-level role. Authority is refined by `grants`; superadmin = global scope.
+ *  `viewer` = read-only: scoped by grants like `user`, but every mutation is blocked
+ *  at the edge middleware (see src/middleware.ts). */
+export const userRole = pgEnum("user_role", ["superadmin", "user", "viewer"]);
 
 /** Scope a grant applies to. `global` (superadmin) ignores scopeId. */
 export const scopeType = pgEnum("scope_type", [

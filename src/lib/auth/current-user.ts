@@ -21,9 +21,12 @@ export interface SessionUser {
   id: number;
   email: string;
   displayName: string | null;
-  role: "superadmin" | "user";
+  role: "superadmin" | "user" | "viewer";
   isBreakGlass: boolean;
   mustChangePassword: boolean;
+  /** Read-only (viewer) — mutations are blocked at the edge; also used to hide
+   *  write affordances in the UI. */
+  isReadOnly: boolean;
 }
 
 /**
@@ -58,15 +61,22 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
     role: u.role,
     isBreakGlass: u.isBreakGlass,
     mustChangePassword: u.mustChangePassword,
+    isReadOnly: u.role === "viewer",
   };
 });
 
-/** Issue/refresh the session cookie for a user. */
+/** Issue/refresh the session cookie for a user. Stamps the read-only flag from the
+ *  user's role so the Edge middleware can block mutations without a DB hit — this is
+ *  the single chokepoint every login path (password + OIDC) funnels through. */
 export async function setSessionCookie(
   uid: number,
   mustChangePassword: boolean,
 ): Promise<void> {
-  const token = await createSessionToken(uid, { mustChangePassword });
+  const [u] = await db.select({ role: users.role }).from(users).where(eq(users.id, uid)).limit(1);
+  const token = await createSessionToken(uid, {
+    mustChangePassword,
+    readOnly: u?.role === "viewer",
+  });
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,

@@ -26,7 +26,7 @@ export interface UserActionState {
   message?: string;
 }
 
-type Role = "superadmin" | "user";
+type Role = "superadmin" | "user" | "viewer";
 
 async function requireAdmin() {
   const user = await getSessionUser();
@@ -45,7 +45,18 @@ async function audit(actor: string, action: string, detail: Record<string, unkno
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseRole(v: unknown): Role {
-  return v === "superadmin" ? "superadmin" : "user";
+  if (v === "superadmin") return "superadmin";
+  if (v === "viewer") return "viewer";
+  return "user";
+}
+
+/**
+ * Whether this submission grants global (all-districts) scope. Superadmin is always
+ * global; a read-only viewer may be global OR district-scoped (the `globalScope`
+ * checkbox); a regular user is always district-scoped.
+ */
+function wantsGlobalScope(role: Role, formData: FormData): boolean {
+  return role === "superadmin" || (role === "viewer" && formData.get("globalScope") === "true");
 }
 
 function parseDistrictIds(formData: FormData): number[] {
@@ -79,13 +90,14 @@ export async function addUserAction(
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const role = parseRole(formData.get("role"));
   const displayName = String(formData.get("displayName") ?? "").trim() || null;
-  const districtIds = role === "superadmin" ? [] : parseDistrictIds(formData);
-  // Optional: set a temporary local-login password (else the account is OIDC-only).
+  const useGlobal = wantsGlobalScope(role, formData);
+  const districtIds = useGlobal ? [] : parseDistrictIds(formData);
+  // Optional: set a local-login password (else the account is OIDC-only).
   const password = String(formData.get("password") ?? "");
 
   if (!EMAIL_RE.test(email)) return { error: "Enter a valid email address." };
-  if (role === "user" && districtIds.length === 0) {
-    return { error: "Pick at least one district for a non-admin user." };
+  if (!useGlobal && districtIds.length === 0) {
+    return { error: "Pick at least one district (or choose all-districts scope)." };
   }
   if (password && password.length < MIN_PASSWORD_LEN) {
     return { error: `Password must be at least ${MIN_PASSWORD_LEN} characters.` };
@@ -104,11 +116,13 @@ export async function addUserAction(
         displayName,
         role,
         passwordHash,
-        // Local-login users must change the temp password on first sign-in.
-        mustChangePassword: Boolean(password),
+        // Local-login users must change the temp password on first sign-in — EXCEPT
+        // viewers: their change-password POST is blocked by the read-only middleware,
+        // so an admin sets/resets the password for them directly instead.
+        mustChangePassword: role === "viewer" ? false : Boolean(password),
       })
       .returning({ id: users.id });
-    if (role === "superadmin") {
+    if (useGlobal) {
       await tx.insert(grants).values({ userId: u.id, scopeType: "global", scopeId: null });
     } else {
       await setDistrictGrants(tx, u.id, districtIds);
@@ -134,10 +148,11 @@ export async function updateUserAction(
 
   const userId = Number(formData.get("userId"));
   const role = parseRole(formData.get("role"));
-  const districtIds = role === "superadmin" ? [] : parseDistrictIds(formData);
+  const useGlobal = wantsGlobalScope(role, formData);
+  const districtIds = useGlobal ? [] : parseDistrictIds(formData);
   if (!Number.isInteger(userId)) return { error: "Invalid request." };
-  if (role === "user" && districtIds.length === 0) {
-    return { error: "Pick at least one district, or make them a superadmin." };
+  if (!useGlobal && districtIds.length === 0) {
+    return { error: "Pick at least one district (or choose all-districts scope)." };
   }
 
   const [target] = await db.select().from(users).where(eq(users.id, userId));
@@ -145,10 +160,15 @@ export async function updateUserAction(
   if (target.isBreakGlass) return { error: "The break-glass admin can't be edited here." };
 
   await db.transaction(async (tx) => {
-    await tx.update(users).set({ role }).where(eq(users.id, userId));
+    // Clear any pending forced password-change when becoming a viewer — they can't
+    // complete it (the change-password POST is blocked by the read-only middleware).
+    await tx
+      .update(users)
+      .set(role === "viewer" ? { role, mustChangePassword: false } : { role })
+      .where(eq(users.id, userId));
     // Reset all scope grants, then apply the new ones.
     await tx.delete(grants).where(eq(grants.userId, userId));
-    if (role === "superadmin") {
+    if (useGlobal) {
       await tx.insert(grants).values({ userId, scopeType: "global", scopeId: null });
     } else {
       await setDistrictGrants(tx, userId, districtIds);
@@ -240,14 +260,19 @@ export async function setUserPasswordAction(
     return { error: `Password must be at least ${MIN_PASSWORD_LEN} characters.` };
   }
   const passwordHash = await hashPassword(password);
+  // A viewer can't complete a forced change (the change-password POST is blocked by
+  // the read-only middleware), so set their password directly without forcing it.
+  const forceChange = target.role !== "viewer";
   await db
     .update(users)
-    .set({ passwordHash, mustChangePassword: true })
+    .set({ passwordHash, mustChangePassword: forceChange })
     .where(eq(users.id, userId));
   await audit(admin.email, "user_password_set", { userId, email: target.email });
   revalidatePath(USERS_PATH);
   return {
     ok: true,
-    message: `Set a temporary password for ${target.email} — they must change it at next login.`,
+    message: forceChange
+      ? `Set a temporary password for ${target.email} — they must change it at next login.`
+      : `Set the password for ${target.email} (read-only account).`,
   };
 }

@@ -19,7 +19,7 @@ export function UserMenu({
   role,
 }: {
   email: string;
-  role: "superadmin" | "user";
+  role: "superadmin" | "user" | "viewer";
 }) {
   return (
     <DropdownMenu>

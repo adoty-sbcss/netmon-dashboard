@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  Eye,
   KeyRound,
   Pencil,
   ShieldCheck,
@@ -29,6 +30,42 @@ import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader } from "@/components/section-header";
 
 type District = { id: number; name: string };
+type Role = "user" | "superadmin" | "viewer";
+
+/** Read-only viewer scope toggle + (when not global) the district picker. */
+function ViewerScope({
+  districts,
+  selected,
+  global,
+  onGlobalChange,
+}: {
+  districts: District[];
+  selected?: Set<number>;
+  global: boolean;
+  onGlobalChange: (v: boolean) => void;
+}) {
+  return (
+    <>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="globalScope"
+          value="true"
+          checked={global}
+          onChange={(e) => onGlobalChange(e.target.checked)}
+          className="size-4 rounded border-input accent-primary"
+        />
+        All districts (read everything)
+      </label>
+      {!global && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium">District access (read-only)</label>
+          <DistrictPicker districts={districts} selected={selected} />
+        </div>
+      )}
+    </>
+  );
+}
 
 function Notice({ state }: { state: UserActionState }) {
   if (state.error)
@@ -89,9 +126,11 @@ export function UsersAdmin({
   localUserIds: number[];
 }) {
   const localSet = new Set(localUserIds);
-  const [addRole, setAddRole] = useState<"user" | "superadmin">("user");
+  const [addRole, setAddRole] = useState<Role>("user");
+  const [addGlobal, setAddGlobal] = useState(true);
   const [editing, setEditing] = useState<number | null>(null);
-  const [editRole, setEditRole] = useState<"user" | "superadmin">("user");
+  const [editRole, setEditRole] = useState<Role>("user");
+  const [editGlobal, setEditGlobal] = useState(true);
 
   const [addState, addAction, adding] = useActionState<UserActionState, FormData>(
     addUserAction,
@@ -139,10 +178,11 @@ export function UsersAdmin({
                 id="role"
                 name="role"
                 value={addRole}
-                onChange={(e) => setAddRole(e.target.value as "user" | "superadmin")}
+                onChange={(e) => setAddRole(e.target.value as Role)}
                 className="h-8 w-full max-w-xs rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
               >
                 <option value="user">User — only assigned districts</option>
+                <option value="viewer">Viewer — read-only</option>
                 <option value="superadmin">Superadmin — full access</option>
               </select>
             </div>
@@ -151,6 +191,9 @@ export function UsersAdmin({
                 <label className={labelCls}>District access</label>
                 <DistrictPicker districts={districts} />
               </div>
+            )}
+            {addRole === "viewer" && (
+              <ViewerScope districts={districts} global={addGlobal} onGlobalChange={setAddGlobal} />
             )}
             <div className="flex flex-col gap-1.5">
               <label htmlFor="password" className={labelCls}>
@@ -199,6 +242,10 @@ export function UsersAdmin({
                         <Badge variant="outline" className="gap-1 border-primary/40 text-primary">
                           <ShieldCheck className="size-3" /> Superadmin
                         </Badge>
+                      ) : u.role === "viewer" ? (
+                        <Badge variant="outline" className="gap-1 border-[var(--warning)]/40 text-[var(--warning)]">
+                          <Eye className="size-3" /> Viewer
+                        </Badge>
                       ) : (
                         <Badge variant="secondary">User</Badge>
                       )}
@@ -213,6 +260,8 @@ export function UsersAdmin({
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                       {u.role === "superadmin" ? (
                         <span>all districts</span>
+                      ) : u.role === "viewer" && u.districts.length === 0 ? (
+                        <span>all districts · read-only</span>
                       ) : u.districts.length === 0 ? (
                         <span className="text-[var(--warning)]">no district access</span>
                       ) : (
@@ -235,6 +284,8 @@ export function UsersAdmin({
                         onClick={() => {
                           setEditing((c) => (c === u.id ? null : u.id));
                           setEditRole(u.role);
+                          // A viewer with no district grants is global-scoped.
+                          setEditGlobal(u.districts.length === 0);
                         }}
                       >
                         <Pencil className="size-3.5" /> Edit
@@ -269,10 +320,11 @@ export function UsersAdmin({
                       <select
                         name="role"
                         value={editRole}
-                        onChange={(e) => setEditRole(e.target.value as "user" | "superadmin")}
+                        onChange={(e) => setEditRole(e.target.value as Role)}
                         className="h-8 w-full max-w-xs rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                       >
                         <option value="user">User — only assigned districts</option>
+                        <option value="viewer">Viewer — read-only</option>
                         <option value="superadmin">Superadmin — full access</option>
                       </select>
                     </div>
@@ -281,6 +333,14 @@ export function UsersAdmin({
                         <label className={labelCls}>District access</label>
                         <DistrictPicker districts={districts} selected={new Set(u.districts.map((d) => d.id))} />
                       </div>
+                    )}
+                    {editRole === "viewer" && (
+                      <ViewerScope
+                        districts={districts}
+                        selected={new Set(u.districts.map((d) => d.id))}
+                        global={editGlobal}
+                        onGlobalChange={setEditGlobal}
+                      />
                     )}
                     <Notice state={editState} />
                     <div className="flex gap-2">

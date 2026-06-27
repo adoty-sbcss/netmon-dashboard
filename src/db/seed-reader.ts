@@ -50,17 +50,17 @@ async function main() {
       UPDATE users SET
         password_hash = ${passwordHash},
         must_change_password = false,
-        is_break_glass = true,
-        role = 'user',
+        is_break_glass = false,
+        role = 'viewer',
         disabled = false
       WHERE id = ${userId}`;
-    console.log(`Updated reader "${EMAIL}" (id=${userId}): password reset, role=user.`);
+    console.log(`Updated reader "${EMAIL}" (id=${userId}): password reset, role=viewer.`);
   } else {
     const inserted = await sql<{ id: number }[]>`
       INSERT INTO users
         (email, display_name, role, is_break_glass, password_hash, must_change_password, disabled)
       VALUES
-        (${EMAIL}, 'NetMon Reader (read-only)', 'user', true, ${passwordHash}, false, false)
+        (${EMAIL}, 'NetMon Reader (read-only)', 'viewer', false, ${passwordHash}, false, false)
       RETURNING id`;
     userId = inserted[0].id;
     console.log(`Created reader "${EMAIL}" (id=${userId}).`);
@@ -82,7 +82,7 @@ async function main() {
     VALUES ('system', 'seed-reader', 'reader_seeded', ${sql.json({ email: EMAIL, role: "user", scope: "global", readOnly: true })})`;
 
   console.log(
-    `\n  Read-only account ready.\n  Username: ${EMAIL}\n  Authority: role=user + global grant — reads every district; cannot perform any superadmin action.\n`,
+    `\n  Read-only account ready.\n  Username: ${EMAIL}\n  Authority: role=viewer + global grant — reads every district; ALL mutations blocked by the read-only middleware. Manage/reset it from Settings → Users.\n`,
   );
   await sql.end();
 }

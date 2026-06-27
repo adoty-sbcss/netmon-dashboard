@@ -2761,7 +2761,7 @@ export interface ManagedUser {
   id: number;
   email: string;
   displayName: string | null;
-  role: "superadmin" | "user";
+  role: "superadmin" | "user" | "viewer";
   isBreakGlass: boolean;
   disabled: boolean;
   lastLoginAt: Date | null;

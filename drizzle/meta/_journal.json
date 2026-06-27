@@ -351,6 +351,13 @@
       "when": 1782534217357,
       "tag": "0049_prov5_vlan_dimension",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1782564081716,
+      "tag": "0050_viewer_role",
+      "breakpoints": true
     }
   ]
 }

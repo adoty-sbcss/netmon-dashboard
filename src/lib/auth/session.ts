@@ -16,6 +16,9 @@ export interface SessionClaims {
   uid: number;
   /** must change password before using the app */
   pwc: boolean;
+  /** read-only (viewer) session — the Edge middleware blocks every mutation for it.
+   *  Carried in the token so the middleware can enforce without a DB hit. */
+  ro?: boolean;
   /** expiry, epoch seconds */
   exp: number;
 }
@@ -62,11 +65,11 @@ function getKey(): Promise<CryptoKey> {
 /** Create a signed session token for a user. */
 export async function createSessionToken(
   uid: number,
-  opts: { mustChangePassword?: boolean; ttlSeconds?: number } = {},
+  opts: { mustChangePassword?: boolean; readOnly?: boolean; ttlSeconds?: number } = {},
 ): Promise<string> {
   const exp =
     Math.floor(Date.now() / 1000) + (opts.ttlSeconds ?? SESSION_TTL_SECONDS);
-  const claims: SessionClaims = { uid, pwc: !!opts.mustChangePassword, exp };
+  const claims: SessionClaims = { uid, pwc: !!opts.mustChangePassword, ro: !!opts.readOnly, exp };
   const payload = b64urlEncode(new TextEncoder().encode(JSON.stringify(claims)));
   const key = await getKey();
   const sig = await crypto.subtle.sign("HMAC", key, utf8(payload));
