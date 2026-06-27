@@ -46,14 +46,32 @@ function f1(v: number | null | undefined): string {
  *  failed query degrades its own card instead of 500-ing the whole page. The
  *  container-console log is greppable by label — this is how the uplink
  *  daily-avg bind bug surfaced (and what would otherwise hide the next one). */
-async function safeQuery<T>(p: Promise<T>, fallback: T, label: string): Promise<T> {
+async function safeQuery<T>(
+  p: Promise<T>,
+  fallback: T,
+  label: string,
+  failures?: string[],
+): Promise<T> {
   try {
     return await p;
   } catch (err) {
     console.error(`[Speed & Bandwidth] query "${label}" failed; rendering without it:`, err);
+    failures?.push(label);
     return fallback;
   }
 }
+
+// Technical query labels → friendly names for the partial-failure notice, so a
+// section that silently fell back to empty is surfaced instead of read as "no data".
+const QUERY_LABELS: Record<string, string> = {
+  districtIperf: "iPerf settings",
+  iperfResults: "iPerf runs",
+  speedtests: "Speed tests",
+  latency: "Latency",
+  committedRate: "Committed rate",
+  uplinkSamples: "Uplink utilization",
+  uplinkDailyAvg: "Uplink history",
+};
 
 /** Keep only uplink samples from the last 24h. Kept out of the component body so
  *  the Date.now() read isn't flagged as an impure render call. */
@@ -130,6 +148,7 @@ export default async function IperfPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
+  const failures: string[] = [];
   const [
     cfg,
     rows,
@@ -140,13 +159,13 @@ export default async function IperfPage({
     uplinkDaily,
     sessionUser,
   ] = await Promise.all([
-    safeQuery(getDistrictIperf(district.id), { serverHost: "", serverPort: 5201, enabled: false }, "districtIperf"),
-    safeQuery(listSchoolIperfResults(school.id, 300), [], "iperfResults"),
-    safeQuery(listSchoolSpeedtests(school.id, 200), [], "speedtests"),
-    safeQuery(listSchoolLatency(school.id, 400), [], "latency"),
-    safeQuery(getSchoolCommittedRate(school.id), { committedMbps: null, label: null, note: null, updatedAt: null }, "committedRate"),
-    safeQuery(listSchoolUplinkSamples(school.id, 500), [], "uplinkSamples"),
-    safeQuery(listSchoolUplinkDailyAvg(school.id, 30), [], "uplinkDailyAvg"),
+    safeQuery(getDistrictIperf(district.id), { serverHost: "", serverPort: 5201, enabled: false }, "districtIperf", failures),
+    safeQuery(listSchoolIperfResults(school.id, 300), [], "iperfResults", failures),
+    safeQuery(listSchoolSpeedtests(school.id, 200), [], "speedtests", failures),
+    safeQuery(listSchoolLatency(school.id, 400), [], "latency", failures),
+    safeQuery(getSchoolCommittedRate(school.id), { committedMbps: null, label: null, note: null, updatedAt: null }, "committedRate", failures),
+    safeQuery(listSchoolUplinkSamples(school.id, 500), [], "uplinkSamples", failures),
+    safeQuery(listSchoolUplinkDailyAvg(school.id, 30), [], "uplinkDailyAvg", failures),
     safeQuery(getSessionUser(), null, "sessionUser"),
   ]);
   const canEditRate = sessionUser?.role === "superadmin";
@@ -340,6 +359,19 @@ export default async function IperfPage({
         title="Speed & Bandwidth"
         description={`${schoolName} · internet speed tests + internal throughput`}
       />
+
+      {failures.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--warning)]" />
+          <span>
+            Some data couldn&apos;t be loaded:{" "}
+            <span className="font-medium">
+              {failures.map((f) => QUERY_LABELS[f] ?? f).join(", ")}
+            </span>
+            . Showing what&apos;s available — refresh to try again.
+          </span>
+        </div>
+      )}
 
       {/* --- At-a-glance scoreboard: internet + iperf side by side, WAN strip --- */}
       <SpeedScoreboard internet={internetCards} iperf={iperfCards} uplink={uplinkGlance} />
