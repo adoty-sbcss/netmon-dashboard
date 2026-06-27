@@ -689,6 +689,9 @@ export interface HostSighting {
   hostname: string | null;
   vendor: string | null;
   source: string | null;
+  /** PROV-5 Phase 3: the VLAN this sighting was on (null = untagged/uplink). Surfaces
+   *  a device seen on multiple VLANs (the same MAC dedups to one entity). */
+  vlanId: number | null;
 }
 
 export interface SnmpAttr {
@@ -802,6 +805,7 @@ export async function getHostDetail(
         hostname: devices.hostname,
         vendor: devices.vendor,
         source: devices.source,
+        vlanId: scanRuns.vlanId,
       })
       .from(devices)
       .innerJoin(scanRuns, eq(devices.scanRunId, scanRuns.id))

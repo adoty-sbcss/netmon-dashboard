@@ -28,6 +28,11 @@ export function DeviceSightings({ sightings }: { sightings: HostSighting[] }) {
   const count = sightings.length;
   const latest = sightings[0]?.startedAt ?? null;
   const sensorCount = new Set(sightings.map((s) => s.sensorSlug)).size;
+  // PROV-5 Phase 3: a device dedups to ONE entity by MAC, so multiple VLANs here mean
+  // it was seen across VLANs (multi-homed / spanning) — surface that in the summary.
+  const vlans = [...new Set(sightings.map((s) => s.vlanId).filter((v): v is number => v != null))].sort(
+    (a, b) => a - b,
+  );
 
   const summary =
     count === 0
@@ -36,6 +41,7 @@ export function DeviceSightings({ sightings }: { sightings: HostSighting[] }) {
           `${count} across all scans`,
           latest ? `latest ${relativeTime(latest)}` : null,
           sensorCount > 1 ? `${sensorCount} sensors` : null,
+          vlans.length ? `VLAN${vlans.length > 1 ? "s" : ""} ${vlans.join(", ")}` : null,
         ]
           .filter(Boolean)
           .join(" · ");
@@ -69,6 +75,7 @@ export function DeviceSightings({ sightings }: { sightings: HostSighting[] }) {
                   <TableHead>When</TableHead>
                   <TableHead>Sensor</TableHead>
                   <TableHead>IP</TableHead>
+                  <TableHead className="hidden sm:table-cell">VLAN</TableHead>
                   <TableHead className="hidden md:table-cell">Hostname</TableHead>
                   <TableHead className="hidden lg:table-cell">Source</TableHead>
                 </TableRow>
@@ -81,6 +88,9 @@ export function DeviceSightings({ sightings }: { sightings: HostSighting[] }) {
                     </TableCell>
                     <TableCell className="font-mono text-xs">{s.sensorSlug}</TableCell>
                     <TableCell className="font-mono tabular-nums">{s.ip ?? "—"}</TableCell>
+                    <TableCell className="hidden tabular-nums sm:table-cell">
+                      {s.vlanId != null ? s.vlanId : "—"}
+                    </TableCell>
                     <TableCell className="hidden md:table-cell">{s.hostname ?? "—"}</TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {s.source ? (

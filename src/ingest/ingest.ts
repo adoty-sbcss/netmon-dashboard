@@ -647,40 +647,88 @@ async function persistUplinkSamples(
   }
 }
 
-function buildLogicalGraph(scan: ScanData, sourceScanId: number | null) {
-  // Group host nodes into /24-ish subnets; attach the gateway. A first-cut
-  // logical view — VLAN-aware grouping is a later enhancement.
-  const topo = scan.topology;
+/** 802.1Q VLAN id from a sub-interface scan's interface name (eth0.400 -> 400); null
+ *  when not a VLAN sub-interface. The interface name authoritatively encodes the VLAN
+ *  (the collector names sub-interfaces <parent>.<vid>), so no separate field needed. */
+function vlanIdOf(iface: string | null): number | null {
+  const m = iface ? /\.(\d{1,4})$/.exec(iface) : null;
+  if (!m) return null;
+  const v = Number(m[1]);
+  return v >= 1 && v <= 4094 ? v : null;
+}
+
+/** Parent trunk NIC for a VLAN sub-interface scan (eth0.400 -> eth0); null when the
+ *  scan isn't a VLAN sub-interface. */
+function parentInterfaceOf(iface: string | null, vlanId: number | null): string | null {
+  if (vlanId == null || !iface) return null;
+  const m = /^(.+)\.\d+$/.exec(iface);
+  return m ? m[1] : null;
+}
+
+function buildLogicalGraph(scans: ScanData[], sourceScanId: number | null) {
+  // PROV-5 Phase 3 — VLAN-aware logical view. Each network becomes one node, grouped
+  // by its VLAN when the scan is tagged (so two VLANs that REUSE the same /24 stay
+  // distinct instead of conflating) and by /24 subnet otherwise; every network edges
+  // to its gateway. Built from ALL scans in the bundle so monitored VLANs appear, not
+  // just the primary uplink.
   const subnetOf = (ip?: string | null) => {
     if (!ip) return null;
     const m = ip.split("/")[0].match(/^(\d+)\.(\d+)\.(\d+)\./);
     return m ? `${m[1]}.${m[2]}.${m[3]}.0/24` : null;
   };
-  const counts = new Map<string, number>();
-  for (const n of topo?.nodes ?? []) {
-    if (n.type !== "host") continue;
-    const s = subnetOf(n.ip);
-    if (s) counts.set(s, (counts.get(s) ?? 0) + 1);
+  type Net = {
+    id: string;
+    type: string;
+    label: string;
+    vlan: number | null;
+    hostCount: number;
+    gatewayIp: string | null;
+  };
+  const netByKey = new Map<string, Net>();
+  const gateways = new Set<string>();
+  for (const scan of scans) {
+    const vlanId = vlanIdOf(str(scan.meta.interface));
+    const gw = str(scan.meta.gateway_ip);
+    if (gw) gateways.add(gw);
+    for (const n of scan.topology?.nodes ?? []) {
+      if (n.type !== "host") continue;
+      const hostSubnet = subnetOf(typeof n.ip === "string" ? n.ip : null);
+      const key = vlanId != null ? `vlan:${vlanId}` : hostSubnet ? `subnet:${hostSubnet}` : null;
+      if (!key) continue;
+      const net =
+        netByKey.get(key) ??
+        ({
+          id: key,
+          type: vlanId != null ? "vlan" : "subnet",
+          label:
+            vlanId != null ? `VLAN ${vlanId}${hostSubnet ? ` · ${hostSubnet}` : ""}` : hostSubnet!,
+          vlan: vlanId,
+          hostCount: 0,
+          gatewayIp: gw,
+        } satisfies Net);
+      net.hostCount++;
+      if (!net.gatewayIp && gw) net.gatewayIp = gw;
+      netByKey.set(key, net);
+    }
   }
-  const gatewayIp = str(scan.meta.gateway_ip);
   const nodes = [
-    ...(gatewayIp
-      ? [{ id: `gw:${gatewayIp}`, type: "gateway", label: `gateway ${gatewayIp}`, ip: gatewayIp }]
-      : []),
-    ...[...counts.entries()].map(([subnet, hostCount]) => ({
-      id: `subnet:${subnet}`,
-      type: "subnet",
-      label: subnet,
-      hostCount,
+    ...[...gateways].map((gw) => ({
+      id: `gw:${gw}`,
+      type: "gateway",
+      label: `gateway ${gw}`,
+      ip: gw,
+    })),
+    ...[...netByKey.values()].map((n) => ({
+      id: n.id,
+      type: n.type,
+      label: n.label,
+      vlan: n.vlan,
+      hostCount: n.hostCount,
     })),
   ];
-  const edges = gatewayIp
-    ? [...counts.keys()].map((subnet) => ({
-        source: `subnet:${subnet}`,
-        target: `gw:${gatewayIp}`,
-        kind: "routes_via",
-      }))
-    : [];
+  const edges = [...netByKey.values()]
+    .filter((n) => n.gatewayIp)
+    .map((n) => ({ source: n.id, target: `gw:${n.gatewayIp}`, kind: "routes_via" }));
   return { nodes, edges, sourceScanId };
 }
 
@@ -815,6 +863,11 @@ export async function ingestBundle(
           gatewayIp: str(scan.meta.gateway_ip),
           gatewayMac: str(scan.meta.gateway_mac),
           networkId: str(scan.meta.network_id),
+          vlanId: vlanIdOf(str(scan.meta.interface)),
+          parentInterface: parentInterfaceOf(
+            str(scan.meta.interface),
+            vlanIdOf(str(scan.meta.interface)),
+          ),
           durationSec: toNum(scan.meta.duration_sec),
           isPrimary: toBool(scan.meta.is_primary) ?? bundle.scans.length === 1,
           notes: str(scan.meta.notes),
@@ -1264,7 +1317,9 @@ export async function ingestBundle(
     });
     const snapshots = [
       { kind: "physical", graph: stampSeen(physicalGraph) },
-      { kind: "logical", graph: buildLogicalGraph(primary, srcScanId) },
+      // PROV-5 Phase 3: build the logical view from ALL scans (every monitored VLAN),
+      // not just the primary uplink, grouped VLAN-aware.
+      { kind: "logical", graph: buildLogicalGraph(bundle.scans, srcScanId) },
     ];
     // Inputs for the physical connect-and-anchor pass: the WAN gateway and each
     // infra IP's traceroute distance (lower hop = more upstream), used to anchor

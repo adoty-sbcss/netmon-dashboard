@@ -45,6 +45,12 @@ export const scanRuns = pgTable(
     gatewayIp: text("gateway_ip"),
     gatewayMac: text("gateway_mac"),
     networkId: text("network_id"),
+    // PROV-5 Phase 3: VLAN as a first-class dimension. The collector tags each scan
+    // with the 802.1Q VLAN it ran on (and the parent trunk NIC); carrying it here
+    // makes "which VLAN was this device seen on" queryable instead of parsing
+    // eth0.<id> from the interface name.
+    vlanId: integer("vlan_id"),
+    parentInterface: text("parent_interface"),
     durationSec: integer("duration_sec"),
     isPrimary: boolean("is_primary").notNull().default(false),
     notes: text("notes"),
@@ -56,6 +62,7 @@ export const scanRuns = pgTable(
   (t) => [
     index("idx_scan_runs_sensor").on(t.sensorId, t.startedAt),
     index("idx_scan_runs_started").on(t.startedAt),
+    index("idx_scan_runs_vlan").on(t.vlanId),
   ],
 );
 
