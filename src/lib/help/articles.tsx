@@ -783,12 +783,12 @@ const deploySensor: HelpArticle = {
   category: "Sensors",
   kind: "guide",
   keywords: ["deploy", "install", "new sensor", "provisioning", "place", "vlan", "trunk", "add sensor"],
-  updated: "2026-06-12",
+  updated: "2026-06-27",
   blocks: [
     { kind: "callout", tone: "info", text: <>Adding monitoring to a site is two parts: drop a small Linux box on the network, then run one installer.</> },
     { kind: "h", text: "1. Get the installer from the dashboard" },
     { kind: "steps", items: [
-      <>Open the school in the dashboard and click <strong>Deploy a sensor here</strong>.</>,
+      <>Open the school in the dashboard, go to the <strong>Sensors</strong> tab, and click <strong>Deploy a sensor here</strong>.</>,
       <>It generates a provisioning file (dashboard URL + enrollment key + your district&apos;s upload creds) and the exact commands.</>,
     ]},
     { kind: "h", text: "2. Run it on the box" },

@@ -9,6 +9,7 @@ import {
   HardDrive,
   LayoutDashboard,
   Map as MapIcon,
+  Radio,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
@@ -30,6 +31,7 @@ const TABS: { label: string; seg: string; icon: LucideIcon }[] = [
   { label: "DHCP", seg: "dhcp", icon: HardDrive },
   { label: "DNS", seg: "dns", icon: Globe },
   { label: "Speed & Bandwidth", seg: "iperf", icon: Gauge },
+  { label: "Sensors", seg: "sensors", icon: Radio },
   { label: "AI analysis", seg: "ai", icon: Sparkles },
 ];
 

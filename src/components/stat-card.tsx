@@ -3,12 +3,14 @@ import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { InfoTip } from "@/components/info-tip";
 
 export function StatCard({
   label,
   value,
   icon: Icon,
   hint,
+  info,
   tone = "default",
   className,
   href,
@@ -17,6 +19,9 @@ export function StatCard({
   value: React.ReactNode;
   icon?: LucideIcon;
   hint?: string;
+  /** Optional "what's this?" tooltip beside the label. Only shown on non-linked
+   *  cards — a tooltip button can't legally nest inside the card's link. */
+  info?: React.ReactNode;
   tone?: "default" | "success" | "warning" | "destructive" | "info";
   className?: string;
   /** When set, the whole card becomes a link. */
@@ -58,7 +63,10 @@ export function StatCard({
     >
       <CardContent className="flex items-start justify-between gap-3 p-4 md:p-5">
         <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">{label}</p>
+          <p className="flex items-center gap-1 text-sm text-muted-foreground">
+            {label}
+            {info != null && !href && <InfoTip content={info} />}
+          </p>
           <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight">
             {value}
           </p>

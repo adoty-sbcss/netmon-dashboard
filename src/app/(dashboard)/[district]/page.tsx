@@ -113,6 +113,9 @@ export default async function DistrictPage({
               <p className="max-w-sm text-sm text-muted-foreground">
                 Schools appear here once a sensor at this district reports a scan.
               </p>
+              <Button asChild variant="outline">
+                <Link href="/help/deploy-a-sensor">How to deploy a sensor</Link>
+              </Button>
             </CardContent>
           </Card>
         ) : (

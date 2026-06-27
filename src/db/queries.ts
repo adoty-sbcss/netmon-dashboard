@@ -374,6 +374,7 @@ export interface SchoolStats {
   dnsCount: number;
   findingCount: number;
   lastScanAt: Date | null;
+  sensorCount: number;
 }
 
 /** Aggregate stats across the school's most-recent scan per sensor is heavy;
@@ -401,6 +402,7 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     [dns],
     [find],
     [last],
+    [sen],
   ] = await Promise.all([
     db
       .select({ c: count() })
@@ -429,6 +431,10 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
       .from(scanRuns)
       .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
       .where(eq(sensors.schoolId, schoolId)),
+    db
+      .select({ c: count() })
+      .from(sensors)
+      .where(eq(sensors.schoolId, schoolId)),
   ]);
 
   return {
@@ -440,6 +446,7 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     dnsCount: dns?.c ?? 0,
     findingCount: find?.c ?? 0,
     lastScanAt: last?.last ?? null,
+    sensorCount: sen?.c ?? 0,
   };
 }
 

@@ -14,6 +14,8 @@ import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { TopologyAiPanel } from "@/components/topology/topology-ai-panel";
 import { MapHub } from "./map-hub";
+import { InfoTip } from "@/components/info-tip";
+import { GLOSSARY } from "@/lib/glossary";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +57,14 @@ export default async function MapPage({
       <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
       <PageHeader
         title="Network map"
-        description={`${district.name} · physical topology (LLDP/CDP backbone + bridge-table device attachment)`}
+        description={
+          <>
+            {district.name} · physical topology (
+            <InfoTip content={GLOSSARY.lldpCdp}>LLDP/CDP</InfoTip> backbone +{" "}
+            <InfoTip content={GLOSSARY.bridgeTable}>bridge-table</InfoTip> device
+            attachment)
+          </>
+        }
       />
 
       <MapHub

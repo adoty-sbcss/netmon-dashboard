@@ -19,6 +19,7 @@ import { titleizeSlug } from "@/lib/format";
 import { SchoolTabs } from "@/components/school-tabs";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/stat-card";
+import { GLOSSARY } from "@/lib/glossary";
 import { SnmpGapCard } from "./inventory-snmp-gap";
 import { DevicesHub, type NeighborLink } from "./devices-hub";
 
@@ -106,8 +107,8 @@ export default async function DevicesPage({
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard label="Devices" value={String(inv.total)} icon={Boxes} hint={`${inv.discovered} discovered · ${inv.manual} manual`} />
         <StatCard label="Online" value={String(inv.online)} icon={Wifi} />
-        <StatCard label="Answering SNMP" value={String(inv.snmpResponding)} icon={Radio} tone="success" />
-        <StatCard label="SNMP gaps" value={String(inv.snmpGaps)} icon={WifiOff} tone={inv.snmpGaps > 0 ? "warning" : "success"} />
+        <StatCard label="Answering SNMP" value={String(inv.snmpResponding)} icon={Radio} tone="success" info={GLOSSARY.snmp} />
+        <StatCard label="SNMP gaps" value={String(inv.snmpGaps)} icon={WifiOff} tone={inv.snmpGaps > 0 ? "warning" : "success"} info={GLOSSARY.snmpGap} />
       </div>
 
       <SnmpGapCard schoolId={school.id} basePath={basePath} gaps={gaps} isAdmin={isAdmin} />
