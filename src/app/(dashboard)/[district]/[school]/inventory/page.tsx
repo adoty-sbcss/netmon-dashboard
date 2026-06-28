@@ -105,7 +105,7 @@ export default async function DevicesPage({
       />
 
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
-        <StatCard label="Devices" value={String(inv.total)} icon={Boxes} hint={`${inv.discovered} discovered · ${inv.manual} manual`} />
+        <StatCard label="Devices" value={String(inv.total - inv.archived)} icon={Boxes} hint={`${inv.discovered} discovered · ${inv.manual} manual${inv.archived ? ` · ${inv.archived} archived` : ""}`} />
         <StatCard label="Online" value={String(inv.online)} icon={Wifi} />
         <StatCard label="Answering SNMP" value={String(inv.snmpResponding)} icon={Radio} tone="success" info={GLOSSARY.snmp} />
         <StatCard label="SNMP gaps" value={String(inv.snmpGaps)} icon={WifiOff} tone={inv.snmpGaps > 0 ? "warning" : "success"} info={GLOSSARY.snmpGap} />

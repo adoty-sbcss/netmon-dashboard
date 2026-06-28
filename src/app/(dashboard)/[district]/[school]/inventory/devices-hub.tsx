@@ -56,7 +56,7 @@ export interface NeighborLink {
   entityId: number | null;
 }
 
-type Tab = "devices" | "links" | "reach" | "excluded";
+type Tab = "devices" | "archived" | "links" | "reach" | "excluded";
 type Category = "all" | "infra" | "endpoints";
 type SourceFilter = "all" | "discovered" | "manual";
 type SnmpFilter = "all" | "ok" | "gap";
@@ -324,7 +324,9 @@ export function DevicesHub({
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     const colKeys = Object.keys(colFilters) as ColKey[];
-    const out = rows.filter((r) => {
+    // The Archived tab reuses this whole table — just swap the base row set.
+    const base = tab === "archived" ? rows.filter((r) => r.archived) : rows.filter((r) => !r.archived);
+    const out = base.filter((r) => {
       const isInfra = r.isSwitch || INFRA.has(r.deviceType ?? "");
       if (category === "infra" && !isInfra) return false;
       if (category === "endpoints" && isInfra) return false;
@@ -358,9 +360,11 @@ export function DevicesHub({
       });
     }
     return out;
-  }, [rows, category, source, snmp, review, q, colFilters, sort]);
+  }, [rows, tab, category, source, snmp, review, q, colFilters, sort]);
 
-  const reviewCount = useMemo(() => rows.filter(needsReview).length, [rows]);
+  const reviewCount = useMemo(() => rows.filter((r) => !r.archived && needsReview(r)).length, [rows]);
+  const activeCount = useMemo(() => rows.filter((r) => !r.archived).length, [rows]);
+  const archivedCount = useMemo(() => rows.filter((r) => r.archived).length, [rows]);
 
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.key)), [rows, selected]);
   const selectedItems = selectedRows.map((r) => ({ key: r.key, registryId: r.registryId }));
@@ -389,7 +393,8 @@ export function DevicesHub({
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-lg border text-sm">
           {([
-            ["devices", "Devices"],
+            ["devices", `Devices (${activeCount})`],
+            ["archived", archivedCount ? `Archived (${archivedCount})` : "Archived"],
             ["links", "Links (LLDP)"],
             ["reach", "Reachability"],
             ...(isAdmin
@@ -470,8 +475,14 @@ export function DevicesHub({
         );
       })()}
 
-      {tab === "devices" && (
+      {(tab === "devices" || tab === "archived") && (
         <>
+          {tab === "archived" && (
+            <p className="text-sm text-muted-foreground">
+              Discovered devices not seen in 15+ days — out of the way, but searchable here.
+              They return to the active list automatically when seen again; register one to keep it visible.
+            </p>
+          )}
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex overflow-hidden rounded-lg border text-sm">
@@ -650,6 +661,18 @@ export function DevicesHub({
                     </TableRow>
                   );
                 })}
+                {filtered.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={8 + (isAdmin ? 2 : 0)}
+                      className="py-10 text-center text-sm text-muted-foreground"
+                    >
+                      {tab === "archived"
+                        ? "Nothing archived — every discovered device has been seen in the last 15 days."
+                        : "No devices match the current filters."}
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </div>

@@ -44,6 +44,9 @@ export interface InventoryRow {
   online: boolean | null;
   reachable: boolean | null;
   snmp: SnmpStatus;
+  /** Purely-discovered endpoint not seen in STALE_WINDOW — hidden from the active
+   *  list (shown in the Archived tab). Never true for infra / registered devices. */
+  archived: boolean;
 }
 
 export interface InventorySummary {
@@ -55,6 +58,8 @@ export interface InventorySummary {
   manual: number;
   /** Auto-classified rows below the confidence threshold that aren't human-confirmed. */
   needsReview: number;
+  /** Discovered endpoints auto-archived for going unseen past STALE_WINDOW. */
+  archived: number;
   rows: InventoryRow[];
 }
 
@@ -64,6 +69,14 @@ const ONLINE_WINDOW_MS = 25 * 60 * 60 * 1000; // ~last day of hourly scans
 
 function recent(d: Date | null): boolean {
   return d != null && Date.now() - new Date(d).getTime() < ONLINE_WINDOW_MS;
+}
+
+/** A purely-discovered ENDPOINT unseen this long is auto-archived out of the
+ *  active inventory (read-time + self-healing — it returns the moment it's seen
+ *  again). Infrastructure + registered/manual devices are never archived. */
+const STALE_WINDOW_MS = 15 * 24 * 60 * 60 * 1000;
+function isStale(d: Date | null): boolean {
+  return d == null || Date.now() - new Date(d).getTime() > STALE_WINDOW_MS;
 }
 
 function attrStr(attributes: unknown, key: string): string | null {
@@ -181,6 +194,7 @@ export async function getInventoryForSchool(
       online,
       reachable,
       snmp,
+      archived: false, // infrastructure is never archived
     });
   }
 
@@ -196,6 +210,9 @@ export async function getInventoryForSchool(
     const expected = ["switch", "router", "ap", "firewall"].includes(dtype ?? "");
     const { snmp, reachable } = snmpStatus({ ip: h.ip, expected });
     const online = reachable ?? recent(h.lastSeenAt);
+    // Auto-archive purely-discovered endpoints (not infra, not registered) gone
+    // unseen past the stale window and not reachable right now.
+    const archived = !reg && !expected && !online && isStale(h.lastSeenAt);
     rows.push({
       key: `host:${h.id}`,
       name: reg?.name || h.hostname || h.ip || h.mac,
@@ -218,6 +235,7 @@ export async function getInventoryForSchool(
       online,
       reachable,
       snmp,
+      archived,
     });
   }
 
@@ -248,6 +266,7 @@ export async function getInventoryForSchool(
       online: reachable,
       reachable,
       snmp,
+      archived: false, // registered/manual devices are never archived
     });
   }
 
@@ -263,8 +282,9 @@ export async function getInventoryForSchool(
     discovered: rows.filter((r) => r.source !== "manual").length,
     manual: rows.filter((r) => r.source === "manual").length,
     needsReview: rows.filter(
-      (r) => !r.confirmed && r.confidence != null && r.confidence < CLASSIFY_REVIEW_THRESHOLD,
+      (r) => !r.archived && !r.confirmed && r.confidence != null && r.confidence < CLASSIFY_REVIEW_THRESHOLD,
     ).length,
+    archived: rows.filter((r) => r.archived).length,
     rows,
   };
 }
