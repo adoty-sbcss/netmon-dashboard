@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { Activity, AlertTriangle, Gauge, Globe, History, Network, Radio, ServerCog } from "lucide-react";
 
-import { getDistrictBySlug, getSchoolBySlug } from "@/db/queries";
+import { getDistrictBySlug, getSchoolBySlug, listSensorsForSchool } from "@/db/queries";
 import {
   getDistrictIperf,
   getSchoolCommittedRate,
@@ -32,6 +32,7 @@ import {
 import { IperfChart } from "./iperf-chart-dynamic";
 import { CommittedRateForm } from "./committed-rate-form";
 import { SpeedScoreboard } from "./speed-scoreboard";
+import { IperfQuickActions } from "./quick-actions";
 import { CollapsibleRuns } from "./collapsible-runs";
 import { buildInternetCards, buildIperfCards } from "./summary";
 import type { UplinkGlanceProps } from "./uplink-glance";
@@ -158,6 +159,7 @@ export default async function IperfPage({
     uplinkRows,
     uplinkDaily,
     sessionUser,
+    sensorList,
   ] = await Promise.all([
     safeQuery(getDistrictIperf(district.id), { serverHost: "", serverPort: 5201, enabled: false }, "districtIperf", failures),
     safeQuery(listSchoolIperfResults(school.id, 300), [], "iperfResults", failures),
@@ -167,6 +169,7 @@ export default async function IperfPage({
     safeQuery(listSchoolUplinkSamples(school.id, 500), [], "uplinkSamples", failures),
     safeQuery(listSchoolUplinkDailyAvg(school.id, 30), [], "uplinkDailyAvg", failures),
     safeQuery(getSessionUser(), null, "sessionUser"),
+    safeQuery(listSensorsForSchool(school.id), [], "sensors"),
   ]);
   const canEditRate = sessionUser?.role === "superadmin";
 
@@ -371,6 +374,13 @@ export default async function IperfPage({
             . Showing what&apos;s available — refresh to try again.
           </span>
         </div>
+      )}
+
+      {canEditRate && sensorList.length > 0 && (
+        <IperfQuickActions
+          schoolPath={`/${district.slug}/${school.slug}`}
+          sensors={sensorList.map((s) => ({ id: s.id, name: s.name || titleizeSlug(s.slug) }))}
+        />
       )}
 
       {/* --- At-a-glance scoreboard: internet + iperf side by side, WAN strip --- */}

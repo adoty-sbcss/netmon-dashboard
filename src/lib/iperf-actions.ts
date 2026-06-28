@@ -196,9 +196,25 @@ export async function saveIperfScheduleAction(
   if (enabled && !iperf.serverHost) {
     return { error: "Set the district iperf server first (district Settings)." };
   }
-  const schedules = parseSchedules(String(formData.get("schedules") ?? "[]"));
+  const rawSchedules = String(formData.get("schedules") ?? "[]");
+  const schedules = parseSchedules(rawSchedules);
+  // How many rows the editor sent vs. how many survived parsing — so we can tell
+  // the user when incomplete rows were dropped instead of silently losing them.
+  let inputCount = 0;
+  try {
+    const parsed = JSON.parse(rawSchedules);
+    if (Array.isArray(parsed)) inputCount = parsed.length;
+  } catch {
+    /* parseSchedules already coerced bad JSON to [] */
+  }
+  const dropped = Math.max(0, inputCount - schedules.length);
   if (enabled && schedules.length === 0) {
-    return { error: "Add at least one schedule (a protocol/direction with a time and day)." };
+    return {
+      error:
+        dropped > 0
+          ? `${dropped} schedule row${dropped === 1 ? "" : "s"} skipped — each row needs at least one time AND one day. Fix or remove ${dropped === 1 ? "it" : "them"}, then save.`
+          : "Add at least one schedule (a protocol/direction with a time and day).",
+    };
   }
 
   const iperfCfg = {
@@ -242,8 +258,22 @@ export async function saveIperfScheduleAction(
   });
   revalidatePath(String(formData.get("basePath") ?? "/"));
   const count = schedules.length;
-  return {
-    ok: true,
-    message: `iperf schedule saved (config v${nextVersion}) — ${count} schedule${count === 1 ? "" : "s"}, applies on next check-in.`,
-  };
+  const parts: string[] = [];
+  if (count > 0 && !enabled) {
+    // The save succeeded, but the collector won't evaluate schedules while
+    // iperf is disabled — surface that instead of a misleading "saved".
+    parts.push(
+      `Saved ${count} schedule${count === 1 ? "" : "s"}, but "Run on a schedule" is OFF — they won't run until you turn it on.`,
+    );
+  } else {
+    parts.push(
+      `iperf schedule saved (config v${nextVersion}) — ${count} schedule${count === 1 ? "" : "s"}, applies on next check-in.`,
+    );
+  }
+  if (dropped > 0) {
+    parts.push(
+      `${dropped} incomplete row${dropped === 1 ? "" : "s"} skipped (each needs a time and a day).`,
+    );
+  }
+  return { ok: true, message: parts.join(" ") };
 }
