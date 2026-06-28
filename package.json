@@ -24,7 +24,8 @@
     "maintenance": "tsx src/jobs/maintenance.ts",
     "ai:analyze": "tsx --conditions=react-server src/ai/run.ts",
     "oui:refresh": "tsx src/lib/oui/refresh-oui.ts",
-    "topology:check": "tsx src/lib/topology/graph.validate.ts"
+    "topology:check": "tsx src/lib/topology/graph.validate.ts",
+    "console:check": "tsx src/lib/admin/console-allowlist.validate.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

@@ -1,0 +1,43 @@
+name: CI
+
+# Lightweight pre-merge checks. Deliberately SEPARATE from deploy.yml (which runs
+# only on push-to-main and goes straight to `az acr build`/roll) so these gate PRs
+# without touching the deploy pipeline. No DB, no browser — just the standalone
+# tsx validation harnesses that already live in the repo.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-progress run if the same ref gets a newer push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Validation harnesses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Remote-console allow-list drift check
+        # Asserts the broker's relay allow-list (broker/index.js ALLOWED_CMDS)
+        # exactly equals the command set the UI offers (console-config.ts). If they
+        # drift, a command the dashboard offers is silently rejected at the broker.
+        # Both mirror the sensor registries (net_mon checkin.py, the source of truth).
+        run: npm run console:check
+
+      - name: Physical-topology graph pipeline check
+        # Existing deterministic harness (graph.validate.ts) that previously ran in
+        # no workflow — fold it in here so the topology redesign stays regression-free.
+        run: npm run topology:check
