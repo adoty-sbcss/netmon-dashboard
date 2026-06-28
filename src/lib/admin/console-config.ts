@@ -134,3 +134,14 @@ export const CONSOLE_TTL_MS = 30 * 60 * 1000;
  * defense-in-depth. Keep these two in sync.
  */
 export const CONSOLE_ABS_MAX_MS = 60 * 60 * 1000;
+
+/**
+ * FULL-shell step-up (CON-7). Opening an unrestricted PTY removes the fixed-argv
+ * allow-list containment, so the superadmin must first verify a one-time numeric
+ * code emailed to them. The code is NUMERIC and the email carries NO link — a
+ * plain code slips past the M365/Defender quarantine that blocked link-bearing
+ * ACS mail (registry CON-10). Short-lived, single-use, attempt-capped.
+ */
+export const STEPUP_CODE_LENGTH = 6;
+export const STEPUP_CODE_TTL_MS = 10 * 60 * 1000; // code valid for 10 minutes
+export const STEPUP_MAX_ATTEMPTS = 5; // wrong guesses before the challenge is burned

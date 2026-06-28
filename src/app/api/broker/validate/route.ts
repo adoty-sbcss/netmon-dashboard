@@ -16,7 +16,10 @@ export const dynamic = "force-dynamic";
  * itself (matched against the stored sha256 hash); no other auth.
  *
  *   POST /api/broker/validate  { token, role: "operator"|"sensor", sid }
- *   -> { ok, sid, sensorId, expiresAt(ms), recordKey } | { ok: false }
+ *   -> { ok, sid, sensorId, expiresAt(ms), recordKey, mode } | { ok: false }
+ *
+ * `mode` ('restricted'|'full') tells the broker whether to relay the fixed-argv
+ * command allow-list (restricted) or the interactive PTY frames (full, CON-7).
  */
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
@@ -63,5 +66,7 @@ export async function POST(req: NextRequest) {
     sensorId: s.sensorId,
     expiresAt: expiresAtMs,
     recordKey: s.recordKey,
+    // 'full' only for a step-up-verified session; the broker gates PTY relay on this.
+    mode: s.mode === "full" ? "full" : "restricted",
   });
 }

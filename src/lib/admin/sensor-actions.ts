@@ -5,10 +5,10 @@
  * only queue desired state / commands; the sensor applies them on its next
  * check-in. Every action is audit-logged.
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { sensors, schools, auditLog, releaseSettings } from "@/db/schema/app";
@@ -17,14 +17,23 @@ import {
   commandQueue,
   sensorEnrollments,
   shellSessions,
+  consoleStepupChallenges,
 } from "@/db/schema/management";
 import { headers } from "next/headers";
 
 import { getSessionUser } from "@/lib/auth/current-user";
 import { hashToken } from "@/lib/sensor/auth";
-import { BROKER_WSS_URL, CONSOLE_TTL_MS, CONSOLE_ABS_MAX_MS } from "@/lib/admin/console-config";
+import {
+  BROKER_WSS_URL,
+  CONSOLE_TTL_MS,
+  CONSOLE_ABS_MAX_MS,
+  STEPUP_CODE_LENGTH,
+  STEPUP_CODE_TTL_MS,
+  STEPUP_MAX_ATTEMPTS,
+} from "@/lib/admin/console-config";
 import { clientIp } from "@/lib/security/rate-limit";
 import { recordSecurityEvent } from "@/lib/security/events";
+import { sendEmail } from "@/lib/email";
 
 export interface SensorActionState {
   error?: string;
@@ -41,6 +50,12 @@ export interface SensorActionState {
   };
   /** Set by extendConsoleSessionAction — the new time-box (ms epoch). */
   extendedExpiresAt?: number;
+  /** Set by requestFullShellStepUpAction — the pending step-up challenge (CON-7). */
+  stepUp?: {
+    challengeId: string;
+    /** Masked address the one-time code was emailed to. */
+    sentTo: string;
+  };
 }
 
 const SAFE_COMMANDS = new Set([
@@ -954,4 +969,218 @@ export async function killConsoleSessionAction(
   );
   revalidatePath(basePathFor(formData));
   return { ok: true, message: "Session killed." };
+}
+
+/** Mask an email for display in the UI (j***n@sbcss.net). */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "your email";
+  const head = local.length <= 2 ? local[0] ?? "" : `${local[0]}***${local[local.length - 1]}`;
+  return `${head}@${domain}`;
+}
+
+/**
+ * Step 1 of opening a FULL (unrestricted PTY) console session (CON-7): mint a
+ * one-time numeric code, email it to the requesting superadmin (NO link — a plain
+ * code slips past the Defender quarantine that blocked link-bearing ACS mail,
+ * registry CON-10), and store its hash as a short-lived single-use challenge.
+ * Opening a full shell removes the fixed-argv allow-list containment, so this
+ * step-up is the control that replaces it. Superadmin-only, audited, mirrored to
+ * the security feed. Returns the challengeId the browser submits with the code.
+ */
+export async function requestFullShellStepUpAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sensorId = Number(formData.get("sensorId"));
+  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+
+  // 6-digit, uniformly random, zero-padded. hashToken = sha256 hex; the plaintext
+  // code lives ONLY in the email.
+  const code = String(randomInt(0, 10 ** STEPUP_CODE_LENGTH)).padStart(STEPUP_CODE_LENGTH, "0");
+  const challengeId = randomBytes(16).toString("hex");
+  const expiresAt = new Date(Date.now() + STEPUP_CODE_TTL_MS);
+
+  await db.insert(consoleStepupChallenges).values({
+    id: challengeId,
+    userId: admin.id,
+    userEmail: admin.email,
+    sensorId,
+    codeHash: hashToken(code),
+    expiresAt,
+  });
+
+  const minutes = Math.round(STEPUP_CODE_TTL_MS / 60000);
+  const send = await sendEmail({
+    to: [admin.email],
+    subject: `NetMon full-shell access code: ${code}`,
+    text:
+      `Your one-time code to open a FULL (unrestricted) console shell on sensor #${sensorId} is:\n\n` +
+      `    ${code}\n\n` +
+      `It expires in ${minutes} minutes and can be used once. Enter it on the sensor page to ` +
+      `open the session.\n\nIf you did NOT request full-shell console access, ignore this email ` +
+      `and notify your administrator — someone may be attempting privileged access.`,
+    html:
+      `<p>Your one-time code to open a <strong>FULL (unrestricted) console shell</strong> on ` +
+      `sensor #${sensorId} is:</p>` +
+      `<p style="font-size:24px;font-weight:bold;letter-spacing:3px">${code}</p>` +
+      `<p>It expires in ${minutes} minutes and can be used once.</p>` +
+      `<p style="color:#b91c1c">If you did NOT request full-shell console access, ignore this ` +
+      `email and notify your administrator — someone may be attempting privileged access.</p>`,
+    tag: "alert",
+  });
+
+  await audit(admin.email, "full_console_stepup_requested", {
+    sensorId,
+    challengeId,
+    emailProvider: send.provider,
+  });
+  await adminEvent(
+    admin.email,
+    "full_console_stepup_requested",
+    { sensorId, challengeId, emailProvider: send.provider },
+    "medium",
+    `sensor:${sensorId}`,
+  );
+
+  if (!send.ok) {
+    return {
+      error:
+        "Could not send the verification code email. Check ACS email configuration and try again.",
+    };
+  }
+
+  return {
+    ok: true,
+    message: `A one-time code was emailed to ${maskEmail(admin.email)}. It expires in ${minutes} minutes.`,
+    stepUp: { challengeId, sentTo: maskEmail(admin.email) },
+  };
+}
+
+/**
+ * Step 2 of CON-7: verify the emailed one-time code, then mint a FULL-shell
+ * console session. Mirrors openConsoleSessionAction but sets mode='full' on the
+ * session row and mode='full' in the open-console args so BOTH the broker (relays
+ * PTY frames) and the sensor (spawns the PTY) independently enter full-shell mode.
+ * The session is otherwise identical — same 30m/60m time-box, same recordKey, and
+ * the broker records the whole session into the transcript. Superadmin-only.
+ */
+export async function openFullShellSessionAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+  const sensorId = Number(formData.get("sensorId"));
+  const challengeId = String(formData.get("challengeId") ?? "").trim();
+  const code = String(formData.get("code") ?? "").trim();
+  if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
+  if (!challengeId) return { error: "Missing verification challenge. Request a new code." };
+  if (!new RegExp(`^\\d{${STEPUP_CODE_LENGTH}}$`).test(code)) {
+    return { error: `Enter the ${STEPUP_CODE_LENGTH}-digit code from your email.` };
+  }
+
+  const [ch] = await db
+    .select()
+    .from(consoleStepupChallenges)
+    .where(eq(consoleStepupChallenges.id, challengeId))
+    .limit(1);
+  // Bind the challenge to the requesting user + sensor; reject reuse / expiry.
+  if (!ch || ch.userId !== admin.id || ch.sensorId !== sensorId) {
+    return { error: "Verification challenge not found. Request a new code." };
+  }
+  if (ch.consumedAt) return { error: "That code was already used. Request a new one." };
+  if (ch.expiresAt.getTime() <= Date.now()) return { error: "That code expired. Request a new one." };
+  if (ch.attempts >= STEPUP_MAX_ATTEMPTS) {
+    return { error: "Too many incorrect attempts. Request a new code." };
+  }
+
+  // Constant-time compare of the sha256 hex digests (equal length by construction).
+  const submitted = Buffer.from(hashToken(code), "hex");
+  const expected = Buffer.from(ch.codeHash, "hex");
+  const matches = submitted.length === expected.length && timingSafeEqual(submitted, expected);
+  if (!matches) {
+    await db
+      .update(consoleStepupChallenges)
+      .set({ attempts: ch.attempts + 1 })
+      .where(eq(consoleStepupChallenges.id, challengeId));
+    await adminEvent(
+      admin.email,
+      "full_console_stepup_failed",
+      { sensorId, challengeId, attempt: ch.attempts + 1 },
+      "medium",
+      `sensor:${sensorId}`,
+    );
+    const left = STEPUP_MAX_ATTEMPTS - (ch.attempts + 1);
+    return {
+      error:
+        left > 0
+          ? `Incorrect code. ${left} attempt${left === 1 ? "" : "s"} left.`
+          : "Incorrect code. The challenge is now locked — request a new code.",
+    };
+  }
+
+  // Burn the challenge so the same code can't open a second session.
+  await db
+    .update(consoleStepupChallenges)
+    .set({ consumedAt: new Date() })
+    .where(eq(consoleStepupChallenges.id, challengeId));
+
+  const sid = randomBytes(16).toString("hex");
+  const operatorToken = randomBytes(32).toString("hex");
+  const sensorToken = randomBytes(32).toString("hex");
+  const recordKey = randomBytes(24).toString("hex");
+  const expiresAt = new Date(Date.now() + CONSOLE_TTL_MS);
+
+  const [cmd] = await db
+    .insert(commandQueue)
+    .values({
+      sensorId,
+      command: "open-console",
+      // mode:'full' => the sensor passes --mode full to console-session => PTY.
+      args: { sid, broker: BROKER_WSS_URL, token: sensorToken, expiresAt: expiresAt.getTime(), mode: "full" },
+      status: "approved",
+      requiresApproval: false,
+      approvedBy: admin.id,
+      approvedAt: new Date(),
+      createdBy: admin.id,
+    })
+    .returning({ id: commandQueue.id });
+
+  await db.insert(shellSessions).values({
+    id: sid,
+    sensorId,
+    status: "pending",
+    mode: "full",
+    operatorTokenHash: hashToken(operatorToken),
+    sensorTokenHash: hashToken(sensorToken),
+    recordKey,
+    commandId: cmd?.id ?? null,
+    openedBy: admin.id,
+    openedByEmail: admin.email,
+    expiresAt,
+  });
+
+  await audit(admin.email, "full_console_session_opened", { sensorId, sid, challengeId });
+  await adminEvent(
+    admin.email,
+    "full_console_session_opened",
+    { sensorId, sid },
+    "medium",
+    `sensor:${sensorId}`,
+  );
+  revalidatePath(basePathFor(formData));
+
+  return {
+    ok: true,
+    message: "Full-shell session opening — the box dials in on its next check-in.",
+    session: {
+      sid,
+      operatorToken,
+      broker: BROKER_WSS_URL,
+      expiresAt: expiresAt.getTime(),
+    },
+  };
 }

@@ -22,6 +22,7 @@ import {
 import { HOST_ACTION_COMMANDS } from "@/lib/admin/console-config";
 import type { SensorManagement } from "@/db/queries";
 import { RemoteConsoleLive } from "./console-live";
+import { FullShellConsole } from "./console-shell";
 import { dateTime, relativeTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -285,6 +286,15 @@ export function SensorManagementPanel({
           <div className="flex flex-col gap-2">
             <p className="text-xs font-medium text-muted-foreground">Live session</p>
             <RemoteConsoleLive sensorId={sensorId} basePath={basePath} />
+          </div>
+
+          {/* Full (unrestricted) shell — CON-7. Drops the allow-list; gated behind
+              an emailed one-time-code step-up and fully transcript-recorded. */}
+          <div className="flex flex-col gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Full shell (unrestricted · step-up)
+            </p>
+            <FullShellConsole sensorId={sensorId} basePath={basePath} />
           </div>
 
           <div className="border-t" />

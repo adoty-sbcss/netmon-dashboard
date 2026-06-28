@@ -184,6 +184,16 @@ export const shellSessions = pgTable(
       .notNull()
       .references(() => sensors.id, { onDelete: "cascade" }),
     status: shellSessionStatus("status").notNull().default("pending"),
+    /**
+     * 'restricted' (default) = allow-listed fixed-argv commands only (the safe
+     * posture for every session). 'full' = unrestricted interactive PTY (CON-7),
+     * minted ONLY after an email one-time-code step-up. The broker reads this from
+     * /api/broker/validate and only relays PTY frames for 'full'; the sensor
+     * independently re-gates (open-console must carry mode=full). Removing the
+     * allow-list containment is exactly why 'full' requires the step-up + is fully
+     * transcript-recorded.
+     */
+    mode: text("mode").notNull().default("restricted"),
     /** sha256(plaintext); plaintext lives only in the browser / the sensor command args. */
     operatorTokenHash: text("operator_token_hash").notNull(),
     sensorTokenHash: text("sensor_token_hash").notNull(),
@@ -212,6 +222,39 @@ export const shellSessions = pgTable(
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },
   (t) => [index("idx_shell_sessions_sensor").on(t.sensorId, t.createdAt)],
+);
+
+/**
+ * Step-up verification challenge for opening a FULL-shell (unrestricted PTY)
+ * console session (CON-7). Opening a full shell removes the fixed-argv allow-list
+ * containment, so it requires a fresh one-time numeric code emailed to the
+ * superadmin (no link — a numeric code slips past the M365/Defender quarantine
+ * that blocked link-bearing ACS mail; see registry CON-10). The plaintext code
+ * lives ONLY in the email; we store its sha256. A challenge is single-use
+ * (consumedAt), short-lived (expiresAt), bound to the requesting user + sensor,
+ * and capped at a few wrong attempts before it's burned.
+ */
+export const consoleStepupChallenges = pgTable(
+  "console_stepup_challenges",
+  {
+    /** Random hex id handed to the browser; not a secret on its own. */
+    id: text("id").primaryKey(),
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
+    /** Who requested it (audit; the code is mailed here). */
+    userEmail: text("user_email").notNull(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    /** sha256 of the 6-digit code; plaintext lives only in the email. */
+    codeHash: text("code_hash").notNull(),
+    /** Wrong-guess counter; the challenge is burned past the cap. */
+    attempts: integer("attempts").notNull().default(0),
+    /** Set once the code is accepted; a consumed challenge can't be reused. */
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("idx_console_stepup_user").on(t.userId, t.createdAt)],
 );
 
 /**

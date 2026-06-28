@@ -17,9 +17,17 @@
 // operator->sensor frames of the form {type:"cmd", id:"diag-*"} (id in the
 // allow-list) are forwarded; the sensor independently re-validates.
 //
+// FULL-SHELL posture (CON-7): a session the dashboard minted in mode="full"
+// (after an email one-time-code step-up) instead relays the interactive PTY
+// frames {type:"i"|"resize"} operator->sensor — the fixed-argv allow-list does
+// NOT apply to those sessions. The mode is authoritative from the dashboard's
+// /validate response; the sensor independently re-gates (it only spawns a PTY
+// when its open-console command carried mode=shell). Restricted sessions are
+// byte-identical to before. Every frame still rides the transcript recorder.
+//
 // Endpoints it CALLS on the dashboard (authenticated by the per-session
 // recordKey the dashboard hands back from /validate):
-//   POST /api/broker/validate    {token, role, sid}    -> {ok, sid, sensorId, expiresAt, recordKey}
+//   POST /api/broker/validate    {token, role, sid}    -> {ok, sid, sensorId, expiresAt, recordKey, mode}
 //   GET  /api/broker/alive?sid=  (header x-record-key)  -> {alive: bool}
 //   POST /api/broker/transcript  {sid, events, closed}  (header x-record-key)
 //
@@ -86,6 +94,7 @@ function getSession(sid) {
       sid,
       sensorId: null,
       recordKey: null,
+      mode: "restricted", // "restricted" (allow-list) | "full" (CON-7 PTY); set from /validate
       operator: null,
       sensor: null,
       createdAt: now(),
@@ -285,6 +294,28 @@ function handleOperatorFrame(session, raw) {
     }
     return;
   }
+
+  // FULL-SHELL sessions (CON-7): the fixed-argv allow-list does NOT apply. Relay
+  // only the PTY-bridge frames (keystrokes + window resize) operator->sensor;
+  // refuse anything else. The sensor independently re-gates (it only spawns a
+  // PTY when its open-console command carried mode=shell).
+  if (session.mode === "full") {
+    if (!parsed || (parsed.type !== "i" && parsed.type !== "resize")) {
+      record(session, "broker", { type: "rejected", reason: "bad-shell-frame", got: parsed && parsed.type });
+      return;
+    }
+    const sensorSock = session.sensor;
+    if (!sensorSock || sensorSock.readyState !== sensorSock.OPEN) {
+      if (session.operator && session.operator.readyState === session.operator.OPEN) {
+        session.operator.send(JSON.stringify({ type: "err", message: "sensor not connected" }));
+      }
+      return;
+    }
+    record(session, "op->sensor", parsed.type === "i" ? { type: "i" } : parsed); // don't store raw keystrokes verbatim beyond marker
+    sensorSock.send(raw);
+    return;
+  }
+
   if (!parsed || parsed.type !== "cmd" || !ALLOWED_CMDS.has(parsed.id)) {
     record(session, "broker", { type: "rejected", reason: "not-allow-listed", got: parsed && parsed.id });
     if (session.operator && session.operator.readyState === session.operator.OPEN) {
@@ -370,6 +401,12 @@ function attach(ws, role, result) {
   }
   session.sensorId = result.sensorId || session.sensorId;
   session.recordKey = result.recordKey || session.recordKey;
+  // The dashboard owns the session mode (set when it minted the session). Both
+  // the operator's and the sensor's /validate return it; adopt "full" only when
+  // the dashboard says so — default stays restricted.
+  if (result.mode === "full" || result.mode === "restricted") {
+    session.mode = result.mode;
+  }
   if (typeof result.expiresAt === "number") {
     // The sensor's /validate resets the clock to pairing-time, so this may move
     // the deadline LATER than the click-time provisional value — adopt it
