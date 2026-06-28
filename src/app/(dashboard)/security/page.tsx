@@ -52,7 +52,7 @@ export default async function SecurityPage() {
         description="AI review of the dashboard's own security signals — sign-ins, access denials, and sensor-API auth. Runs automatically each day; run on demand below."
       />
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="Events (24h)" value={overview.total24h} />
         <Stat label="High / critical (24h)" value={overview.elevated24h} warn />
         <Stat label="Awaiting review" value={overview.unreviewed} />

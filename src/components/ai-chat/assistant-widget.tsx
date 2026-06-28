@@ -167,7 +167,7 @@ export function AiAssistantWidget({
         type="button"
         onClick={() => setOpen(true)}
         aria-label={`Open ${name}`}
-        className="fixed bottom-4 right-4 z-50 flex size-28 items-center justify-center overflow-hidden rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+        className="fixed bottom-4 right-4 z-50 flex size-20 items-center justify-center overflow-hidden rounded-full bg-primary text-primary-foreground shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 sm:size-28"
       >
         {hasAvatar ? (
           // eslint-disable-next-line @next/next/no-img-element

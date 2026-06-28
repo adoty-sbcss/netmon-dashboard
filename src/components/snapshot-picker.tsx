@@ -44,10 +44,10 @@ export function SnapshotPicker({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <History className="size-4 text-muted-foreground" />
+    <div className="flex w-full items-center gap-2 sm:w-auto">
+      <History className="size-4 shrink-0 text-muted-foreground" />
       <Select value={value == null ? LATEST : String(value)} onValueChange={onChange}>
-        <SelectTrigger className="w-[260px]" size="sm">
+        <SelectTrigger className="w-full sm:w-[260px]" size="sm">
           <SelectValue placeholder="Latest" />
         </SelectTrigger>
         <SelectContent>
