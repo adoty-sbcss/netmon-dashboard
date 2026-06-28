@@ -22,7 +22,7 @@
 // frames {type:"i"|"resize"} operator->sensor — the fixed-argv allow-list does
 // NOT apply to those sessions. The mode is authoritative from the dashboard's
 // /validate response; the sensor independently re-gates (it only spawns a PTY
-// when its open-console command carried mode=shell). Restricted sessions are
+// when its open-console command carried mode=full). Restricted sessions are
 // byte-identical to before. Every frame still rides the transcript recorder.
 //
 // Endpoints it CALLS on the dashboard (authenticated by the per-session
@@ -110,7 +110,20 @@ function getSession(sid) {
 }
 
 function record(session, dir, frame) {
-  if (session.transcript.length >= MAX_TRANSCRIPT_EVENTS) return;
+  const len = session.transcript.length;
+  if (len >= MAX_TRANSCRIPT_EVENTS) return;
+  if (len === MAX_TRANSCRIPT_EVENTS - 1) {
+    // Final slot: leave an EXPLICIT marker that recording stopped, so a truncated
+    // transcript can never be mistaken for a complete one (the recording is a
+    // forensic control for full-shell sessions). The collector also coalesces
+    // burst output to make hitting this cap far less likely.
+    session.transcript.push({
+      t: now(),
+      dir: "broker",
+      frame: `[transcript truncated — session exceeded ${MAX_TRANSCRIPT_EVENTS} recorded events; further I/O is NOT recorded]`,
+    });
+    return;
+  }
   session.transcript.push({ t: now(), dir, frame: truncateFrame(frame) });
 }
 
@@ -298,7 +311,7 @@ function handleOperatorFrame(session, raw) {
   // FULL-SHELL sessions (CON-7): the fixed-argv allow-list does NOT apply. Relay
   // only the PTY-bridge frames (keystrokes + window resize) operator->sensor;
   // refuse anything else. The sensor independently re-gates (it only spawns a
-  // PTY when its open-console command carried mode=shell).
+  // PTY when its open-console command carried mode=full).
   if (session.mode === "full") {
     if (!parsed || (parsed.type !== "i" && parsed.type !== "resize")) {
       record(session, "broker", { type: "rejected", reason: "bad-shell-frame", got: parsed && parsed.type });

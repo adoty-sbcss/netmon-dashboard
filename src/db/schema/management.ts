@@ -214,7 +214,16 @@ export const shellSessions = pgTable(
     approvalTokenHash: text("approval_token_hash"),
     approvedBy: integer("approved_by").references(() => users.id, { onDelete: "set null" }),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
-    /** Append-only recorded frames: [{t, dir, frame}]. */
+    /**
+     * Recorded frames: [{t, dir, frame}], grows until the broker's 5000-event cap
+     * (then a final 'transcript truncated' marker is recorded — never a silent gap).
+     * For a FULL (PTY) session: operator keystrokes are stored only as a {type:'i'}
+     * marker (so interactively-typed, non-echoed secrets like a sudo password are
+     * NOT persisted), but sensor->operator OUTPUT is verbatim — so anything the
+     * operator deliberately echoes to the terminal (e.g. `cat netmon.env`) DOES
+     * land here. Treat this column as sensitive: it can contain the box's own
+     * credentials. Superadmin-only data; not rendered in the sensor-page UI.
+     */
     transcript: jsonb("transcript").notNull().default([]),
     eventCount: integer("event_count").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

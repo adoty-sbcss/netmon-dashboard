@@ -145,3 +145,7 @@ export const CONSOLE_ABS_MAX_MS = 60 * 60 * 1000;
 export const STEPUP_CODE_LENGTH = 6;
 export const STEPUP_CODE_TTL_MS = 10 * 60 * 1000; // code valid for 10 minutes
 export const STEPUP_MAX_ATTEMPTS = 5; // wrong guesses before the challenge is burned
+// Cap how many step-up codes one user can request within a code-TTL window, so a
+// (hijacked) session can't spam the superadmin's inbox / pile up live challenges.
+export const STEPUP_MAX_OUTSTANDING = 5;
+// (consumed in sensor-actions.ts: requestFullShellStepUpAction rate-limits on this)

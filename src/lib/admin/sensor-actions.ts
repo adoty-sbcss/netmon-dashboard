@@ -8,7 +8,7 @@
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, isNull, sql, count } from "drizzle-orm";
 
 import { db } from "@/db";
 import { sensors, schools, auditLog, releaseSettings } from "@/db/schema/app";
@@ -30,6 +30,7 @@ import {
   STEPUP_CODE_LENGTH,
   STEPUP_CODE_TTL_MS,
   STEPUP_MAX_ATTEMPTS,
+  STEPUP_MAX_OUTSTANDING,
 } from "@/lib/admin/console-config";
 import { clientIp } from "@/lib/security/rate-limit";
 import { recordSecurityEvent } from "@/lib/security/events";
@@ -997,6 +998,31 @@ export async function requestFullShellStepUpAction(
   const sensorId = Number(formData.get("sensorId"));
   if (!Number.isInteger(sensorId)) return { error: "Invalid sensor." };
 
+  // Rate-limit: cap how many codes this user can mint within a TTL window so a
+  // hijacked session can't spam the inbox or pile up live challenges.
+  const windowStart = new Date(Date.now() - STEPUP_CODE_TTL_MS);
+  const [{ n }] = await db
+    .select({ n: count() })
+    .from(consoleStepupChallenges)
+    .where(
+      and(
+        eq(consoleStepupChallenges.userId, admin.id),
+        gte(consoleStepupChallenges.createdAt, windowStart),
+      ),
+    );
+  if (Number(n) >= STEPUP_MAX_OUTSTANDING) {
+    await adminEvent(
+      admin.email,
+      "full_console_stepup_rate_limited",
+      { sensorId, recentCount: Number(n) },
+      "medium",
+      `sensor:${sensorId}`,
+    );
+    return {
+      error: "Too many full-shell code requests recently. Wait a few minutes and try again.",
+    };
+  }
+
   // 6-digit, uniformly random, zero-padded. hashToken = sha256 hex; the plaintext
   // code lives ONLY in the email.
   const code = String(randomInt(0, 10 ** STEPUP_CODE_LENGTH)).padStart(STEPUP_CODE_LENGTH, "0");
@@ -1102,18 +1128,22 @@ export async function openFullShellSessionAction(
   const expected = Buffer.from(ch.codeHash, "hex");
   const matches = submitted.length === expected.length && timingSafeEqual(submitted, expected);
   if (!matches) {
-    await db
+    // Atomic increment (the DB computes attempts+1) so parallel wrong guesses
+    // can't defeat the cap via a lost read-modify-write update.
+    const [bumped] = await db
       .update(consoleStepupChallenges)
-      .set({ attempts: ch.attempts + 1 })
-      .where(eq(consoleStepupChallenges.id, challengeId));
+      .set({ attempts: sql`${consoleStepupChallenges.attempts} + 1` })
+      .where(eq(consoleStepupChallenges.id, challengeId))
+      .returning({ attempts: consoleStepupChallenges.attempts });
+    const used = bumped?.attempts ?? STEPUP_MAX_ATTEMPTS;
     await adminEvent(
       admin.email,
       "full_console_stepup_failed",
-      { sensorId, challengeId, attempt: ch.attempts + 1 },
+      { sensorId, challengeId, attempt: used },
       "medium",
       `sensor:${sensorId}`,
     );
-    const left = STEPUP_MAX_ATTEMPTS - (ch.attempts + 1);
+    const left = STEPUP_MAX_ATTEMPTS - used;
     return {
       error:
         left > 0
@@ -1122,11 +1152,22 @@ export async function openFullShellSessionAction(
     };
   }
 
-  // Burn the challenge so the same code can't open a second session.
-  await db
+  // Burn the challenge ATOMICALLY: the conditional update (consumed_at IS NULL)
+  // lets only the FIRST verify win, so a single code can never mint two sessions
+  // even under a concurrent check-then-act race.
+  const consumed = await db
     .update(consoleStepupChallenges)
     .set({ consumedAt: new Date() })
-    .where(eq(consoleStepupChallenges.id, challengeId));
+    .where(
+      and(
+        eq(consoleStepupChallenges.id, challengeId),
+        isNull(consoleStepupChallenges.consumedAt),
+      ),
+    )
+    .returning({ id: consoleStepupChallenges.id });
+  if (consumed.length === 0) {
+    return { error: "That code was already used. Request a new one." };
+  }
 
   const sid = randomBytes(16).toString("hex");
   const operatorToken = randomBytes(32).toString("hex");
