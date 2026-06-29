@@ -271,7 +271,11 @@ export function UsersAdmin({
                           </Badge>
                         ))
                       )}
-                      <span>· {u.lastLoginAt ? `last in ${relativeTime(u.lastLoginAt)}` : "never signed in"}</span>
+                      {/* relativeTime() is Date.now()-based; in this client component the
+                          server-rendered text and the hydration text differ by a few seconds,
+                          which tripped React hydration error #418 (and forced a client re-render).
+                          The timestamp legitimately differs, so flag it as an intentional mismatch. */}
+                      <span suppressHydrationWarning>· {u.lastLoginAt ? `last in ${relativeTime(u.lastLoginAt)}` : "never signed in"}</span>
                     </div>
                   </div>
                   {!locked && (

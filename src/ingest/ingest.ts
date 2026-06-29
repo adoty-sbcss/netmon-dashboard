@@ -1130,12 +1130,16 @@ export async function ingestBundle(
           })
           .onConflictDoUpdate({
             target: [entitiesSwitch.districtId, entitiesSwitch.chassisId],
+            // A sparse LLDP sighting often advertises a chassis but omits
+            // system_name/description/mgmt_ip. Coalesce so it never NULLs out
+            // richer identity already populated (e.g. by the SNMP-crawl upsert
+            // below, which uses the same pattern) — only fill gaps.
             set: {
               schoolId: school.id,
-              systemName: str(n.system_name),
-              systemDescription: str(n.system_description),
-              mgmtIp: str(n.mgmt_ip),
-              capabilities: n.capabilities ?? null,
+              systemName: sql`coalesce(excluded.system_name, ${entitiesSwitch.systemName})`,
+              systemDescription: sql`coalesce(excluded.system_description, ${entitiesSwitch.systemDescription})`,
+              mgmtIp: sql`coalesce(excluded.mgmt_ip, ${entitiesSwitch.mgmtIp})`,
+              capabilities: sql`coalesce(excluded.capabilities, ${entitiesSwitch.capabilities})`,
               lastSeenAt: seen,
               updatedAt: new Date(),
             },
