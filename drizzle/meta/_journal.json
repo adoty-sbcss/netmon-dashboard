@@ -365,6 +365,13 @@
       "when": 1782654405764,
       "tag": "0051_con7_full_shell_stepup",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1782736719816,
+      "tag": "0052_dry_juggernaut",
+      "breakpoints": true
     }
   ]
 }

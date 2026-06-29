@@ -2281,9 +2281,12 @@ async function fabricUplinkPorts(schoolId: number): Promise<Set<string>> {
   return out;
 }
 
-async function getFdbAttachments(
+// Wrapped in React cache() so it dedupes within a single request: getSwitchDetail
+// calls it directly AND via getConnectedDevices, so it otherwise ran twice per
+// switch-detail render. Returned Map is read-only at all call sites.
+const getFdbAttachments = cache(async (
   schoolId: number,
-): Promise<Map<string, { switchIp: string; port: string | null }>> {
+): Promise<Map<string, { switchIp: string; port: string | null }>> => {
   // Latest scan PER SENSOR that produced FDB rows. FDB only lands on the periodic
   // SNMP/topology crawl (not every scan), so we need the latest scan that HAS
   // forwarding-table rows. Find it by MAXing scan_runs.id and probing the indexed
@@ -2358,7 +2361,7 @@ async function getFdbAttachments(
   const out = new Map<string, { switchIp: string; port: string | null }>();
   for (const [mac, v] of best) out.set(mac, { switchIp: v.switchIp, port: v.port });
   return out;
-}
+});
 
 /**
  * Render-ready network map for a school: the physical (LLDP/CDP) and logical
