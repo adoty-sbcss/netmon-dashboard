@@ -4,6 +4,7 @@ import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { issues } from "@/db/schema";
 import { schools } from "@/db/schema/app";
+import { severityRank } from "@/lib/severity";
 
 export interface IssueRow {
   id: number;
@@ -24,14 +25,13 @@ export interface IssueRow {
 }
 
 const OPEN = ["open", "acknowledged"];
-const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 
 function sortIssues(a: IssueRow, b: IssueRow): number {
   const sa = a.status === "resolved" ? 1 : 0;
   const sb = b.status === "resolved" ? 1 : 0;
   if (sa !== sb) return sa - sb;
-  const ra = SEV_RANK[a.severity] ?? 9;
-  const rb = SEV_RANK[b.severity] ?? 9;
+  const ra = severityRank(a.severity);
+  const rb = severityRank(b.severity);
   if (ra !== rb) return ra - rb;
   return (b.lastSeenAt?.getTime() ?? 0) - (a.lastSeenAt?.getTime() ?? 0);
 }

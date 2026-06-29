@@ -2,15 +2,11 @@ import type { ComponentType } from "react";
 import Link from "next/link";
 import { ArrowDownToLine, ArrowUpFromLine, Clock } from "lucide-react";
 
-import { dateTime, relativeTime } from "@/lib/format";
+import { dateTime, fixed1 as f1, relativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { StatusDot } from "@/components/status-dot";
 import { Sparkline } from "@/components/sparkline";
 import { DOWN_COLOR, UP_COLOR, type SpeedCardVM } from "./summary";
-
-function f1(v: number | null | undefined): string {
-  return v == null ? "—" : v.toFixed(1);
-}
 
 function Metric({
   label,

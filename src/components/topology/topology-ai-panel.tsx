@@ -9,12 +9,12 @@ import {
 } from "@/lib/ai/topology-actions";
 import type { AnalysisRun } from "@/lib/ai/queries";
 import { relativeTime } from "@/lib/format";
+import { severityRank } from "@/lib/severity";
 import { SeverityBadge } from "@/components/severity-badge";
 import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
-const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function TopologyAiPanel({
@@ -105,7 +105,7 @@ export function TopologyAiPanel({
 
         {okRows.map((row) => {
           const findings = [...row.findings].sort(
-            (a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9),
+            (a, b) => severityRank(a.severity) - severityRank(b.severity),
           );
           return (
             <div key={row.id} className="flex flex-col gap-3">

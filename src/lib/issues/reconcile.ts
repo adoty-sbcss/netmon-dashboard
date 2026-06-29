@@ -12,10 +12,9 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../../db";
 import { issues } from "../../db/schema/issues";
 import type { AiFinding } from "../../db/schema/ai";
+import { severityRank } from "../severity";
 
 const MISS_CAP = 2; // auto-resolve after this many consecutive runs absent
-
-const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 
 /** Stable dedup key for an issue within a scope: a slug of its title. */
 export function issueKeyFromTitle(title: string): string {
@@ -41,7 +40,7 @@ export async function reconcileIssues(opts: {
   for (const f of findings) {
     const k = issueKeyFromTitle(f.title);
     const cur = byKey.get(k);
-    if (!cur || (SEV_RANK[f.severity] ?? 9) < (SEV_RANK[cur.severity] ?? 9)) byKey.set(k, f);
+    if (!cur || severityRank(f.severity) < severityRank(cur.severity)) byKey.set(k, f);
   }
   const seen = new Set(byKey.keys());
 

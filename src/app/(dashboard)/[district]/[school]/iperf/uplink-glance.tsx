@@ -1,6 +1,6 @@
 import { Network } from "lucide-react";
 
-import { relativeTime } from "@/lib/format";
+import { fixed1 as f1, relativeTime } from "@/lib/format";
 
 export interface UplinkGlanceProps {
   committedMbps: number | null;
@@ -11,10 +11,6 @@ export interface UplinkGlanceProps {
   wanName: string | null;
   when: Date | null;
   portSpeedMbps: number | null;
-}
-
-function f1(v: number | null): string {
-  return v == null ? "—" : v.toFixed(1);
 }
 
 /**
