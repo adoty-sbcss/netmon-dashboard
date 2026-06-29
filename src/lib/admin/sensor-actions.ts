@@ -95,6 +95,11 @@ const HOST_ACTION_COMMANDS = new Set([
   "host-rebuild",
   "host-rollback",
   "host-reboot",
+  // CIS host hardening (apply the safe subset / revert it). Run OUTSIDE the
+  // container by the host wrapper; the apply self-heals (auto-reverts on
+  // connectivity loss). Mirrors collector checkin.py:_HOST_ACTIONS + host-action.sh.
+  "host-cis-apply",
+  "host-cis-revert",
 ]);
 
 async function requireAdmin() {

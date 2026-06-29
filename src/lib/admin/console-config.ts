@@ -118,6 +118,20 @@ export const HOST_ACTION_COMMANDS: ReadonlyArray<{
     confirmWord: "REBOOT",
     danger: "red",
   },
+  {
+    id: "host-cis-apply",
+    label: "Apply CIS hardening",
+    when: "Harden the box's OS to the NetMon-vetted CIS safe subset (host firewall: deny inbound except SSH / allow all outbound, automatic security updates, auditd, AppArmor, core-dump limits). SSH auth + scanning + check-in/SFTP/iperf are left working. Self-healing: it auto-reverts if it loses SSH or internet, so it's safe to run on a remote box. Reversible.",
+    confirmWord: "HARDEN",
+    danger: "amber",
+  },
+  {
+    id: "host-cis-revert",
+    label: "Undo CIS hardening",
+    when: "Roll back the CIS safe subset (disables the host firewall, etc.) if hardening ever causes a problem on this box. Leaves SSH hardening (if any) untouched.",
+    confirmWord: "UNHARDEN",
+    danger: "amber",
+  },
 ];
 
 /**
