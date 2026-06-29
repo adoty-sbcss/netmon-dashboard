@@ -9,8 +9,9 @@ import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { topologyPositions, entitiesSwitch, entitiesHost } from "@/db/schema/entities";
-import { auditLog } from "@/db/schema/app";
+import { auditLog, schools } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
+import { getUserScope, scopeAllowsDistrict } from "@/lib/auth/scope";
 import { recordSecurityEvent } from "@/lib/security/events";
 
 export interface SavePositionsResult {
@@ -82,8 +83,9 @@ export interface MapHiddenResult {
 /**
  * Hide / unhide a device from the network map. A map-only toggle: unlike a purge
  * (excludedAt) it keeps the device in the inventory and the SNMP poll set — it only
- * removes it from the map graph and the AI map analysis. Any signed-in user may
- * toggle it (shared state across everyone viewing the school).
+ * removes it from the map graph and the AI map analysis. Shared state across
+ * everyone viewing the school; the caller must be entitled to the school's
+ * district (the proxy read-only gate already blocks viewers from mutating).
  */
 export async function setDeviceMapHidden(
   schoolId: number,
@@ -96,6 +98,20 @@ export async function setDeviceMapHidden(
   if (!user) return { ok: false, error: "Not signed in." };
   if (entityKind !== "switch" && entityKind !== "host") return { ok: false, error: "Bad device kind." };
   if (!Number.isInteger(entityId) || entityId <= 0) return { ok: false, error: "Bad device id." };
+
+  // Authorize against the school's district: schoolId/entityId arrive straight from
+  // the client, so without this gate any signed-in (non-viewer) user could toggle
+  // map visibility on another district's devices — a cross-district IDOR.
+  const [school] = await db
+    .select({ districtId: schools.districtId })
+    .from(schools)
+    .where(eq(schools.id, schoolId))
+    .limit(1);
+  if (!school || school.districtId == null) return { ok: false, error: "Unknown school." };
+  const scope = await getUserScope(user);
+  if (!scopeAllowsDistrict(scope, school.districtId)) {
+    return { ok: false, error: "Not authorized." };
+  }
 
   const set = {
     mapHiddenAt: hidden ? new Date() : null,

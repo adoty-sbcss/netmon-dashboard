@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     .update(shellSessions)
     .set({
       transcript: capped,
-      eventCount: events.length,
+      eventCount: capped.length,
       ...(markClosed ? { status: "closed" as const, closedAt: new Date() } : {}),
     })
     .where(eq(shellSessions.id, sid));
