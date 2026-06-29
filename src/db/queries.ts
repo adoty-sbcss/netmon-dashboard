@@ -377,21 +377,26 @@ export interface SchoolStats {
   sensorCount: number;
 }
 
-/** Aggregate stats across the school's most-recent scan per sensor is heavy;
- * for now we sum over ALL scans in the school (small dataset) for activity totals,
- * and use canonical entity counts for the durable device picture. */
+/** Stats for the school Overview tiles — every number is scoped to "now":
+ *  - Switches / Hosts are canonical, deduped entity counts (the durable
+ *    inventory), excluding devices an operator has purged (excludedAt) so the
+ *    Overview agrees with the Devices inventory page.
+ *  - Telemetry (devices / neighbors / DHCP / DNS / findings) is scoped to the
+ *    LATEST scan per sensor — a current snapshot, NOT a lifetime sum across every
+ *    scan ever (which only ever climbs and reads as "stuck / not updating").
+ *    Mirrors listSensorsForSchool's DISTINCT ON. */
 export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
-  const scanIdsRows = await db
-    .select({ id: scanRuns.id })
+  // Latest scan run per sensor (id), tie-broken by the highest id.
+  const latestRuns = await db
+    .selectDistinctOn([scanRuns.sensorId], { scanId: scanRuns.id })
     .from(scanRuns)
     .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
-    .where(eq(sensors.schoolId, schoolId));
-  const scanIds = scanIdsRows.map((r) => r.id);
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(scanRuns.sensorId, desc(scanRuns.startedAt), desc(scanRuns.id));
+  const latestScanIds = latestRuns.map((r) => r.scanId);
 
-  const inScans = (col: AnyPgColumn) =>
-    scanIds.length
-      ? sql`${col} in (${sql.join(scanIds, sql`, `)})`
-      : sql`false`;
+  const inLatest = (col: AnyPgColumn) =>
+    latestScanIds.length ? inArray(col, latestScanIds) : sql`false`;
 
   const [
     [host],
@@ -407,25 +412,25 @@ export async function getSchoolStats(schoolId: number): Promise<SchoolStats> {
     db
       .select({ c: count() })
       .from(entitiesHost)
-      .where(eq(entitiesHost.schoolId, schoolId)),
+      .where(and(eq(entitiesHost.schoolId, schoolId), isNull(entitiesHost.excludedAt))),
     db
       .select({ c: count() })
       .from(entitiesSwitch)
-      .where(eq(entitiesSwitch.schoolId, schoolId)),
-    db.select({ c: count() }).from(devices).where(inScans(devices.scanRunId)),
+      .where(and(eq(entitiesSwitch.schoolId, schoolId), isNull(entitiesSwitch.excludedAt))),
+    db.select({ c: count() }).from(devices).where(inLatest(devices.scanRunId)),
     db
       .select({ c: count() })
       .from(neighbors)
-      .where(inScans(neighbors.scanRunId)),
+      .where(inLatest(neighbors.scanRunId)),
     db
       .select({ c: count() })
       .from(dhcpObservations)
-      .where(inScans(dhcpObservations.scanRunId)),
+      .where(inLatest(dhcpObservations.scanRunId)),
     db
       .select({ c: count() })
       .from(dnsProbes)
-      .where(inScans(dnsProbes.scanRunId)),
-    db.select({ c: count() }).from(findings).where(inScans(findings.scanRunId)),
+      .where(inLatest(dnsProbes.scanRunId)),
+    db.select({ c: count() }).from(findings).where(inLatest(findings.scanRunId)),
     db
       .select({ last: max(scanRuns.startedAt) })
       .from(scanRuns)

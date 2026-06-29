@@ -96,7 +96,7 @@ export default async function SchoolPage({
               value={num(stats.hostCount)}
               icon={Cpu}
               href={`/${district.slug}/${school.slug}/hosts`}
-              hint={`${num(stats.deviceCount)} sightings across scans`}
+              hint={`${num(stats.deviceCount)} seen in last scan`}
             />
             <StatCard
               label="Sensors"
