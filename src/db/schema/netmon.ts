@@ -345,5 +345,9 @@ export const findings = pgTable(
   (t) => [
     index("idx_findings_scan").on(t.scanRunId),
     index("idx_findings_severity").on(t.severity),
+    // Fronts the ORDER BY created_at DESC + LIMIT on the fleet/district findings
+    // rollups (listFleetFindings / listDistrictFindings), which otherwise sort the
+    // full join output before applying the limit. Purely additive — no behavior change.
+    index("idx_findings_created").on(t.createdAt),
   ],
 );
