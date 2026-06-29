@@ -579,6 +579,33 @@ interface PortInfo {
 async function latestPortsByMacForSchool(
   schoolId: number,
 ): Promise<Map<string, PortInfo>> {
+  // Restrict to the latest scan PER SENSOR that actually produced FDB rows. FDB only
+  // lands on the periodic SNMP/topology crawl (not every scan), so we take the most
+  // recent scan that HAS forwarding-table rows — instead of scanning ~30 days of
+  // host_switch_ports history and keeping the newest row per MAC. Same approach as
+  // getFdbAttachments. Tradeoff (intentional, operator-approved): a device absent
+  // from the latest FDB scan shows no port until its next crawl, rather than its
+  // last-ever-seen port.
+  const latestRows = await db
+    .select({ sensorId: scanRuns.sensorId, maxScan: max(scanRuns.id) })
+    .from(scanRuns)
+    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+    .where(
+      and(
+        eq(sensors.schoolId, schoolId),
+        exists(
+          db
+            .select({ x: sql`1` })
+            .from(hostSwitchPorts)
+            .where(eq(hostSwitchPorts.scanRunId, scanRuns.id)),
+        ),
+      ),
+    )
+    .groupBy(scanRuns.sensorId);
+  const scanIds = latestRows
+    .map((r) => r.maxScan)
+    .filter((n): n is number => n != null);
+  if (scanIds.length === 0) return new Map<string, PortInfo>();
   const rows = await db
     .select({
       mac: hostSwitchPorts.mac,
@@ -588,8 +615,7 @@ async function latestPortsByMacForSchool(
     })
     .from(hostSwitchPorts)
     .innerJoin(scanRuns, eq(hostSwitchPorts.scanRunId, scanRuns.id))
-    .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
-    .where(eq(sensors.schoolId, schoolId))
+    .where(inArray(hostSwitchPorts.scanRunId, scanIds))
     .orderBy(desc(scanRuns.startedAt));
   const map = new Map<string, PortInfo>();
   for (const r of rows) {
