@@ -669,6 +669,66 @@ export async function saveSensorCapabilitiesAction(
 }
 
 /**
+ * Per-sensor "start / pause uploads" — the staging guardrail. A freshly deployed
+ * sensor ships with SFTP uploads OFF (it scans + bundles locally but pushes
+ * nothing to the dashboard), so a box prepped at a staging site never pollutes
+ * the destination school. Marking it installed flips `sftp_enabled` true in its
+ * desired config (merge + version bump); it starts uploading on its next
+ * check-in. Pausing is the same merge with false. Scoped to one sensor — the
+ * one-click counterpart to hunting through the /settings/network matrix.
+ */
+export async function setSensorUploadsAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const sensorId = Number(formData.get("sensorId"));
+  if (!Number.isInteger(sensorId) || sensorId <= 0) return { error: "Invalid sensor." };
+  // Default to enabling (commission) — the inverse "pause" posts enabled=false.
+  const enable = formData.get("enabled") !== "false";
+
+  const [row] = await db
+    .select({ v: desiredConfig.configVersion, config: desiredConfig.config })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(eq(sensors.id, sensorId))
+    .limit(1);
+  if (!row) return { error: "That sensor no longer exists." };
+
+  const current = (row.config as Record<string, unknown>) ?? {};
+  // Already in the desired state — don't churn the box into a needless recreate.
+  if ((current.sftp_enabled === true) === enable) {
+    return { ok: true, message: enable ? "Uploads are already on." : "Uploads are already paused." };
+  }
+  const merged = { ...current, sftp_enabled: enable };
+  const nextV = (row.v ?? 0) + 1;
+  await db
+    .insert(desiredConfig)
+    .values({ sensorId, configVersion: nextV, config: merged, updatedBy: admin.id })
+    .onConflictDoUpdate({
+      target: desiredConfig.sensorId,
+      set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+    });
+
+  await audit(admin.email, enable ? "sensor_uploads_enabled" : "sensor_uploads_paused", { sensorId });
+  await adminEvent(
+    admin.email,
+    enable ? "sensor_uploads_enabled" : "sensor_uploads_paused",
+    { sensorId },
+    "info",
+  );
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: enable
+      ? "Marked installed — the sensor starts uploading to the dashboard on its next check-in (usually a few minutes)."
+      : "Uploads paused — the sensor stops shipping bundles on its next check-in.",
+  };
+}
+
+/**
  * Push an SNMP community string to every sensor in ONE district (merge + bump).
  * SNMP discovery is inert without a community, so this is the companion to
  * enabling the SNMP capability in the matrix. Scoped to the district so one

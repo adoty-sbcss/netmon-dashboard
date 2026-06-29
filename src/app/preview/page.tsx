@@ -38,6 +38,7 @@ import type {
 } from "@/app/(dashboard)/[district]/[school]/iperf/summary";
 import type { UplinkGlanceProps } from "@/app/(dashboard)/[district]/[school]/iperf/uplink-glance";
 import { IperfScheduleEditor } from "@/app/(dashboard)/[district]/[school]/sensor/[id]/iperf-schedule-editor";
+import { SensorUploadStatus } from "@/app/(dashboard)/[district]/[school]/sensor/[id]/sensor-upload-status";
 import type { IperfScheduleEntry } from "@/lib/iperf-actions";
 
 const DISTRICTS = [
@@ -113,6 +114,42 @@ const MOCK_IPERF_SCHEDULES: IperfScheduleEntry[] = [
 export default function PreviewPage() {
   return (
     <div className="flex flex-col gap-10">
+      {/* ================= SENSOR UPLOAD STATUS (staging) ================= */}
+      <section className="flex flex-col gap-6">
+        <span className="w-fit rounded-full border bg-background px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+          Sensor upload status — staging guardrail
+        </span>
+        <PageHeader
+          title="Sensor upload status"
+          description="A new sensor starts with uploads OFF until it's marked installed, so prepping a box never pollutes the destination site."
+        />
+        <div className="flex flex-col gap-4">
+          <SensorUploadStatus
+            sensorId={1}
+            basePath="#"
+            desiredEnabled={false}
+            reportedEnabled={null}
+            hasCheckedIn={true}
+          />
+          <SensorUploadStatus
+            sensorId={2}
+            basePath="#"
+            desiredEnabled={true}
+            reportedEnabled={false}
+            hasCheckedIn={true}
+          />
+          <SensorUploadStatus
+            sensorId={3}
+            basePath="#"
+            desiredEnabled={true}
+            reportedEnabled={true}
+            hasCheckedIn={true}
+          />
+        </div>
+      </section>
+
+      <hr className="border-dashed" />
+
       {/* ============================= OVERVIEW ============================= */}
       <section className="flex flex-col gap-6">
         <span className="w-fit rounded-full border bg-background px-2.5 py-0.5 text-xs font-medium text-muted-foreground">

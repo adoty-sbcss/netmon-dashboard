@@ -19,6 +19,7 @@ import type { IperfScheduleEntry } from "@/lib/iperf-actions";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { sensorHealthFlags, worstLevel } from "@/lib/sensor-health";
 import { SensorManagementPanel } from "./sensor-management";
+import { SensorUploadStatus } from "./sensor-upload-status";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { SpeedtestPanel } from "./speedtest-panel";
@@ -169,6 +170,18 @@ export default async function SensorDetailPage({
           }
         />
       </div>
+
+      {/* Upload status / staging guardrail — uploads start OFF until installed,
+          so prepping a box here never pollutes the destination school. */}
+      {isAdmin && mgmt && (
+        <SensorUploadStatus
+          sensorId={sensor.id}
+          basePath={basePath}
+          desiredEnabled={Boolean(dcfg.sftp_enabled)}
+          reportedEnabled={reported?.sftpEnabled ?? null}
+          hasCheckedIn={sensor.lastCheckinAt != null}
+        />
+      )}
 
       {healthFlags.length > 0 && (
         <div
