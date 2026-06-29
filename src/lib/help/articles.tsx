@@ -11,6 +11,7 @@
  * `image` block. Until a PNG exists, the renderer shows a labeled placeholder,
  * so the page is presentable before the screenshot is captured.
  */
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 export type HelpBlock =
@@ -64,6 +65,13 @@ export function articleMeta(a: HelpArticle): HelpArticleMeta {
 }
 
 const C = (s: string) => <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">{s}</code>;
+
+/** Inline link to another help article (renders a real /help/<slug> link). */
+const A = (slug: string, label: string) => (
+  <Link href={`/help/${slug}`} className="font-medium text-primary underline-offset-2 hover:underline">
+    {label}
+  </Link>
+);
 
 const fixEnrollment: HelpArticle = {
   slug: "sensor-did-not-enroll",
@@ -606,32 +614,35 @@ const networkMap: HelpArticle = {
     ]},
     { kind: "h", text: "Coverage gaps" },
     { kind: "p", text: <>Shaded &quot;blind&quot; areas are parts of the network no sensor can see. NetMon also suggests where an extra sensor would add the most coverage.</> },
-    { kind: "callout", tone: "info", text: <>If something you expect is missing, the sensor that covers it may not be uploading — see <strong>Fix automatic SFTP upload</strong>.</> },
+    { kind: "callout", tone: "info", text: <>If something you expect is missing, the sensor that covers it may not be uploading — see {A("fix-automatic-sftp-upload", "Fix automatic SFTP upload")}.</> },
   ],
 };
 
 const deviceInventory: HelpArticle = {
   slug: "understanding-the-device-list",
   title: "Understanding the device list",
-  summary: "How devices are auto-classified, how to filter/sort, and what to do about an unknown or mislabeled device.",
+  summary: "How devices are auto-classified, how to filter/sort, the Archived tab for devices that have gone quiet, and what to do about an unknown or mislabeled device.",
   category: "Monitoring",
   kind: "guide",
-  keywords: ["devices", "inventory", "classification", "type", "unknown", "vendor", "filter", "hosts", "rename"],
-  updated: "2026-06-12",
+  keywords: ["devices", "inventory", "classification", "type", "unknown", "vendor", "filter", "hosts", "rename", "archived", "stale"],
+  updated: "2026-06-29",
   blocks: [
-    { kind: "callout", tone: "info", text: <>Every device a sensor sees lands in the device list, auto-classified by type and vendor.</> },
+    { kind: "callout", tone: "info", text: <>Every device a sensor sees lands in the device list, auto-classified by type and vendor. Click any row to open its {A("device-detail-page", "detail page")}.</> },
     { kind: "h", text: "How devices are classified" },
-    { kind: "p", text: <>NetMon combines the MAC vendor (OUI), mDNS/SSDP names, DHCP, and SNMP to guess each device&apos;s type — access point, switch, printer, camera, PC, phone, and so on. It&apos;s a best guess from the evidence available.</> },
+    { kind: "p", text: <>NetMon fuses several signals — the MAC vendor (OUI), mDNS/SSDP names, DHCP fingerprints, and SNMP — to guess each device&apos;s type: access point, switch, printer, camera, PC, phone, and so on. It&apos;s a best guess from the evidence available, and it sharpens as more scans come in.</> },
     { kind: "h", text: "Filter and sort" },
     { kind: "steps", items: [
-      <>Use the per-column filters and sorting to narrow the list.</>,
+      <>Use the per-column filters and sorting to narrow the list — by type, vendor, or IP range.</>,
+      <>Combine filters (e.g. type = printer <em>and</em> a vendor) to answer &quot;how many of these do we have, and where.&quot;</>,
       <>Search by IP, MAC, or name to jump straight to a device.</>,
     ]},
+    { kind: "h", text: "The Archived tab" },
+    { kind: "p", text: <>Devices that stop showing up for a while are moved to an <strong>Archived</strong> tab instead of cluttering the live list — so the main view reflects what&apos;s currently on the network. Check the Archived tab when you&apos;re looking for something that used to be there.</> },
     { kind: "h", text: "An unknown or wrong device" },
     { kind: "steps", items: [
-      <>Open it — classification sharpens as more scans gather evidence.</>,
-      <>Rename / annotate a device so it&apos;s recognizable to your team.</>,
+      <>Open it — on the {A("device-detail-page", "detail page")} you can set the correct type (it sticks across future scans) and add a note so it&apos;s recognizable to your team.</>,
       <>Hide anything that doesn&apos;t belong on the map.</>,
+      <>An unexpected device worth a second look? Cross-check it on the {A("reading-the-security-page", "Security page")}.</>,
     ]},
     { kind: "callout", tone: "info", text: <>Classification re-runs nightly, so a freshly-seen device often gets sharper the next day.</> },
   ],
@@ -658,7 +669,7 @@ const deviceDetail: HelpArticle = {
       <><strong>PoE</strong> reads <em>On</em> with wattage/class when a port is powering a device, or <em>Fault</em> / <em>Searching</em> / <em>Off</em>.</>,
       <>An <strong>STP</strong> badge of &quot;blocking&quot; shows only on an <em>up</em> port — that&apos;s a redundant link your switches are holding as a standby backup, which is normal. (The PoE, duplex, errors, and STP columns appear as the window gets wider.)</>,
     ]},
-    { kind: "callout", tone: "info", text: <>PoE and port descriptions fill in only once the sensor has crawled the switch over SNMP. If they stay blank, see <strong>Get your switches to report (SNMP)</strong>.</> },
+    { kind: "callout", tone: "info", text: <>PoE and port descriptions fill in only once the sensor has crawled the switch over SNMP. If they stay blank, see {A("snmp-setup-for-switches", "Get your switches to report (SNMP)")}.</> },
     { kind: "h", text: "Where a host is plugged in" },
     { kind: "p", text: <>On a regular host, <strong>Connected to</strong> names the switch and port it&apos;s attached to (from that switch&apos;s bridge table) — click through to the switch.</> },
     { kind: "h", text: "Fix a wrong device type" },
@@ -672,31 +683,38 @@ const deviceDetail: HelpArticle = {
       <><strong>Findings about this device</strong> gathers any AI / issue findings that mention it.</>,
       <><strong>Sightings</strong> at the bottom are collapsed by default — expand them to see the device&apos;s history over time.</>,
     ]},
-    { kind: "callout", tone: "info", text: <>Looking for the whole inventory instead of one device? See <strong>Understanding the device list</strong>.</> },
+    { kind: "callout", tone: "info", text: <>Looking for the whole inventory instead of one device? See {A("understanding-the-device-list", "Understanding the device list")}.</> },
   ],
 };
 
 const aiFindings: HelpArticle = {
   slug: "make-sense-of-ai-findings",
   title: "Make sense of AI findings",
-  summary: "What the AI cards mean, how to get tailored fix steps, and how to silence a finding you've accepted.",
+  summary: "What the cards mean, the kinds of issues they surface, how to get tailored fix steps, and how to silence a finding you've accepted.",
   category: "Monitoring",
   kind: "guide",
-  keywords: ["ai", "findings", "recommendations", "analysis", "acknowledge", "mute", "help me fix", "issues"],
-  updated: "2026-06-12",
+  keywords: ["ai", "findings", "recommendations", "analysis", "acknowledge", "mute", "help me fix", "issues", "rogue dhcp", "automated check", "severity"],
+  updated: "2026-06-29",
   blocks: [
-    { kind: "callout", tone: "info", text: <>The AI reviews your district&apos;s real scan data and surfaces issues and recommendations as cards.</> },
+    { kind: "callout", tone: "info", text: <>NetMon reviews your district&apos;s real scan data and surfaces problems as <strong>findings</strong> — each says what it found, why it matters, and what to do. Some come from the <strong>AI analysis</strong>, others from deterministic <strong>automated checks</strong>.</> },
+    { kind: "h", text: "What you'll see flagged" },
+    { kind: "p", text: <>Typical findings include an <strong>unauthorized (rogue) DHCP server</strong>, a switch port <strong>flapping</strong> (repeatedly going up and down), a <strong>broadcast storm</strong> or spanning-tree churn, a saturated <strong>WAN uplink</strong>, DNS that&apos;s being rewritten, and unidentified or newly-appeared devices. Each links back to the device(s) involved.</> },
     { kind: "h", text: "Reading a finding" },
-    { kind: "p", text: <>Each card says what it found, why it matters, and a suggested fix. Click it to expand the detail and evidence.</> },
-    { kind: "h", text: "Get tailored steps" },
     { kind: "steps", items: [
-      <>Click <strong>Help me fix this</strong> on a finding — the assistant walks you through it using your real data.</>,
+      <>Each card shows a <strong>severity</strong>, what it found, and a suggested fix. Click it to expand the full detail and the evidence behind it.</>,
+      <>A finding tagged <strong>· automated check</strong> comes from a deterministic rule (no AI guesswork); the rest are from the AI&apos;s analysis of your data.</>,
+      <>Findings also collect on the <strong>Issues</strong> page with an occurrence count, and <strong>auto-resolve</strong> on their own once the underlying problem stays clear for a couple of runs.</>,
+    ]},
+    { kind: "h", text: "Get tailored fix steps" },
+    { kind: "steps", items: [
+      <>Click <strong>Help me fix this</strong> on a finding — the assistant locates the actual device(s) from your real data and walks you through the fix, instead of giving generic advice.</>,
     ]},
     { kind: "h", text: "Silence one you've accepted" },
     { kind: "steps", items: [
-      <>If a finding is expected or by-design, <strong>Acknowledge / Mute</strong> it so it stops resurfacing. It won&apos;t auto-reopen.</>,
+      <>If a finding is expected or by-design, <strong>Acknowledge / Mute</strong> it so it stops resurfacing. It won&apos;t auto-reopen, and the AI stops re-raising it in future reports.</>,
+      <>Getting flagged for a DHCP server you actually run? Fix it at the source — see {A("stop-rogue-dhcp-warnings", "Stop rogue-DHCP warnings")}.</>,
     ]},
-    { kind: "callout", tone: "warn", text: <>Muting hides a finding from future reports — only mute things you&apos;ve genuinely accepted.</> },
+    { kind: "callout", tone: "warn", text: <>Muting hides a finding from future reports — only mute things you&apos;ve genuinely accepted, not something you mean to come back to.</> },
   ],
 };
 
@@ -726,7 +744,7 @@ const speedBandwidth: HelpArticle = {
     { kind: "p", text: <>Measured to the internet, your gateway, and a DNS resolver each check-in. High jitter or loss points to a congested or flaky link.</> },
     { kind: "h", text: "Recent runs" },
     { kind: "p", text: <>The history tables show the <strong>last 5 hours</strong> by default to keep the page scannable — click <strong>Show all</strong> to expand the older runs.</> },
-    { kind: "callout", tone: "info", text: <>A failed speed test shows the reason inline. If it mentions the box is on old code, see <strong>Recover a sensor that&apos;s stuck</strong>.</> },
+    { kind: "callout", tone: "info", text: <>A failed speed test shows the reason inline. If it mentions the box is on old code, see {A("recover-stuck-sensor", "Recover a sensor that's stuck")}.</> },
   ],
 };
 
@@ -743,8 +761,8 @@ const sensorHealth: HelpArticle = {
     { kind: "h", text: "The flags" },
     { kind: "steps", items: [
       <><strong>Offline / Late check-in</strong> — the box isn&apos;t phoning home. Check power and network at the site.</>,
-      <><strong>No version reported / Behind the fleet</strong> — its auto-update is stuck. See <strong>Recover a sensor that&apos;s stuck</strong>.</>,
-      <><strong>No fresh data</strong> — online but not sending scans (uploads off or scanning stalled). See <strong>Fix automatic SFTP upload</strong>.</>,
+      <><strong>No version reported / Behind the fleet</strong> — its auto-update is stuck. See {A("recover-stuck-sensor", "Recover a sensor that's stuck")}.</>,
+      <><strong>No fresh data</strong> — online but not sending scans (uploads off or scanning stalled). See {A("fix-automatic-sftp-upload", "Fix automatic SFTP upload")}.</>,
       <><strong>Update failing</strong> — the last update errored; the reason shows on the sensor&apos;s page.</>,
       <><strong>Config not applied</strong> — a setting you changed hasn&apos;t taken yet; it usually clears on the next check-in.</>,
     ]},
@@ -757,20 +775,27 @@ const sensorHealth: HelpArticle = {
 const securityPage: HelpArticle = {
   slug: "reading-the-security-page",
   title: "Reading the Security page",
-  summary: "What the security feed and AI security sweeps show, and which items are worth acting on.",
+  summary: "What the security feed and AI security sweeps show, what each event type means, and which items are worth acting on.",
   category: "Monitoring",
   kind: "guide",
-  keywords: ["security", "alerts", "events", "audit", "feed"],
-  updated: "2026-06-12",
+  keywords: ["security", "alerts", "events", "audit", "feed", "sign-in", "new device", "severity"],
+  updated: "2026-06-29",
   blocks: [
-    { kind: "callout", tone: "info", text: <>The <strong>Security</strong> page logs notable events (new or changed devices, sign-ins, admin actions) and periodic AI security sweeps.</> },
-    { kind: "h", text: "What you'll see" },
-    { kind: "p", text: <>A time-ordered feed of events with a severity, plus AI security analyses summarizing risks for your district.</> },
+    { kind: "callout", tone: "info", text: <>The <strong>Security</strong> page is two things in one: a time-ordered <strong>event feed</strong> of notable changes, and periodic <strong>AI security sweeps</strong> that summarize risk for your district.</> },
+    { kind: "h", text: "The event feed" },
+    { kind: "p", text: <>Each event carries a <strong>severity</strong> and a timestamp. Common entries:</> },
+    { kind: "steps", items: [
+      <><strong>New / changed device</strong> — a device appeared, or its identity (vendor, type, hostname) changed.</>,
+      <><strong>Sign-ins</strong> — who signed into the dashboard, and from where.</>,
+      <><strong>Admin &amp; console actions</strong> — config pushes, remote-console sessions, host actions, data resets: anything that changed a sensor or its data.</>,
+    ]},
+    { kind: "h", text: "AI security sweeps" },
+    { kind: "p", text: <>On a schedule, the AI reviews the district&apos;s posture and writes a short analysis — exposed services, unexpected devices, risky changes — kept separate from the raw feed. Think of it as a &quot;what should I worry about&quot; summary, not a replacement for the feed.</> },
     { kind: "h", text: "What to act on" },
     { kind: "steps", items: [
       <>Start with <strong>high-severity</strong> items.</>,
-      <>Cross-check any unexpected device against your <strong>device list</strong>.</>,
-      <>Routine admin actions and sign-ins are informational — no action needed.</>,
+      <>Cross-check any unexpected device against your {A("understanding-the-device-list", "device list")} — if it&apos;s legitimate, label it so it stops standing out.</>,
+      <>Routine admin actions and sign-ins are informational — they&apos;re the audit trail, not a sign something&apos;s wrong.</>,
     ]},
     { kind: "callout", tone: "info", text: <>Unsure about an item? Ask the AI assistant (bottom-right) or your NetMon administrator.</> },
   ],
@@ -798,7 +823,7 @@ const deploySensor: HelpArticle = {
       <>It enrolls itself on the first check-in and appears under <strong>Sensors</strong> within a few minutes.</>,
     ]},
     { kind: "h", text: "3. Placement" },
-    { kind: "p", text: <>Put the sensor where it can see the most traffic — a mirror/SPAN port or a switch trunk. To watch several VLANs, the deploy page can set up trunk monitoring for you.</> },
+    { kind: "p", text: <>Put the sensor where it can see the most traffic — a mirror/SPAN port or a switch trunk. To watch several VLANs, the deploy page can set up trunk monitoring for you — see {A("vlan-trunk-monitoring", "Monitor several VLANs from one sensor")}.</> },
     { kind: "callout", tone: "info", text: <>New sensors ship with scanning defaults on (SNMP, spine crawl, speed tests) but <strong>uploads OFF</strong> — so prepping a box never pollutes the site. Open the sensor&apos;s page and <strong>Mark installed</strong> to start shipping data. See <em>Prep a sensor without polluting a site</em>.</> },
   ],
 };
