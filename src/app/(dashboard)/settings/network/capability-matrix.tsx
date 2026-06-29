@@ -76,7 +76,7 @@ export function CapabilityMatrix({
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-xs text-muted-foreground">
             <tr className="border-b">
-              <th className="px-3 py-2 text-left font-medium">Sensor</th>
+              <th className="sticky left-0 z-10 bg-card px-3 py-2 text-left font-medium">Sensor</th>
               {CAPABILITIES.map((c) => (
                 <th key={c.key} className="px-2 py-2 text-center font-medium" title={c.hint}>
                   {c.label}
@@ -98,7 +98,7 @@ export function CapabilityMatrix({
                     s.configVersion != null && s.configVersion !== s.reportedConfigVersion;
                   return (
                     <tr key={s.id} className="border-b last:border-0">
-                      <td className="px-3 py-2">
+                      <td className="sticky left-0 z-10 bg-card px-3 py-2">
                         <span className="font-medium">{s.name || s.slug}</span>
                         <span className="ml-2 font-mono text-xs text-muted-foreground">{s.slug}</span>
                         {pendingSync && (
