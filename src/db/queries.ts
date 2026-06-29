@@ -640,6 +640,11 @@ export async function listHostsForSchool(
   }
 
   // Snapshot: devices from the chosen scan + mac→entity map for linking.
+  // The device query joins through scan_runs→sensors and filters by schoolId so a
+  // scanId belonging to another school/district returns zero rows — the same
+  // cross-tenant guard every sibling snapshot query uses (getScanSnapshot,
+  // getDhcpAnalysis, listStpForSchool). Without it the AI devices_in_scan tool
+  // could be handed a foreign scanId and leak another district's inventory.
   const [deviceRows, macMap] = await Promise.all([
     db
       .select({
@@ -653,7 +658,9 @@ export async function listHostsForSchool(
         lastSeenAt: devices.lastSeenAt,
       })
       .from(devices)
-      .where(eq(devices.scanRunId, opts.scanId))
+      .innerJoin(scanRuns, eq(devices.scanRunId, scanRuns.id))
+      .innerJoin(sensors, eq(scanRuns.sensorId, sensors.id))
+      .where(and(eq(devices.scanRunId, opts.scanId), eq(sensors.schoolId, schoolId)))
       .orderBy(devices.ip),
     db
       .select({ id: entitiesHost.id, mac: entitiesHost.mac })
