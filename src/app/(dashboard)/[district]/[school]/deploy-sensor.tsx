@@ -103,10 +103,13 @@ export function DeploySensor({
   }
   if (sftp) {
     provLines.push(
-      // Without this the box gets valid creds but uploads stay OFF (the flag
-      // defaults to false), so `upload-test` passes while real uploads no-op
-      // with "SFTP disabled". Mirrors the wizard (lib/sftp.sh sets it true too).
-      `NETMON_SFTP_ENABLED=true`,
+      // Uploads start OFF by design (staging): the box gets valid creds but
+      // ships nothing until an operator marks it installed on its sensor page,
+      // which flips sftp_enabled true via desired config. This way a box prepped
+      // at a staging site never pollutes the destination school. (The collector
+      // already defaults NETMON_SFTP_ENABLED=false; we set it explicitly so the
+      // intent is visible in the provisioning block.)
+      `NETMON_SFTP_ENABLED=false`,
       `NETMON_SFTP_HOST=${sftp.host}`,
       `NETMON_SFTP_PORT=${sftp.port}`,
       `NETMON_SFTP_USER=${sftp.user}`,
@@ -279,6 +282,11 @@ exec ./install.sh
             Downloads a ready-to-run script with this site’s config baked in — copy it to the new
             Ubuntu box and run the command above. It installs Docker + the collector, runs the
             hardening check, and enrolls the box into this spot. No files to edit.
+          </p>
+          <p className="text-xs text-[var(--warning)]">
+            Uploads start <strong>off</strong> (staging): the box scans but ships nothing to the
+            dashboard until you open its sensor page and <strong>Mark installed</strong>. That keeps
+            prep-time scans out of the destination school.
           </p>
         </div>
 

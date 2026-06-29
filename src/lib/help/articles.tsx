@@ -799,7 +799,7 @@ const deploySensor: HelpArticle = {
     ]},
     { kind: "h", text: "3. Placement" },
     { kind: "p", text: <>Put the sensor where it can see the most traffic — a mirror/SPAN port or a switch trunk. To watch several VLANs, the deploy page can set up trunk monitoring for you.</> },
-    { kind: "callout", tone: "success", text: <>New sensors ship with sensible defaults already on (SNMP, spine crawl, speed tests, SFTP upload), so data starts flowing automatically.</> },
+    { kind: "callout", tone: "info", text: <>New sensors ship with scanning defaults on (SNMP, spine crawl, speed tests) but <strong>uploads OFF</strong> — so prepping a box never pollutes the site. Open the sensor&apos;s page and <strong>Mark installed</strong> to start shipping data. See <em>Prep a sensor without polluting a site</em>.</> },
   ],
 };
 
@@ -868,10 +868,104 @@ const snmpSetup: HelpArticle = {
   ],
 };
 
+const stageSensor: HelpArticle = {
+  slug: "stage-a-sensor-uploads-off",
+  title: "Prep a sensor without polluting a site",
+  summary:
+    "New sensors start with uploads OFF, so prepping one at a staging bench never mixes that data into the destination school. Flip uploads on once it's installed.",
+  category: "Sensors",
+  kind: "guide",
+  featured: true,
+  keywords: [
+    "staging", "prep", "uploads off", "mark installed", "pollute", "junk data",
+    "commission", "sftp", "prep bench", "wrong school", "purge", "reset",
+  ],
+  updated: "2026-06-29",
+  blocks: [
+    {
+      kind: "callout",
+      tone: "info",
+      text: (
+        <>
+          A new sensor <strong>scans locally but uploads nothing</strong> until you mark it
+          installed. So you can power one up on a staging bench to verify it, and none of that
+          bench&apos;s devices land in the school it&apos;s headed for.
+        </>
+      ),
+    },
+    { kind: "h", text: "Why uploads start off" },
+    {
+      kind: "p",
+      text: (
+        <>
+          A sensor reports whatever network it&apos;s plugged into. If you prep boxes at one spot
+          (a workbench, a shared closet) and they uploaded right away, that spot&apos;s devices would
+          pile into the destination school — and you&apos;d have to purge it later. Starting with
+          uploads off removes the cleanup entirely.
+        </>
+      ),
+    },
+    { kind: "h", text: "1. Prep the box (uploads off)" },
+    {
+      kind: "steps",
+      items: [
+        <>Deploy it the usual way — on the school&apos;s <strong>Sensors</strong> tab, <strong>Deploy a sensor here</strong> (see <em>Deploy a sensor at your site</em>).</>,
+        <>It installs, enrolls, and shows up under <strong>Sensors</strong> with a <strong>Staging</strong> badge. It scans and self-checks, but ships nothing to the dashboard.</>,
+        <>Verify the box looks healthy on its sensor page. Nothing you see here reaches the destination school.</>,
+      ],
+    },
+    {
+      kind: "image",
+      src: "/help/sensor-staging.png",
+      alt: "Sensor detail page showing a 'Staging — not uploading to the dashboard yet' banner with a 'Mark installed & start uploading' button",
+      caption: "A staged sensor: scanning locally, uploads off, with the one-click control to go live.",
+    },
+    { kind: "h", text: "2. Install it, then start uploading" },
+    {
+      kind: "steps",
+      items: [
+        <>Once the box is physically in place at its destination, open its <strong>sensor page</strong>.</>,
+        <>Click <strong>Mark installed &amp; start uploading</strong>.</>,
+        <>On its next check-in (a few minutes) it starts shipping hourly bundles into the correct school.</>,
+      ],
+    },
+    {
+      kind: "image",
+      src: "/help/sensor-uploading.png",
+      alt: "Sensor detail page showing a green 'Uploading to the dashboard' banner with a 'Pause uploads' control",
+      caption: "After marking it installed — uploading, with a quiet Pause if you ever need it.",
+    },
+    { kind: "h", text: "Pausing or re-staging" },
+    {
+      kind: "p",
+      text: (
+        <>
+          The same banner has <strong>Pause uploads</strong>, and you can also toggle{" "}
+          <strong>SFTP upload</strong> per sensor under <strong>School &amp; district settings</strong>.
+          Pausing stops new bundles on the next check-in; it doesn&apos;t delete anything already
+          collected.
+        </>
+      ),
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      text: (
+        <>
+          Already have a site full of staging junk from before this (e.g. a shared prep spot)? Clear
+          it with <strong>Settings → Data → Reset</strong> on that school — it wipes the discovered
+          devices and history but keeps the sensor and its settings.
+        </>
+      ),
+    },
+  ],
+};
+
 export const HELP_ARTICLES: HelpArticle[] = [
   // Sensors
   recoverStuckSensor,
   fixEnrollment,
+  stageSensor,
   fixSftpUpload,
   sensorHealth,
   deploySensor,

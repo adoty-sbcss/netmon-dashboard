@@ -197,6 +197,15 @@ export default async function SchoolSensorsPage({
                           <span className="ml-2 font-mono text-xs text-muted-foreground">
                             {s.slug}
                           </span>
+                          {isAdmin && cap && !cap.sftp && (
+                            <Badge
+                              variant="outline"
+                              className="ml-2 border-[var(--warning)]/50 text-[var(--warning)]"
+                              title="Uploads are off — mark this sensor installed to start shipping data"
+                            >
+                              Staging
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span className={cn("inline-flex items-center gap-1.5 text-sm", hb.text)}>
