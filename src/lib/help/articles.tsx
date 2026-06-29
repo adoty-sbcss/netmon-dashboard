@@ -961,6 +961,96 @@ const stageSensor: HelpArticle = {
   ],
 };
 
+const vlanTrunkMonitoring: HelpArticle = {
+  slug: "vlan-trunk-monitoring",
+  title: "Monitor several VLANs from one sensor",
+  summary:
+    "Put a sensor on a trunk port, tell NetMon which VLANs to watch, and use the Networks card to confirm each one is actually collecting.",
+  category: "Sensors",
+  kind: "guide",
+  keywords: ["vlan", "trunk", "802.1q", "networks card", "sub-interface", "multiple networks", "no dhcp", "no ip", "collecting", "tagged"],
+  updated: "2026-06-29",
+  blocks: [
+    { kind: "callout", tone: "info", text: <>One sensor can watch several VLANs at once if it&apos;s plugged into a <strong>trunk</strong> port — NetMon brings up a tagged sub-interface for each VLAN and scans them in parallel. The <strong>Networks</strong> card on the sensor&apos;s page is how you confirm each VLAN actually came up and is collecting.</> },
+    { kind: "h", text: "When you'd use this" },
+    { kind: "p", text: <>A single wiring closet often carries many VLANs (staff, student, voice, cameras…). Rather than one sensor per VLAN, put one sensor on a <strong>trunk</strong> and let it monitor all of them.</> },
+    { kind: "h", text: "1. Put the sensor on a trunk port" },
+    { kind: "steps", items: [
+      <>Patch the sensor into a switch port configured as an <strong>802.1Q trunk</strong> that carries the VLANs you want to see (tagged), plus — usually — a native/untagged VLAN for the sensor&apos;s own management address.</>,
+      <>Not sure which VLANs the port carries? After enrollment you can have the sensor <strong>sniff the uplink</strong> for tagged VLANs (the VLAN panel&apos;s <strong>Detect</strong> button) and tell you what it sees.</>,
+    ]},
+    { kind: "callout", tone: "info", text: <>If the port is a plain <strong>access</strong> port, the sensor only sees that one VLAN — that&apos;s fine, you just won&apos;t get the multi-VLAN view. Trunk monitoring needs a trunk.</> },
+    { kind: "h", text: "2. Tell NetMon which VLANs to watch" },
+    { kind: "steps", items: [
+      <><strong>At deploy time</strong> — the Deploy-a-sensor page has VLAN fields; fill in the VLAN IDs (and any static addressing) and the installer brings the sub-interfaces up for you.</>,
+      <><strong>After it&apos;s deployed</strong> — open the sensor&apos;s page and use the <strong>VLAN panel</strong>: <strong>Detect</strong> to see tagged VLANs on the uplink, then <strong>Apply</strong> to push the list. NetMon builds one tagged sub-interface per VLAN, leaves your management interface untouched, and <strong>auto-reverts</strong> if the change would cut the box off the network.</>,
+    ]},
+    { kind: "h", text: "3. Confirm they're collecting — the Networks card" },
+    { kind: "steps", items: [
+      <>On the sensor&apos;s page, find the <strong>Networks</strong> card. It lists each network/VLAN the sensor is scanning, the <strong>IP it scanned from</strong>, the <strong>last scan</strong>, and a <strong>device count</strong>.</>,
+      <>Each row shows a state so you can tell at a glance whether it&apos;s working.</>,
+    ]},
+    { kind: "image", src: "/help/networks-card.png", alt: "Networks card showing per-VLAN collecting status", caption: "The Networks card: one row per VLAN with its IP, last scan, and state." },
+    { kind: "p", text: <>The states you&apos;ll see:</> },
+    { kind: "steps", items: [
+      <><strong>Collecting</strong> — a recent scan ran on that VLAN. Working as intended.</>,
+      <><strong>Stale</strong> — it collected before but hasn&apos;t recently; check the sensor&apos;s overall health.</>,
+      <><strong>No data yet</strong> — the VLAN is configured and up on the box, but no scan has produced data — almost always because nothing on that VLAN handed the sensor an IP (no DHCP lease).</>,
+      <><strong>Up, no DHCP lease</strong> — the sub-interface is up but never got an address. Same root cause: no DHCP server is answering on that VLAN.</>,
+      <><strong>Not up on the box</strong> — configured but the sub-interface isn&apos;t up; the apply didn&apos;t take. See below.</>,
+      <><strong>Configured, not applied</strong> — you changed the VLAN list but the box hasn&apos;t applied it yet; it clears on the next check-in.</>,
+    ]},
+    { kind: "callout", tone: "info", text: <><strong>The mental model that saves the most time:</strong> a VLAN with <strong>no IP</strong> is almost always <em>no DHCP on that VLAN</em> — <strong>not a broken sensor</strong>. The sub-interface comes up routes-off and reverts if it can&apos;t reach the network, so &quot;didn&apos;t work&quot; usually means &quot;nothing leased it an address.&quot; If a VLAN should have DHCP and doesn&apos;t, that&apos;s a finding about the <strong>network</strong>, not the box.</> },
+    { kind: "h", text: "If a VLAN didn't come up" },
+    { kind: "steps", items: [
+      <>Confirm the switch port really is a <strong>trunk</strong> carrying that VLAN tagged (Detect should list it).</>,
+      <>Open the sensor page — if the VLAN apply failed, a <strong>red banner</strong> shows the last host-action result with the reason.</>,
+      <>Re-run <strong>Apply</strong> from the VLAN panel after fixing the trunk config.</>,
+    ]},
+    { kind: "callout", tone: "success", text: <>Once a VLAN reads <strong>Collecting</strong> with a device count, its devices flow into your inventory and map like any other network — and two VLANs that reuse the same IP range stay <strong>separate</strong> on the map, tagged by VLAN.</> },
+  ],
+};
+
+const createReadOnlyAccount: HelpArticle = {
+  slug: "create-a-read-only-account",
+  title: "Create a read-only (Viewer) account",
+  summary: "Give someone — or a tool — access that can see everything you grant but can never change anything.",
+  category: "Settings",
+  kind: "guide",
+  keywords: ["viewer", "read-only", "read only", "account", "user", "role", "permissions", "share", "auditor", "reset password"],
+  updated: "2026-06-29",
+  blocks: [
+    { kind: "callout", tone: "info", text: <>A <strong>Viewer</strong> is a read-only account. It can open and read any district or school you grant it, but it <strong>cannot change anything</strong> — no settings, no config pushes, no console, no resets. It&apos;s the safe way to hand someone a look at NetMon without handing over control.</> },
+    { kind: "h", text: "What a Viewer can and can't do" },
+    { kind: "steps", items: [
+      <><strong>Can:</strong> view the overview, map, device list and detail pages, Speed &amp; Bandwidth, AI findings, and the Security page for whatever scope you grant — one district, several, or all of them.</>,
+      <><strong>Can&apos;t:</strong> change any setting, push config to a sensor, open the remote console, run host actions, reset/purge data, or manage users. Every change is blocked, not just hidden — so it&apos;s safe even for an automated/read-only integration.</>,
+    ]},
+    { kind: "h", text: "Create a read-only account" },
+    { kind: "steps", items: [
+      <>Go to <strong>Settings → Users</strong> and click <strong>Add user</strong>.</>,
+      <>Enter an email (this is the login name — e.g. {C("netmon-reader@yourdistrict.org")}), and choose role <strong>Viewer</strong>.</>,
+      <>Set the <strong>scope</strong>: tick <strong>all districts</strong> for a global reader, or pick specific districts.</>,
+      <>Set a <strong>password</strong> (at least 12 characters). Save.</>,
+    ]},
+    { kind: "image", src: "/help/users-add-viewer.png", alt: "Add user form with role set to Viewer and a scope picker", caption: "Settings → Users → Add user, with role Viewer and a district scope." },
+    { kind: "callout", tone: "info", text: <>Because a Viewer can&apos;t complete the &quot;change your password at first login&quot; step (that&apos;s a change, and changes are blocked), <strong>you</strong> set its password directly — there&apos;s no forced reset.</> },
+    { kind: "h", text: "Reset its password or change its scope" },
+    { kind: "steps", items: [
+      <>The account shows up in <strong>Settings → Users</strong> like any other user.</>,
+      <>Use <strong>Set / reset password</strong> to give it a new password any time.</>,
+      <>Edit its <strong>scope</strong> to widen or narrow which districts it can see, or <strong>disable</strong> it to revoke access without deleting it.</>,
+    ]},
+    { kind: "h", text: "When to use it" },
+    { kind: "steps", items: [
+      <><strong>Auditing / oversight</strong> — let a manager or auditor look without risk of accidental changes.</>,
+      <><strong>Sharing</strong> — give a partner or another team read access to a specific district only.</>,
+      <><strong>Validation / tooling</strong> — a safe login for read-only checks of the live dashboard.</>,
+    ]},
+    { kind: "callout", tone: "success", text: <>Because a Viewer genuinely can&apos;t change anything, it&apos;s safe to share more freely than a regular account — and you can reset its password or revoke it from <strong>Settings → Users</strong> whenever you like.</> },
+  ],
+};
+
 export const HELP_ARTICLES: HelpArticle[] = [
   // Sensors
   recoverStuckSensor,
@@ -969,6 +1059,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   fixSftpUpload,
   sensorHealth,
   deploySensor,
+  vlanTrunkMonitoring,
   // Monitoring
   networkMap,
   deviceInventory,
@@ -980,6 +1071,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   networkSettings,
   authorizeDhcp,
   snmpSetup,
+  createReadOnlyAccount,
 ];
 
 export function getArticle(slug: string): HelpArticle | undefined {
