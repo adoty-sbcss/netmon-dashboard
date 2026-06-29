@@ -15,7 +15,7 @@ import {
   type UplinkSampleRow,
 } from "@/lib/iperf";
 import { getSessionUser } from "@/lib/auth/current-user";
-import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
+import { dateTime, fixed1 as f1, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
 import { Badge } from "@/components/ui/badge";
@@ -38,10 +38,6 @@ import { buildInternetCards, buildIperfCards } from "./summary";
 import type { UplinkGlanceProps } from "./uplink-glance";
 
 export const dynamic = "force-dynamic";
-
-function f1(v: number | null | undefined): string {
-  return v == null ? "—" : v.toFixed(1);
-}
 
 /** Run one section's query, falling back (and logging) if it throws, so a single
  *  failed query degrades its own card instead of 500-ing the whole page. The

@@ -10,6 +10,7 @@
 import { and, gte, lte, desc, inArray, sql } from "drizzle-orm";
 
 import { db } from "../../db";
+import { severityRank } from "../severity";
 import { securityEvents, auditLog } from "../../db/schema/app";
 import type { AnalysisWindow } from "./types";
 
@@ -101,8 +102,6 @@ export async function buildSecurityContext(
   const ipActions = new Map<string, Record<string, number>>();
   const failedLoginActors: Record<string, number> = {};
 
-  const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-
   for (const e of rows) {
     inc(byCategory, e.category);
     inc(bySeverity, e.severity);
@@ -125,7 +124,7 @@ export async function buildSecurityContext(
   // Notable = critical/high first (by severity then recency), padded with the most
   // recent remaining events so the model always has concrete samples to cite.
   const ranked = [...rows].sort((a, b) => {
-    const r = (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9);
+    const r = severityRank(a.severity) - severityRank(b.severity);
     return r !== 0 ? r : b.at.getTime() - a.at.getTime();
   });
   const notableEvents = ranked.slice(0, MAX_NOTABLE).map((e) => ({

@@ -11,6 +11,13 @@
  */
 import { EmailClient } from "@azure/communication-email";
 
+/** Basic email-shape validation, shared by the user-admin + notification recipient forms. */
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidEmail(value: string): boolean {
+  return EMAIL_RE.test(value);
+}
+
 export interface EmailMessage {
   to: string[];
   subject: string;

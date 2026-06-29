@@ -58,6 +58,11 @@ export function num(n: number | null | undefined): string {
   return n.toLocaleString("en-US");
 }
 
+/** One-decimal value for display (Mbps/latency/jitter): 934.2 → "934.2", null → "—". */
+export function fixed1(n: number | null | undefined): string {
+  return n == null ? "—" : n.toFixed(1);
+}
+
 /** Title-case a slug for display when no human name is set: "north-idf" → "North Idf". */
 export function titleizeSlug(slug: string): string {
   return slug

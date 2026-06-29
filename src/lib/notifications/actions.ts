@@ -13,10 +13,9 @@ import { auditLog } from "@/db/schema/app";
 import { notificationRecipients } from "@/db/schema/notifications";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { saveNotificationConfig } from "@/lib/notifications/settings";
-import { sendEmail } from "@/lib/email";
+import { EMAIL_RE, sendEmail } from "@/lib/email";
 
 const PATH = "/settings/notifications";
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SEVERITIES = ["critical", "high", "medium"];
 
 export interface NotifActionState {

@@ -16,6 +16,7 @@ import { db } from "@/db";
 import { users, grants, auditLog } from "@/db/schema/app";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { hashPassword } from "@/lib/auth/password";
+import { EMAIL_RE } from "@/lib/email";
 
 const USERS_PATH = "/settings/users";
 const MIN_PASSWORD_LEN = 12;
@@ -41,8 +42,6 @@ async function audit(actor: string, action: string, detail: Record<string, unkno
     // best-effort
   }
 }
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseRole(v: unknown): Role {
   if (v === "superadmin") return "superadmin";

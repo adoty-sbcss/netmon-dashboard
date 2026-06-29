@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/db";
 import { iperfResults } from "@/db/schema/iperf";
 import { resolveSensorFromBearer } from "@/lib/sensor/auth";
+import { coerceNum as num, coerceInt as intOf, coerceStr as str, parseStartedAt } from "@/lib/sensor/payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,17 +19,7 @@ export async function POST(req: NextRequest) {
   if (!sensorId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const num = (v: unknown): number | null =>
-    typeof v === "number" && Number.isFinite(v) ? v : null;
-  const intOf = (v: unknown): number | null =>
-    typeof v === "number" && Number.isInteger(v) ? v : null;
-  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
-
-  let startedAt: Date | null = null;
-  if (typeof b.startedAt === "string") {
-    const d = new Date(b.startedAt);
-    if (!Number.isNaN(d.getTime())) startedAt = d;
-  }
+  const startedAt = parseStartedAt(b.startedAt);
 
   await db.insert(iperfResults).values({
     sensorId,
