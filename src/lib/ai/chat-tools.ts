@@ -211,7 +211,9 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
           backend: wifi.backend,
           regdom: wifi.regdom,
           total_aps: b.length,
-          distinct_ssids: new Set(b.map((x) => x.ssid).filter(Boolean)).size,
+          // Same keying as `networks` below (incl. the hidden bucket) so the two
+          // figures can never disagree.
+          distinct_ssids: ssids.size,
           district_aps: tally((x) => x.isDistrictSsid === true),
           neighbor_aps: tally((x) => x.isDistrictSsid === false),
           open_aps: tally((x) => x.auth === "open"),

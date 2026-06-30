@@ -751,7 +751,19 @@ export async function setSensorWifiSurveyAction(
   const sensorId = Number(formData.get("sensorId"));
   if (!Number.isInteger(sensorId) || sensorId <= 0) return { error: "Invalid sensor." };
   const enable = formData.get("enabled") !== "false";
-  const districtSsids = String(formData.get("districtSsids") ?? "").trim();
+  // districtSsids: an ABSENT field means "leave the list as-is" (e.g. the disable
+  // button posts no field); a PRESENT field — even empty — is an explicit set or
+  // clear. Normalize the CSV (split/trim/drop-blanks/rejoin) so cosmetic spacing
+  // changes don't churn a needless config version (mirrors saveSensorConfigAction).
+  const ssidsRaw = formData.get("districtSsids");
+  const ssidsProvided = ssidsRaw !== null;
+  const districtSsids = ssidsProvided
+    ? String(ssidsRaw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(",")
+    : "";
 
   const [row] = await db
     .select({ v: desiredConfig.configVersion, config: desiredConfig.config })
@@ -763,7 +775,7 @@ export async function setSensorWifiSurveyAction(
 
   const current = (row.config as Record<string, unknown>) ?? {};
   const sameEnable = (current.wifi_survey_enabled === true) === enable;
-  const sameSsids = districtSsids === "" || current.wifi_district_ssids === districtSsids;
+  const sameSsids = !ssidsProvided || (current.wifi_district_ssids ?? "") === districtSsids;
   if (sameEnable && sameSsids) {
     return {
       ok: true,
@@ -771,7 +783,10 @@ export async function setSensorWifiSurveyAction(
     };
   }
   const merged: Record<string, unknown> = { ...current, wifi_survey_enabled: enable };
-  if (districtSsids !== "") merged.wifi_district_ssids = districtSsids;
+  if (ssidsProvided) {
+    if (districtSsids !== "") merged.wifi_district_ssids = districtSsids;
+    else delete merged.wifi_district_ssids;
+  }
   const nextV = (row.v ?? 0) + 1;
   await db
     .insert(desiredConfig)

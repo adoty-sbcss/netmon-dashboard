@@ -354,6 +354,20 @@ export function toNum(v: unknown): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+/** Coerce to a Postgres int4-safe integer, or null. Unlike toNum, this rejects
+ *  NaN AND Infinity, truncates fractionals, and nulls out-of-range values — so a
+ *  malformed bundle can't throw on an `integer` column and roll back the whole
+ *  ingest transaction. Use for any value written to an int4 column. */
+const INT4_MIN = -2147483648;
+const INT4_MAX = 2147483647;
+export function toInt(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const t = Math.trunc(n);
+  return t < INT4_MIN || t > INT4_MAX ? null : t;
+}
+
 export function toBool(v: unknown): boolean | null {
   if (v === null || v === undefined) return null;
   if (typeof v === "boolean") return v;
