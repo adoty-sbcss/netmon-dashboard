@@ -32,6 +32,7 @@ import {
   hostSwitchPorts,
   networkReachability,
   wifiSurveys,
+  wifiExperience,
 } from "./schema/netmon";
 import {
   entitiesHost,
@@ -2180,6 +2181,98 @@ export async function listWifiForSchool(
       mode: r.mode,
       inUse: r.inUse,
       isDistrictSsid: r.isDistrictSsid,
+    })),
+  };
+}
+
+// ---- WIFI-3: client-experience battery ------------------------------------
+
+export interface WifiExperienceRow {
+  id: number;
+  ssid: string | null;
+  auth: string | null;
+  associated: boolean | null;
+  assocMs: number | null;
+  dhcpMs: number | null;
+  ip: string | null;
+  gateway: string | null;
+  signal: number | null;
+  signalUnit: string | null;
+  captiveState: string | null;
+  captiveHttpCode: string | null;
+  captiveRedirect: string | null;
+  pingOk: boolean | null;
+  rttMs: number | null;
+  lossPct: number | null;
+  dnsOk: boolean | null;
+  isolationTarget: string | null;
+  isolationReachable: boolean | null;
+}
+
+export interface WifiExperienceView {
+  generatedAt: Date | null;
+  interface: string | null;
+  results: WifiExperienceRow[];
+}
+
+/** Latest Wi-Fi client-experience battery for a school (replace-on-ingest per
+ *  sensor). One row per joined network. */
+export async function listWifiExperienceForSchool(
+  schoolId: number,
+): Promise<WifiExperienceView> {
+  const rows = await db
+    .select({
+      id: wifiExperience.id,
+      generatedAt: wifiExperience.generatedAt,
+      interface: wifiExperience.interface,
+      ssid: wifiExperience.ssid,
+      auth: wifiExperience.auth,
+      associated: wifiExperience.associated,
+      assocMs: wifiExperience.assocMs,
+      dhcpMs: wifiExperience.dhcpMs,
+      ip: wifiExperience.ip,
+      gateway: wifiExperience.gateway,
+      signal: wifiExperience.signal,
+      signalUnit: wifiExperience.signalUnit,
+      captiveState: wifiExperience.captiveState,
+      captiveHttpCode: wifiExperience.captiveHttpCode,
+      captiveRedirect: wifiExperience.captiveRedirect,
+      pingOk: wifiExperience.pingOk,
+      rttMs: wifiExperience.rttMs,
+      lossPct: wifiExperience.lossPct,
+      dnsOk: wifiExperience.dnsOk,
+      isolationTarget: wifiExperience.isolationTarget,
+      isolationReachable: wifiExperience.isolationReachable,
+    })
+    .from(wifiExperience)
+    .innerJoin(sensors, eq(wifiExperience.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(wifiExperience.ssid);
+
+  const meta = rows[0];
+  return {
+    generatedAt: meta?.generatedAt ?? null,
+    interface: meta?.interface ?? null,
+    results: rows.map((r) => ({
+      id: r.id,
+      ssid: r.ssid,
+      auth: r.auth,
+      associated: r.associated,
+      assocMs: r.assocMs,
+      dhcpMs: r.dhcpMs,
+      ip: r.ip,
+      gateway: r.gateway,
+      signal: r.signal,
+      signalUnit: r.signalUnit,
+      captiveState: r.captiveState,
+      captiveHttpCode: r.captiveHttpCode,
+      captiveRedirect: r.captiveRedirect,
+      pingOk: r.pingOk,
+      rttMs: r.rttMs,
+      lossPct: r.lossPct,
+      dnsOk: r.dnsOk,
+      isolationTarget: r.isolationTarget,
+      isolationReachable: r.isolationReachable,
     })),
   };
 }

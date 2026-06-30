@@ -15,7 +15,9 @@ import {
   getDistrictBySlug,
   getSchoolBySlug,
   listWifiForSchool,
+  listWifiExperienceForSchool,
   type WifiBssRow,
+  type WifiExperienceRow,
 } from "@/db/queries";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -56,6 +58,8 @@ function signalLabel(signal: number | null, unit: string | null): string {
 
 const AUTH_LABEL: Record<string, string> = {
   "802.1x": "WPA2-Ent (802.1X)",
+  peap: "WPA2-Ent (PEAP)",
+  ttls: "WPA2-Ent (TTLS)",
   psk: "WPA2-PSK",
   sae: "WPA3-SAE",
   "psk+sae": "WPA2/3 (PSK+SAE)",
@@ -68,8 +72,109 @@ function authBadgeVariant(
 ): "default" | "secondary" | "destructive" | "outline" {
   if (auth === "open" || auth === "wep") return "destructive";
   if (auth === "sae" || auth === "psk+sae") return "default";
-  if (auth === "802.1x") return "secondary";
+  if (auth === "802.1x" || auth === "peap" || auth === "ttls") return "secondary";
   return "outline";
+}
+
+/** Build the WIFI-3 client-experience section (null if no battery results). */
+function experienceSection(results: WifiExperienceRow[]) {
+  if (results.length === 0) return null;
+  const portalBadge = (
+    s: string | null,
+  ): "default" | "secondary" | "destructive" | "outline" =>
+    s === "open" ? "default" : s === "portal" ? "secondary" : s === "blocked" ? "destructive" : "outline";
+  return (
+    <Card>
+      <SectionHeader
+        icon={Signal}
+        title="Connection experience"
+        meta={`${results.length} network${results.length === 1 ? "" : "s"} tested`}
+      />
+      <CardContent className="px-0 sm:px-6">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>SSID</TableHead>
+                <TableHead>Security</TableHead>
+                <TableHead>Joined</TableHead>
+                <TableHead className="text-right">Assoc</TableHead>
+                <TableHead className="text-right">DHCP</TableHead>
+                <TableHead>Captive portal</TableHead>
+                <TableHead>Internet</TableHead>
+                <TableHead>DNS</TableHead>
+                <TableHead>Guest isolation</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {results.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-medium">{r.ssid ?? "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant={authBadgeVariant(r.auth)} className="text-[10px]">
+                      {AUTH_LABEL[r.auth ?? "unknown"] ?? r.auth}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {r.associated ? (
+                      <Badge variant="default" className="text-[10px]">joined</Badge>
+                    ) : (
+                      <Badge variant="destructive" className="text-[10px]">failed</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {r.assocMs != null ? `${r.assocMs} ms` : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {r.dhcpMs == null ? "—" : r.dhcpMs < 0 ? "no lease" : `${r.dhcpMs} ms`}
+                  </TableCell>
+                  <TableCell title={r.captiveRedirect ?? undefined}>
+                    {r.captiveState ? (
+                      <Badge variant={portalBadge(r.captiveState)} className="text-[10px]">
+                        {r.captiveState}
+                      </Badge>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {r.pingOk
+                      ? `${r.rttMs != null ? `${r.rttMs.toFixed(0)} ms` : "ok"}${r.lossPct ? ` · ${r.lossPct}% loss` : ""}`
+                      : <span className="text-muted-foreground">unreachable</span>}
+                  </TableCell>
+                  <TableCell>
+                    {r.dnsOk === true ? (
+                      <Badge variant="default" className="text-[10px]">ok</Badge>
+                    ) : r.dnsOk === false ? (
+                      <Badge variant="destructive" className="text-[10px]">fail</Badge>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {r.isolationReachable === true ? (
+                      <Badge variant="destructive" className="text-[10px]" title={`reached ${r.isolationTarget ?? "internal"}`}>
+                        not isolated
+                      </Badge>
+                    ) : r.isolationReachable === false ? (
+                      <Badge variant="default" className="text-[10px]">isolated</Badge>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        <p className="px-4 pt-3 text-xs text-muted-foreground sm:px-0">
+          The sensor joins each network on a spare radio (routes-off, so the uplink is
+          never used) and measures the real client experience. &quot;Not isolated&quot;
+          means a guest network could reach an internal host — worth investigating.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function bandColor(band: string | null): string {
@@ -98,28 +203,35 @@ export default async function WirelessPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const wifi = await listWifiForSchool(school.id);
+  const [wifi, exp] = await Promise.all([
+    listWifiForSchool(school.id),
+    listWifiExperienceForSchool(school.id),
+  ]);
   const bss = wifi.bss;
+  const expSection = experienceSection(exp.results);
   const schoolName = school.name || titleizeSlug(school.slug);
 
-  // ---- empty state ----
+  // ---- empty state: no survey. If there's a join-experience battery, show that;
+  // otherwise the "enable the survey" prompt. ----
   if (bss.length === 0) {
     return (
       <div className="flex flex-col gap-6">
         <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
         <PageHeader title="Wireless" description={`${schoolName} · Wi-Fi RF / AP survey`} />
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-            <WifiOff className="size-10 text-muted-foreground" />
-            <p className="text-lg font-medium">No Wi-Fi survey data yet</p>
-            <p className="max-w-md text-sm text-muted-foreground">
-              The managed-mode Wi-Fi survey is off for this site, or no sensor here
-              has a Wi-Fi adapter. Enable it on a sensor (Sensors tab → Enable Wi-Fi
-              survey, or set <code className="font-mono">NETMON_WIFI_SURVEY_ENABLED</code>)
-              and data will appear after the next hourly bundle.
-            </p>
-          </CardContent>
-        </Card>
+        {expSection ?? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+              <WifiOff className="size-10 text-muted-foreground" />
+              <p className="text-lg font-medium">No Wi-Fi survey data yet</p>
+              <p className="max-w-md text-sm text-muted-foreground">
+                The managed-mode Wi-Fi survey is off for this site, or no sensor here
+                has a Wi-Fi adapter. Enable it on a sensor (Sensors tab → Enable Wi-Fi
+                survey, or set <code className="font-mono">NETMON_WIFI_SURVEY_ENABLED</code>)
+                and data will appear after the next hourly bundle.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     );
   }
@@ -280,6 +392,9 @@ export default async function WirelessPage({
           </div>
         }
       />
+
+      {/* WIFI-3 client-experience battery (join -> measure -> leave), if any */}
+      {expSection}
 
       {/* stat tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

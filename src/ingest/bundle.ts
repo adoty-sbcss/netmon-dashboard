@@ -329,6 +329,30 @@ export interface RawWifiSurvey {
   bss?: RawWifiBss[] | null;
 }
 
+/** wifi_experience.json (bundle root): WIFI-3 client-experience battery — one
+ *  result per joined network. Present only when wifi-join is enabled + the battery ran. */
+export interface RawWifiExpResult {
+  ssid?: string | null;
+  auth?: string | null;
+  associated?: boolean | null;
+  assoc_ms?: number | null;
+  dhcp_ms?: number | null;
+  ip?: string | null;
+  gateway?: string | null;
+  signal?: number | null;
+  signal_unit?: string | null;
+  captive_portal?: { state?: string | null; http_code?: string | null; redirect?: string | null } | null;
+  internet?: { ping_ok?: boolean | null; rtt_ms?: string | number | null; loss_pct?: string | number | null } | null;
+  dns_ok?: boolean | null;
+  isolation?: { internal_target?: string | null; internal_reachable?: boolean | null } | null;
+}
+export interface RawWifiExperience {
+  available?: boolean | null;
+  generated_at?: string | null;
+  interface?: string | null;
+  results?: RawWifiExpResult[] | null;
+}
+
 export interface Bundle {
   /** Idempotency key: the .zip filename (synthesized from the dir name if needed). */
   filename: string;
@@ -338,6 +362,8 @@ export interface Bundle {
   snmpCredentials: RawSnmpCredential[];
   /** Box-global Wi-Fi survey (bundle root); null unless WIFI-2 is enabled. */
   wifiSurvey: RawWifiSurvey | null;
+  /** Box-global Wi-Fi client-experience battery (bundle root); null unless WIFI-3 ran. */
+  wifiExperience: RawWifiExperience | null;
 }
 
 // ---- coercion helpers (bundle values are display-only text/JSON) ----
@@ -536,7 +562,12 @@ export function readBundleDir(dir: string): Bundle {
     join(dir, "wifi_survey.json"),
     null,
   );
-  return { filename, dirName, scans, snmpCredentials, wifiSurvey };
+  // Box-global Wi-Fi client-experience battery (WIFI-3); null unless it ran.
+  const wifiExperience = readJson<RawWifiExperience | null>(
+    join(dir, "wifi_experience.json"),
+    null,
+  );
+  return { filename, dirName, scans, snmpCredentials, wifiSurvey, wifiExperience };
 }
 
 /** "NetMonitor_01_2026_05_26_07" -> "netmonitor_01" (collector name as device slug). */
