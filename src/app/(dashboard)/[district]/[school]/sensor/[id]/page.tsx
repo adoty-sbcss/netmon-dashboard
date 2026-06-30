@@ -20,6 +20,7 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { sensorHealthFlags, worstLevel } from "@/lib/sensor-health";
 import { SensorManagementPanel } from "./sensor-management";
 import { SensorUploadStatus } from "./sensor-upload-status";
+import { SensorWifiSurvey } from "./sensor-wifi-survey";
 import { SensorHealthCard } from "./sensor-health";
 import { IperfPanel } from "./iperf-panel";
 import { SpeedtestPanel } from "./speedtest-panel";
@@ -361,6 +362,16 @@ export default async function SensorDetailPage({
           currentVlans={String((mgmt.config?.trunk_vlans as string) ?? "")}
           currentParent={String((mgmt.config?.trunk_parent as string) ?? "")}
           currentStatics={String((mgmt.config?.trunk_statics as string) ?? "")}
+        />
+      )}
+
+      {/* Wi-Fi survey (admin) */}
+      {isAdmin && mgmt && (
+        <SensorWifiSurvey
+          sensorId={sensor.id}
+          basePath={basePath}
+          enabled={Boolean(dcfg.wifi_survey_enabled)}
+          currentSsids={String((dcfg.wifi_district_ssids as string) ?? "")}
         />
       )}
 

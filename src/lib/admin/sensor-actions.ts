@@ -734,6 +734,74 @@ export async function setSensorUploadsAction(
 }
 
 /**
+ * WIFI-2: per-sensor "enable Wi-Fi survey" — pushes NETMON_WIFI_SURVEY_ENABLED
+ * via desired-config (merge + version bump). The same flag gates both the host
+ * survey timer and the collector's bundle inclusion (checkin._apply_config), so
+ * one toggle turns the passive RF/AP survey on/off. Optional district-SSID list
+ * (wifi_district_ssids) flags the box's own APs vs neighbors. No-op if a Wi-Fi
+ * NIC isn't present — the survey just finds no interfaces.
+ */
+export async function setSensorWifiSurveyAction(
+  _prev: SensorActionState,
+  formData: FormData,
+): Promise<SensorActionState> {
+  const admin = await requireAdmin();
+  if (!admin) return { error: "Not authorized." };
+
+  const sensorId = Number(formData.get("sensorId"));
+  if (!Number.isInteger(sensorId) || sensorId <= 0) return { error: "Invalid sensor." };
+  const enable = formData.get("enabled") !== "false";
+  const districtSsids = String(formData.get("districtSsids") ?? "").trim();
+
+  const [row] = await db
+    .select({ v: desiredConfig.configVersion, config: desiredConfig.config })
+    .from(sensors)
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(eq(sensors.id, sensorId))
+    .limit(1);
+  if (!row) return { error: "That sensor no longer exists." };
+
+  const current = (row.config as Record<string, unknown>) ?? {};
+  const sameEnable = (current.wifi_survey_enabled === true) === enable;
+  const sameSsids = districtSsids === "" || current.wifi_district_ssids === districtSsids;
+  if (sameEnable && sameSsids) {
+    return {
+      ok: true,
+      message: enable ? "Wi-Fi survey is already on." : "Wi-Fi survey is already off.",
+    };
+  }
+  const merged: Record<string, unknown> = { ...current, wifi_survey_enabled: enable };
+  if (districtSsids !== "") merged.wifi_district_ssids = districtSsids;
+  const nextV = (row.v ?? 0) + 1;
+  await db
+    .insert(desiredConfig)
+    .values({ sensorId, configVersion: nextV, config: merged, updatedBy: admin.id })
+    .onConflictDoUpdate({
+      target: desiredConfig.sensorId,
+      set: { configVersion: nextV, config: merged, updatedBy: admin.id, updatedAt: new Date() },
+    });
+
+  await audit(
+    admin.email,
+    enable ? "sensor_wifi_survey_enabled" : "sensor_wifi_survey_disabled",
+    { sensorId },
+  );
+  await adminEvent(
+    admin.email,
+    enable ? "sensor_wifi_survey_enabled" : "sensor_wifi_survey_disabled",
+    { sensorId },
+    "info",
+  );
+  revalidatePath(basePathFor(formData));
+  return {
+    ok: true,
+    message: enable
+      ? "Wi-Fi survey enabled — the sensor starts the passive RF/AP survey and ships it in the next bundle (~15 min)."
+      : "Wi-Fi survey disabled — the sensor stops surveying on its next check-in.",
+  };
+}
+
+/**
  * Push an SNMP community string to every sensor in ONE district (merge + bump).
  * SNMP discovery is inert without a community, so this is the companion to
  * enabling the SNMP capability in the matrix. Scoped to the district so one
