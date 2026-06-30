@@ -326,6 +326,50 @@ export const wifiSurveys = pgTable(
   ],
 );
 
+/**
+ * WIFI-3: client-experience battery results — one row per network the sensor
+ * joined + measured (open/PSK/PEAP), from the box-global wifi_experience.json.
+ * Keyed to the sensor; replace-on-ingest = the latest battery run. Survey-level
+ * meta (generatedAt/interface) is denormalized onto each row.
+ */
+export const wifiExperience = pgTable(
+  "wifi_experience",
+  {
+    id: serial("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+    interface: text("interface"),
+    // per-network result
+    ssid: text("ssid"),
+    auth: text("auth"), // open | psk | peap | ttls
+    associated: boolean("associated"),
+    assocMs: integer("assoc_ms"), // time-to-associate
+    dhcpMs: integer("dhcp_ms"), // time-to-DHCP-lease (-1 = no lease)
+    ip: text("ip"),
+    gateway: text("gateway"),
+    signal: integer("signal"),
+    signalUnit: text("signal_unit"), // "quality" (nmcli 0-100)
+    captiveState: text("captive_state"), // open | portal | blocked | other | n/a
+    captiveHttpCode: text("captive_http_code"),
+    captiveRedirect: text("captive_redirect"),
+    pingOk: boolean("ping_ok"),
+    rttMs: doublePrecision("rtt_ms"),
+    lossPct: integer("loss_pct"),
+    dnsOk: boolean("dns_ok"),
+    isolationTarget: text("isolation_target"), // the internal host we tried to reach
+    isolationReachable: boolean("isolation_reachable"), // true = NOT isolated (a finding)
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("idx_wifi_experience_sensor").on(t.sensorId),
+    index("idx_wifi_experience_ssid").on(t.ssid),
+  ],
+);
+
 export const stpEvents = pgTable(
   "stp_events",
   {

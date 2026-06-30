@@ -40,6 +40,7 @@ import {
   uplinkSamples,
   snmpDeviceCredentials,
   wifiSurveys,
+  wifiExperience,
 } from "../db/schema";
 import {
   readBundleDir,
@@ -55,6 +56,7 @@ import {
   type RawTopology,
   type RawSnmpCredential,
   type RawWifiSurvey,
+  type RawWifiExperience,
   type SnmpInterface,
 } from "./bundle";
 
@@ -590,6 +592,48 @@ async function persistWifiSurvey(
       isDistrictSsid: triBool(b.is_district_ssid),
     }));
   if (rows.length) await tx.insert(wifiSurveys).values(rows);
+}
+
+/**
+ * WIFI-3: mirror the box-global client-experience battery (wifi_experience.json at
+ * the bundle root) into wifi_experience — one row per joined network. Replace-on-
+ * ingest. Inert when the artifact is absent (most sensors) — `exp` null → return.
+ */
+async function persistWifiExperience(
+  tx: Tx,
+  sensorId: number,
+  exp: RawWifiExperience | null,
+): Promise<void> {
+  if (!exp || exp.available !== true || !Array.isArray(exp.results)) return;
+  await tx.delete(wifiExperience).where(eq(wifiExperience.sensorId, sensorId));
+  const triBool = (v: unknown): boolean | null =>
+    v === null || v === undefined ? null : toBool(v);
+  const rows = exp.results
+    .filter((r): r is NonNullable<typeof r> => !!r && !!r.ssid)
+    .map((r) => ({
+      sensorId,
+      generatedAt: toDate(exp.generated_at),
+      interface: str(exp.interface),
+      ssid: str(r.ssid),
+      auth: str(r.auth),
+      associated: triBool(r.associated),
+      assocMs: toInt(r.assoc_ms),
+      dhcpMs: toInt(r.dhcp_ms),
+      ip: str(r.ip),
+      gateway: str(r.gateway),
+      signal: toInt(r.signal),
+      signalUnit: str(r.signal_unit),
+      captiveState: str(r.captive_portal?.state),
+      captiveHttpCode: str(r.captive_portal?.http_code),
+      captiveRedirect: str(r.captive_portal?.redirect),
+      pingOk: triBool(r.internet?.ping_ok),
+      rttMs: toNum(r.internet?.rtt_ms),
+      lossPct: toInt(r.internet?.loss_pct),
+      dnsOk: triBool(r.dns_ok),
+      isolationTarget: str(r.isolation?.internal_target),
+      isolationReachable: triBool(r.isolation?.internal_reachable),
+    }));
+  if (rows.length) await tx.insert(wifiExperience).values(rows);
 }
 
 /**
@@ -1472,6 +1516,9 @@ export async function ingestBundle(
 
     // ---- WIFI-2: Wi-Fi RF/AP survey (from the bundle root; null unless enabled) ----
     await persistWifiSurvey(tx, sensor.id, bundle.wifiSurvey);
+
+    // ---- WIFI-3: Wi-Fi client-experience battery (bundle root; null unless it ran) ----
+    await persistWifiExperience(tx, sensor.id, bundle.wifiExperience);
 
     // ---- daily health rollup (per district+school+day) ----
     if (day) {
