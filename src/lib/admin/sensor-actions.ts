@@ -375,11 +375,12 @@ export async function bulkQueueUpdateAction(
 }
 
 /**
- * Fleet-wide SFTP credential rotation: push the same SFTP destination to EVERY
- * sensor's desired config (merging into each box's existing config so SNMP etc.
- * is preserved) and bump each version. Each box flips on its next check-in; the
- * rollout view watches `reportedSftpUser`/`reportedConfigVersion` so you can
- * confirm every box is on the new creds before retiring the old SFTP user.
+ * District-wide SFTP credential rotation: push the same SFTP destination to every
+ * sensor IN ONE DISTRICT (merging into each box's existing config so SNMP etc. is
+ * preserved) and bump each version. Scoped to the district so one district's creds
+ * can't leak onto another's boxes. Each box flips on its next check-in; the rollout
+ * view watches `reportedSftpUser`/`reportedConfigVersion` so you can confirm every
+ * box is on the new creds before retiring the old SFTP user.
  */
 export async function bulkSetSftpAction(
   _prev: SensorActionState,
@@ -387,6 +388,9 @@ export async function bulkSetSftpAction(
 ): Promise<SensorActionState> {
   const admin = await requireAdmin();
   if (!admin) return { error: "Not authorized." };
+
+  const districtId = Number(formData.get("districtId"));
+  if (!Number.isInteger(districtId)) return { error: "Invalid district." };
 
   const sftpHost = String(formData.get("sftpHost") ?? "").trim();
   const sftpUser = String(formData.get("sftpUser") ?? "").trim();
@@ -402,7 +406,8 @@ export async function bulkSetSftpAction(
   const pw = String(formData.get("sftpPassword") ?? "");
   if (pw) sftp.sftp_password = pw; // only push when a new value is typed
 
-  // One row per sensor with its current desired config (null for never-configured).
+  // One row per sensor IN THIS DISTRICT with its current desired config (null for
+  // never-configured).
   const rows = await db
     .select({
       sensorId: sensors.id,
@@ -410,8 +415,10 @@ export async function bulkSetSftpAction(
       config: desiredConfig.config,
     })
     .from(sensors)
-    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id));
-  if (rows.length === 0) return { error: "No sensors to push to." };
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(eq(schools.districtId, districtId));
+  if (rows.length === 0) return { error: "No sensors in this district." };
 
   await db.transaction(async (tx) => {
     for (const row of rows) {
@@ -427,25 +434,27 @@ export async function bulkSetSftpAction(
     }
   });
 
-  await audit(admin.email, "sensor_bulk_sftp_set", {
+  await audit(admin.email, "district_bulk_sftp_set", {
+    districtId,
     count: rows.length,
     host: sftpHost,
     user: sftpUser,
     passwordChanged: Boolean(pw),
   });
-  await adminEvent(admin.email, "fleet_sftp_pushed", { count: rows.length, host: sftpHost, user: sftpUser, passwordChanged: Boolean(pw) }, "medium");
+  await adminEvent(admin.email, "district_sftp_pushed", { districtId, count: rows.length, host: sftpHost, user: sftpUser, passwordChanged: Boolean(pw) }, "medium");
   revalidatePath(basePathFor(formData));
   return {
     ok: true,
-    message: `Pushed SFTP creds to ${rows.length} sensor(s) — watch the rollout below as each box reports the new user, then retire the old SFTP account.`,
+    message: `Pushed SFTP creds to ${rows.length} sensor(s) in this district — watch the rollout below as each box reports the new user, then retire the old SFTP account.`,
   };
 }
 
 /**
- * Fleet-wide topology-crawl scope/tuning push: merge the same crawl config (scope
- * full|spine + optional enable/interval/budgets) into EVERY sensor's desired
- * config and bump each version, so flipping the whole fleet to 'spine' is one
- * action. Merges (SNMP/SFTP preserved); each box applies on its next check-in.
+ * District-wide topology-crawl scope/tuning push: merge the same crawl config
+ * (scope full|spine + optional enable/interval/budgets) into every sensor IN ONE
+ * DISTRICT's desired config and bump each version, so flipping a district to
+ * 'spine' is one action. Scoped to the district (crawl tuning is district policy);
+ * merges (SNMP/SFTP preserved); each box applies on its next check-in.
  */
 export async function bulkSetCrawlScopeAction(
   _prev: SensorActionState,
@@ -453,6 +462,9 @@ export async function bulkSetCrawlScopeAction(
 ): Promise<SensorActionState> {
   const admin = await requireAdmin();
   if (!admin) return { error: "Not authorized." };
+
+  const districtId = Number(formData.get("districtId"));
+  if (!Number.isInteger(districtId)) return { error: "Invalid district." };
 
   const scopeRaw = String(formData.get("topoScope") ?? "full").trim().toLowerCase();
   const scope = scopeRaw === "spine" ? "spine" : "full";
@@ -481,8 +493,10 @@ export async function bulkSetCrawlScopeAction(
       config: desiredConfig.config,
     })
     .from(sensors)
-    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id));
-  if (rows.length === 0) return { error: "No sensors to push to." };
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(eq(schools.districtId, districtId));
+  if (rows.length === 0) return { error: "No sensors in this district." };
 
   await db.transaction(async (tx) => {
     for (const row of rows) {
@@ -498,13 +512,13 @@ export async function bulkSetCrawlScopeAction(
     }
   });
 
-  await audit(admin.email, "sensor_bulk_crawl_scope_set", { count: rows.length, scope });
-  await adminEvent(admin.email, "fleet_crawl_scope_pushed", { count: rows.length, scope }, "medium");
+  await audit(admin.email, "district_crawl_scope_set", { districtId, count: rows.length, scope });
+  await adminEvent(admin.email, "district_crawl_scope_pushed", { districtId, count: rows.length, scope }, "medium");
 
   revalidatePath(basePathFor(formData));
   return {
     ok: true,
-    message: `Pushed crawl scope "${scope}" to ${rows.length} sensor(s) — each applies on its next check-in (watch the rollout below).`,
+    message: `Pushed crawl scope "${scope}" to ${rows.length} sensor(s) in this district — each applies on its next check-in (watch the rollout below).`,
   };
 }
 
