@@ -6,7 +6,16 @@ import {
   NetworksCard,
   type ReportedInterface,
 } from "@/app/(dashboard)/[district]/[school]/sensor/[id]/networks-card";
+import { UsersAdmin } from "@/app/(dashboard)/settings/users/users-admin";
 import type { SensorNetwork } from "@/db/queries";
+
+// Public district names only (no network topology). The Add-user shot fills
+// email/name + selects role=Viewer via scripts/kb-shot-adduser.mjs.
+const MOCK_DISTRICTS = [
+  { id: 1, name: "San Bernardino CSS" },
+  { id: 2, name: "Bear Valley USD" },
+  { id: 3, name: "Baker Valley USD" },
+];
 
 const NOW = Date.now();
 const ago = (mins: number) => new Date(NOW - mins * 60_000);
@@ -42,6 +51,10 @@ export default function KbShotsPage() {
           reportedInterfaces={REPORTED}
           lastHostAction={null}
         />
+      </div>
+
+      <div id="kb-add-user" className="mt-10">
+        <UsersAdmin users={[]} districts={MOCK_DISTRICTS} currentUserId={0} localUserIds={[]} />
       </div>
     </div>
   );
