@@ -2277,6 +2277,40 @@ export async function listWifiExperienceForSchool(
   };
 }
 
+export interface SchoolWifiRadio {
+  sensorId: number;
+  sensorName: string;
+  interface: string;
+  mac: string;
+}
+
+/** Wi-Fi radios across a school's sensors (name + MAC), from each box's reported
+ *  interface list. The MAC is what an operator authorizes on MPSK/MAC-bound nets. */
+export async function listSchoolWifiRadios(
+  schoolId: number,
+): Promise<SchoolWifiRadio[]> {
+  const rows = await db
+    .select({ id: sensors.id, name: sensors.name, slug: sensors.slug, ifaces: sensors.reportedInterfaces })
+    .from(sensors)
+    .where(eq(sensors.schoolId, schoolId));
+  const out: SchoolWifiRadio[] = [];
+  for (const r of rows) {
+    const ifaces = r.ifaces as Array<{ name?: string; mac?: string; wireless?: boolean }> | null;
+    if (!Array.isArray(ifaces)) continue;
+    for (const i of ifaces) {
+      if (i?.wireless && i?.mac && i?.name) {
+        out.push({
+          sensorId: r.id,
+          sensorName: r.name ?? r.slug ?? `sensor ${r.id}`,
+          interface: i.name,
+          mac: i.mac,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // ---- STP / spanning-tree --------------------------------------------------
 
 export interface StpRow {
