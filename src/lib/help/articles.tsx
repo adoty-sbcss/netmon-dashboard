@@ -1076,6 +1076,44 @@ const createReadOnlyAccount: HelpArticle = {
   ],
 };
 
+const wirelessSurvey: HelpArticle = {
+  slug: "wireless-survey",
+  title: "Reading the Wireless tab (Wi-Fi survey)",
+  summary:
+    "Turn on the passive Wi-Fi RF/AP survey for a sensor and read the encryption posture, findings, channel use, and per-AP table on the Wireless tab.",
+  category: "Monitoring",
+  kind: "guide",
+  keywords: [
+    "wifi", "wireless", "wi-fi", "ssid", "bssid", "ap", "access point", "rf",
+    "channel", "wpa2", "wpa3", "802.1x", "psk", "encryption", "survey",
+    "spectrum", "rogue", "guest", "signal",
+  ],
+  updated: "2026-06-30",
+  blocks: [
+    { kind: "callout", tone: "info", text: <>The <strong>Wireless</strong> tab shows a <strong>passive</strong> Wi-Fi survey from a sensor&apos;s Wi-Fi adapter — every nearby access point it can hear, with channel, signal and encryption. It never joins a network and captures no traffic.</> },
+    { kind: "h", text: "Turn it on" },
+    { kind: "steps", items: [
+      <>Open the <strong>Sensors</strong> tab, click the sensor, and use <strong>Enable Wi-Fi survey</strong>. The sensor needs a Wi-Fi adapter — without one the survey simply finds nothing.</>,
+      <>Optionally list your district&apos;s SSIDs (e.g. {C("SBCSS,sbcss-mpsk,SBCSS-Guest")}) so the page can tell <strong>your</strong> APs from neighbors.</>,
+      <>Data appears here after the sensor&apos;s next hourly bundle (usually within ~15 minutes).</>,
+    ]},
+    { kind: "h", text: "What you're looking at" },
+    { kind: "steps", items: [
+      <>The <strong>tiles</strong> summarize access points heard, distinct SSIDs, the district-vs-neighbor split, channels in use, and open networks.</>,
+      <><strong>Encryption posture</strong> and <strong>bands</strong> break the APs down by security type (Open, WEP, WPA2-PSK, WPA2-Enterprise/802.1X, WPA3-SAE) and 2.4 / 5 / 6 GHz.</>,
+      <><strong>Channel occupancy</strong> shows how many APs sit on each channel — lots of APs on one 2.4 GHz channel (1 / 6 / 11) means co-channel congestion.</>,
+      <>The <strong>Networks</strong> and <strong>All access points</strong> tables list each SSID and each BSSID (AP radio) with signal, security, and whether it&apos;s yours.</>,
+    ]},
+    { kind: "h", text: "Findings worth acting on" },
+    { kind: "steps", items: [
+      <><strong>Open / WEP / TKIP</strong> networks — an open guest SSID behind a captive portal is normal, but confirm it&apos;s isolated; WEP and TKIP should be retired.</>,
+      <><strong>WPA2-only (no WPA3)</strong> — a heads-up to enable WPA3 where your APs support it.</>,
+      <><strong>Regulatory domain 00</strong> — the survey radio&apos;s region is unset; set it to your country so all channels are visible.</>,
+    ]},
+    { kind: "callout", tone: "info", text: <>Because most networks isolate clients, this is an <strong>access-point / RF</strong> view, not a list of devices on the Wi-Fi — for connected devices use {A("understanding-the-device-list", "the device list")}.</> },
+  ],
+};
+
 export const HELP_ARTICLES: HelpArticle[] = [
   // Sensors
   recoverStuckSensor,
@@ -1087,6 +1125,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   vlanTrunkMonitoring,
   // Monitoring
   networkMap,
+  wirelessSurvey,
   deviceInventory,
   deviceDetail,
   aiFindings,
