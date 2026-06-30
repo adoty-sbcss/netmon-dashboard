@@ -277,6 +277,55 @@ export const dnsProbes = pgTable(
   (t) => [index("idx_dns_probes_scan").on(t.scanRunId)],
 );
 
+/**
+ * WIFI-2: managed-mode Wi-Fi RF/AP survey — one row per nearby BSS (AP radio),
+ * from the collector's box-global wifi_survey.json (bundle root). Keyed to the
+ * sensor; the ingest replaces the sensor's rows each bundle, so this always holds
+ * the LATEST survey (current wireless posture) for that box. Survey-level meta
+ * (generatedAt/stale/backend/regdom/host) is denormalized onto each row — the
+ * table is small and it keeps the query a single SELECT.
+ */
+export const wifiSurveys = pgTable(
+  "wifi_surveys",
+  {
+    id: serial("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    // survey-level metadata (same for every row of one survey)
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+    stale: boolean("stale"),
+    backend: text("backend"), // "nm" | "networkd"
+    regdom: text("regdom"), // "00" (world/unset) | "US" | ...
+    surveyHost: text("survey_host"),
+    // per-BSS fields
+    interface: text("interface"),
+    ssid: text("ssid"), // null = hidden / not advertised
+    bssid: text("bssid"),
+    band: text("band"), // "2.4GHz" | "5GHz" | "6GHz"
+    channel: integer("channel"),
+    freqMhz: integer("freq_mhz"),
+    rateMbps: integer("rate_mbps"),
+    signal: integer("signal"), // value; unit in signalUnit
+    signalUnit: text("signal_unit"), // "quality" (nmcli 0-100) | "dbm" (iw)
+    security: text("security"), // human summary, e.g. "WPA2 802.1X"
+    auth: text("auth"), // open|wep|psk|sae|psk+sae|802.1x|unknown
+    cipher: text("cipher"), // ccmp|tkip|ccmp+tkip|none
+    pmf: boolean("pmf"), // protected mgmt frames, if known
+    mode: text("mode"),
+    inUse: boolean("in_use"),
+    isDistrictSsid: boolean("is_district_ssid"),
+    ingestedAt: timestamp("ingested_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("idx_wifi_surveys_sensor").on(t.sensorId),
+    index("idx_wifi_surveys_ssid").on(t.ssid),
+    index("idx_wifi_surveys_bssid").on(t.bssid),
+  ],
+);
+
 export const stpEvents = pgTable(
   "stp_events",
   {
