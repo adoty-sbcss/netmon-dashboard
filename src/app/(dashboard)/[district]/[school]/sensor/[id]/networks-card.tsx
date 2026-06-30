@@ -1,4 +1,4 @@
-import { Waypoints, CircleCheck, AlertTriangle, Clock, Globe, Plug } from "lucide-react";
+import { Waypoints, CircleCheck, AlertTriangle, Clock, Globe, Plug, Wifi } from "lucide-react";
 
 import type { SensorNetwork } from "@/db/queries";
 import { num, relativeTime } from "@/lib/format";
@@ -19,10 +19,12 @@ import {
 /** The box's live interface (reported at check-in — PROV-5 Phase 2). */
 export type ReportedInterface = {
   name: string;
+  mac?: string | null;
   cidr: string | null;
   up: boolean;
   vlan: number | null;
   primary: boolean;
+  wireless?: boolean;
 };
 export type LastHostAction = {
   action?: string;
@@ -121,6 +123,7 @@ export function NetworksCard({
   const reported = reportedInterfaces && reportedInterfaces.length > 0 ? reportedInterfaces : null;
   const ifaceByVlan = new Map<number, ReportedInterface>();
   if (reported) for (const i of reported) if (i.vlan != null) ifaceByVlan.set(i.vlan, i);
+  const wifiRadios = reported?.filter((i) => i.wireless && i.mac) ?? [];
 
   const rows: NetRow[] = networks.map((n) => ({
     interface: n.interface,
@@ -216,6 +219,25 @@ export function NetworksCard({
             {lastHostAction?.reason && (
               <div className="mt-0.5 text-muted-foreground">{lastHostAction.reason}</div>
             )}
+          </div>
+        )}
+        {wifiRadios.length > 0 && (
+          <div className="mx-6 mb-3 rounded-lg border bg-muted/30 p-2.5 text-xs sm:mx-0">
+            <div className="flex items-center gap-1.5 font-medium">
+              <Wifi className="size-3.5" /> Wi-Fi radio
+            </div>
+            {wifiRadios.map((r) => (
+              <div key={r.name} className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="font-mono">{r.name}</span>
+                <code className="select-all rounded bg-background px-1 py-0.5 font-mono">
+                  {r.mac}
+                </code>
+                {r.up && r.cidr && <span className="text-muted-foreground">{r.cidr}</span>}
+              </div>
+            ))}
+            <p className="mt-1 text-muted-foreground">
+              The radio&apos;s MAC — authorize it on MPSK / MAC-bound networks.
+            </p>
           </div>
         )}
         <div className="overflow-x-auto">
