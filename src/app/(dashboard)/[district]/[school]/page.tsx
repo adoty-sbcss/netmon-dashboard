@@ -86,10 +86,10 @@ export default async function SchoolPage({
           {/* Primary metrics — the at-a-glance health of the site */}
           <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
             <StatCard
-              label="Switches"
+              label="Infrastructure"
               value={num(stats.switchCount)}
               icon={Network}
-              href={`/${district.slug}/${school.slug}/switches`}
+              href={`/${district.slug}/${school.slug}/inventory?type=switch`}
             />
             <StatCard
               label="Hosts"

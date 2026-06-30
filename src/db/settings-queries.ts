@@ -146,6 +146,70 @@ export async function listDistrictSensorCapabilities(
 }
 
 /**
+ * Per-sensor rollout state for the district crawl-scope + SFTP-rotation cards on
+ * /settings/network: what's currently PUSHED (desired crawl scope) vs what each
+ * box last REPORTED running (SFTP host/user) plus the desired/applied config
+ * versions, so an operator can watch each box flip after a district-wide push.
+ */
+export interface DistrictRolloutRow {
+  id: number;
+  name: string | null;
+  slug: string;
+  schoolSlug: string;
+  schoolName: string | null;
+  reportedConfigVersion: number | null;
+  reportedConfigAt: Date | null;
+  desiredVersion: number | null;
+  /** snmp_topology_scope currently pushed in desired config ("full"|"spine"|""). */
+  pushedScope: string;
+  /** SFTP host/user the box last reported running (ground truth from check-in). */
+  reportedSftpHost: string | null;
+  reportedSftpUser: string | null;
+}
+
+export async function listDistrictRollout(
+  districtId: number,
+): Promise<DistrictRolloutRow[]> {
+  const rows = await db
+    .select({
+      id: sensors.id,
+      name: sensors.name,
+      slug: sensors.slug,
+      schoolSlug: schools.slug,
+      schoolName: schools.name,
+      reportedConfigVersion: sensors.reportedConfigVersion,
+      reportedConfigAt: sensors.reportedConfigAt,
+      reportedSftpHost: sensors.reportedSftpHost,
+      reportedSftpUser: sensors.reportedSftpUser,
+      desiredVersion: desiredConfig.configVersion,
+      config: desiredConfig.config,
+    })
+    .from(sensors)
+    .innerJoin(schools, eq(sensors.schoolId, schools.id))
+    .leftJoin(desiredConfig, eq(desiredConfig.sensorId, sensors.id))
+    .where(eq(schools.districtId, districtId))
+    .orderBy(schools.name, sensors.slug);
+
+  return rows.map((r) => {
+    const cfg = (r.config as Record<string, unknown>) ?? {};
+    const scope = typeof cfg.snmp_topology_scope === "string" ? cfg.snmp_topology_scope : "";
+    return {
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      schoolSlug: r.schoolSlug,
+      schoolName: r.schoolName,
+      reportedConfigVersion: r.reportedConfigVersion,
+      reportedConfigAt: r.reportedConfigAt,
+      desiredVersion: r.desiredVersion,
+      pushedScope: scope,
+      reportedSftpHost: r.reportedSftpHost,
+      reportedSftpUser: r.reportedSftpUser,
+    };
+  });
+}
+
+/**
  * The district's effective SNMP read community, for display on a device page:
  * ground truth (what sensors report) when they all agree, else the last pushed
  * (desired) value. Mirrors the logic on /settings/network. "" when none set.

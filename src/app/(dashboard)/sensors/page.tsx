@@ -11,7 +11,7 @@ import {
   fleetTopSha,
   type HealthFlag,
 } from "@/lib/sensor-health";
-import { AlertTriangle, Radar, Rocket } from "lucide-react";
+import { AlertTriangle, Rocket } from "lucide-react";
 
 import { FleetUpdateAll } from "./fleet-update-all";
 import { FleetApplyDefaults } from "./fleet-apply-defaults";
@@ -80,9 +80,6 @@ export default async function FleetSensorsPage() {
         actions={
           user.role === "superadmin" ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Button asChild variant="outline" size="sm">
-                <Link href="/sensors/crawl"><Radar className="size-4" /> Crawl scope</Link>
-              </Button>
               <Button asChild variant="outline" size="sm">
                 <Link href="/sensors/releases"><Rocket className="size-4" /> Releases</Link>
               </Button>

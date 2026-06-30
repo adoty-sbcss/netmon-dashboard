@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Radar, Rocket, Settings, SlidersHorizontal, UploadCloud } from "lucide-react";
+import { Radar, Rocket, Settings, SlidersHorizontal } from "lucide-react";
 
 import { getSessionUser } from "@/lib/auth/current-user";
 import { listAuthorizedDhcpServers } from "@/lib/dhcp-policy";
@@ -8,6 +8,7 @@ import { getDistrictIperf } from "@/lib/iperf";
 import {
   listDistrictsForSettings,
   listDistrictSensorCapabilities,
+  listDistrictRollout,
   type SensorCapabilityRow,
 } from "@/db/settings-queries";
 import { titleizeSlug } from "@/lib/format";
@@ -17,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CapabilityMatrix } from "./capability-matrix";
 import { SnmpCommunityForm } from "./snmp-community-form";
+import { CrawlScopeCard } from "./crawl-scope-card";
+import { SftpRotationCard } from "./sftp-rotation-card";
 import { DhcpServersManager } from "../../[district]/settings/dhcp-servers-manager";
 import { IperfServerForm } from "../../[district]/settings/iperf-server-form";
 
@@ -104,10 +107,11 @@ async function NetworkSettingsForDistrict({
   districtSlug: string;
   basePath: string;
 }) {
-  const [sensors, dhcpServers, iperf] = await Promise.all([
+  const [sensors, dhcpServers, iperf, rollout] = await Promise.all([
     listDistrictSensorCapabilities(districtId),
     listAuthorizedDhcpServers(districtId),
     getDistrictIperf(districtId),
+    listDistrictRollout(districtId),
   ]);
   // Seed the district push field from what sensors are ACTUALLY reporting (ground
   // truth) when they agree, so the field matches what each sensor's own page
@@ -140,19 +144,19 @@ async function NetworkSettingsForDistrict({
         </CardContent>
       </Card>
 
-      {/* 3. District policy that tunes alerts + AI. */}
+      {/* 3. Topology crawl scope/tuning — district policy for the spine crawl. */}
+      <CrawlScopeCard districtId={districtId} basePath={basePath} rows={rollout} />
+
+      {/* 4. SFTP credential rotation — push one upload destination to the district. */}
+      <SftpRotationCard districtId={districtId} basePath={basePath} rows={rollout} />
+
+      {/* 5. District policy that tunes alerts + AI. */}
       <DhcpServersManager districtSlug={districtSlug} servers={dhcpServers} />
 
-      {/* 4. Deeper/per-sensor settings that live elsewhere. */}
+      {/* 6. Fleet-wide settings that live elsewhere. */}
       <Card>
         <SectionHeader icon={Settings} title="More" />
         <CardContent className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link href="/sensors/sftp"><UploadCloud className="size-4" /> SFTP destination (fleet)</Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/sensors/crawl"><Radar className="size-4" /> Crawl scope & tuning</Link>
-          </Button>
           <Button asChild variant="outline" size="sm">
             <Link href="/sensors/releases"><Rocket className="size-4" /> Release channels</Link>
           </Button>
