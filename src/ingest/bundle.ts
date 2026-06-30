@@ -298,6 +298,37 @@ export interface RawSnmpCredential {
   failure_count?: number | null;
 }
 
+/** wifi_survey.json (bundle root): WIFI-2 managed-mode RF/AP survey. Present only
+ *  when the sensor has NETMON_WIFI_SURVEY_ENABLED + a Wi-Fi NIC; absent otherwise. */
+export interface RawWifiBss {
+  interface?: string | null;
+  ssid?: string | null;
+  bssid?: string | null;
+  band?: string | null;
+  channel?: number | null;
+  freq_mhz?: number | null;
+  rate_mbps?: number | null;
+  signal?: number | null;
+  signal_unit?: string | null;
+  security?: string | null;
+  auth?: string | null;
+  cipher?: string | null;
+  pmf?: boolean | null;
+  mode?: string | null;
+  in_use?: boolean | null;
+  is_district_ssid?: boolean | null;
+}
+export interface RawWifiSurvey {
+  available?: boolean | null;
+  generated_at?: string | null;
+  age_sec?: number | null;
+  stale?: boolean | null;
+  backend?: string | null;
+  regdom?: string | null;
+  host?: string | null;
+  bss?: RawWifiBss[] | null;
+}
+
 export interface Bundle {
   /** Idempotency key: the .zip filename (synthesized from the dir name if needed). */
   filename: string;
@@ -305,6 +336,8 @@ export interface Bundle {
   scans: ScanData[];
   /** Box-global SNMP credential cache (bundle root); empty on older collectors. */
   snmpCredentials: RawSnmpCredential[];
+  /** Box-global Wi-Fi survey (bundle root); null unless WIFI-2 is enabled. */
+  wifiSurvey: RawWifiSurvey | null;
 }
 
 // ---- coercion helpers (bundle values are display-only text/JSON) ----
@@ -484,7 +517,12 @@ export function readBundleDir(dir: string): Bundle {
       {},
     ).devices,
   );
-  return { filename, dirName, scans, snmpCredentials };
+  // Box-global Wi-Fi survey (WIFI-2) at the bundle root; null when not enabled.
+  const wifiSurvey = readJson<RawWifiSurvey | null>(
+    join(dir, "wifi_survey.json"),
+    null,
+  );
+  return { filename, dirName, scans, snmpCredentials, wifiSurvey };
 }
 
 /** "NetMonitor_01_2026_05_26_07" -> "netmonitor_01" (collector name as device slug). */

@@ -31,6 +31,7 @@ import {
   snmpPolls,
   hostSwitchPorts,
   networkReachability,
+  wifiSurveys,
 } from "./schema/netmon";
 import {
   entitiesHost,
@@ -2079,6 +2080,108 @@ export async function listDnsForSchool(
   ]);
 
   return { scanId, resolvers, probes };
+}
+
+// ---- WIFI-2: Wi-Fi RF/AP survey -------------------------------------------
+
+export interface WifiBssRow {
+  id: number;
+  sensorId: number;
+  interface: string | null;
+  ssid: string | null;
+  bssid: string | null;
+  band: string | null;
+  channel: number | null;
+  freqMhz: number | null;
+  rateMbps: number | null;
+  signal: number | null;
+  signalUnit: string | null;
+  security: string | null;
+  auth: string | null;
+  cipher: string | null;
+  pmf: boolean | null;
+  mode: string | null;
+  inUse: boolean | null;
+  isDistrictSsid: boolean | null;
+}
+
+export interface WifiSurveyView {
+  generatedAt: Date | null;
+  stale: boolean | null;
+  backend: string | null;
+  regdom: string | null;
+  host: string | null;
+  bss: WifiBssRow[];
+}
+
+/**
+ * Latest Wi-Fi survey for a school. The ingest keeps only each sensor's most
+ * recent survey (replace-on-ingest), so this returns every BSS those sensors
+ * currently see, strongest signal first. Survey-level meta is taken from the
+ * first row (identical across a survey).
+ */
+export async function listWifiForSchool(
+  schoolId: number,
+): Promise<WifiSurveyView> {
+  const rows = await db
+    .select({
+      id: wifiSurveys.id,
+      sensorId: wifiSurveys.sensorId,
+      generatedAt: wifiSurveys.generatedAt,
+      stale: wifiSurveys.stale,
+      backend: wifiSurveys.backend,
+      regdom: wifiSurveys.regdom,
+      surveyHost: wifiSurveys.surveyHost,
+      interface: wifiSurveys.interface,
+      ssid: wifiSurveys.ssid,
+      bssid: wifiSurveys.bssid,
+      band: wifiSurveys.band,
+      channel: wifiSurveys.channel,
+      freqMhz: wifiSurveys.freqMhz,
+      rateMbps: wifiSurveys.rateMbps,
+      signal: wifiSurveys.signal,
+      signalUnit: wifiSurveys.signalUnit,
+      security: wifiSurveys.security,
+      auth: wifiSurveys.auth,
+      cipher: wifiSurveys.cipher,
+      pmf: wifiSurveys.pmf,
+      mode: wifiSurveys.mode,
+      inUse: wifiSurveys.inUse,
+      isDistrictSsid: wifiSurveys.isDistrictSsid,
+    })
+    .from(wifiSurveys)
+    .innerJoin(sensors, eq(wifiSurveys.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(desc(wifiSurveys.signal));
+
+  const meta = rows[0];
+  return {
+    generatedAt: meta?.generatedAt ?? null,
+    stale: meta?.stale ?? null,
+    backend: meta?.backend ?? null,
+    regdom: meta?.regdom ?? null,
+    host: meta?.surveyHost ?? null,
+    bss: rows.map((r) => ({
+      id: r.id,
+      sensorId: r.sensorId,
+      interface: r.interface,
+      ssid: r.ssid,
+      bssid: r.bssid,
+      band: r.band,
+      channel: r.channel,
+      freqMhz: r.freqMhz,
+      rateMbps: r.rateMbps,
+      signal: r.signal,
+      signalUnit: r.signalUnit,
+      security: r.security,
+      auth: r.auth,
+      cipher: r.cipher,
+      pmf: r.pmf,
+      mode: r.mode,
+      inUse: r.inUse,
+      isDistrictSsid: r.isDistrictSsid,
+    })),
+  };
 }
 
 // ---- STP / spanning-tree --------------------------------------------------

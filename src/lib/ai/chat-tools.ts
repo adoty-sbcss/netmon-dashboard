@@ -16,6 +16,7 @@ import {
   listFindingsForSchool,
   listScanSnapshotsForSchool,
   listSwitchesForSchool,
+  listWifiForSchool,
 } from "@/db/queries";
 import { ipInCidr } from "@/lib/net";
 import type { AiToolDef, AiToolExecutor } from "./types";
@@ -132,6 +133,17 @@ export const ASSISTANT_TOOLS: AiToolDef[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "wireless_posture",
+    description:
+      "Wi-Fi RF/AP survey posture for a school: counts of access points by encryption/auth (open, WEP, WPA2-PSK, WPA2-Enterprise/802.1X, WPA3-SAE), district vs neighbor APs, bands/channels, and a per-SSID summary. Use for questions like 'which SSIDs are open or use weak encryption', 'is the guest network open', 'do we have WPA3', or 'what's broadcasting on channel 6'. Returns empty if the Wi-Fi survey isn't enabled on a sensor at the site.",
+    parameters: {
+      type: "object",
+      properties: { school_id: { type: "number" } },
+      required: ["school_id"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** Build the executor bound to the user's allowed sites. */
@@ -150,6 +162,74 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
         return JSON.stringify(
           sites.map((s) => ({ school_id: s.id, name: s.name, district: s.districtName })),
         );
+
+      case "wireless_posture": {
+        const id = num(args.school_id);
+        ensure(id);
+        const wifi = await listWifiForSchool(id);
+        const b = wifi.bss;
+        const byAuth: Record<string, number> = {};
+        for (const x of b) {
+          const a = x.auth ?? "unknown";
+          byAuth[a] = (byAuth[a] ?? 0) + 1;
+        }
+        const tally = (pred: (x: (typeof b)[number]) => boolean): number =>
+          b.filter(pred).length;
+        interface SsidSummary {
+          ssid: string;
+          aps: number;
+          security: Set<string>;
+          bands: Set<string>;
+          channels: Set<number>;
+          district: boolean | null;
+          best_signal: number | null;
+        }
+        const ssids = new Map<string, SsidSummary>();
+        for (const x of b) {
+          const k = x.ssid ?? "<hidden>";
+          const s: SsidSummary = ssids.get(k) ?? {
+            ssid: k,
+            aps: 0,
+            security: new Set<string>(),
+            bands: new Set<string>(),
+            channels: new Set<number>(),
+            district: x.isDistrictSsid,
+            best_signal: null,
+          };
+          s.aps += 1;
+          if (x.auth) s.security.add(x.auth);
+          if (x.band) s.bands.add(x.band);
+          if (x.channel != null) s.channels.add(x.channel);
+          if (x.isDistrictSsid === true) s.district = true;
+          if (x.signal != null && (s.best_signal == null || x.signal > s.best_signal))
+            s.best_signal = x.signal;
+          ssids.set(k, s);
+        }
+        return JSON.stringify({
+          generated_at: wifi.generatedAt,
+          stale: wifi.stale,
+          backend: wifi.backend,
+          regdom: wifi.regdom,
+          total_aps: b.length,
+          distinct_ssids: new Set(b.map((x) => x.ssid).filter(Boolean)).size,
+          district_aps: tally((x) => x.isDistrictSsid === true),
+          neighbor_aps: tally((x) => x.isDistrictSsid === false),
+          open_aps: tally((x) => x.auth === "open"),
+          wep_aps: tally((x) => x.auth === "wep"),
+          wpa3_aps: tally((x) => x.auth === "sae" || x.auth === "psk+sae"),
+          tkip_aps: tally((x) => (x.cipher ?? "").includes("tkip")),
+          by_auth: byAuth,
+          networks: Array.from(ssids.values()).map((s) => ({
+            ssid: s.ssid,
+            aps: s.aps,
+            security: Array.from(s.security),
+            bands: Array.from(s.bands),
+            channels: Array.from(s.channels).sort((a, b) => a - b),
+            district: s.district,
+            best_signal: s.best_signal,
+          })),
+        });
+      }
 
       case "device_counts": {
         const id = num(args.school_id);

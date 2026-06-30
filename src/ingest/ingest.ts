@@ -39,6 +39,7 @@ import {
   healthRollupDaily,
   uplinkSamples,
   snmpDeviceCredentials,
+  wifiSurveys,
 } from "../db/schema";
 import {
   readBundleDir,
@@ -52,6 +53,7 @@ import {
   type ScanData,
   type RawTopology,
   type RawSnmpCredential,
+  type RawWifiSurvey,
   type SnmpInterface,
 } from "./bundle";
 
@@ -541,6 +543,52 @@ async function persistSnmpCredentials(
         set,
       });
   }
+}
+
+/**
+ * WIFI-2: mirror the collector's box-global Wi-Fi survey (wifi_survey.json at the
+ * bundle root) into wifi_surveys — one row per nearby BSS. Replace-on-ingest: we
+ * delete this sensor's prior rows and insert the fresh set, so the table always
+ * holds the LATEST survey (current wireless posture) for the box. Inert for any
+ * bundle without the artifact (most sensors) — `survey` is null → early return.
+ */
+async function persistWifiSurvey(
+  tx: Tx,
+  sensorId: number,
+  survey: RawWifiSurvey | null,
+): Promise<void> {
+  if (!survey || survey.available !== true || !Array.isArray(survey.bss)) return;
+  // Replace the sensor's latest survey snapshot.
+  await tx.delete(wifiSurveys).where(eq(wifiSurveys.sensorId, sensorId));
+  const triBool = (v: unknown): boolean | null =>
+    v === null || v === undefined ? null : toBool(v);
+  const rows = survey.bss
+    .filter((b): b is NonNullable<typeof b> => !!b && (!!b.bssid || !!b.ssid))
+    .map((b) => ({
+      sensorId,
+      generatedAt: toDate(survey.generated_at),
+      stale: triBool(survey.stale),
+      backend: str(survey.backend),
+      regdom: str(survey.regdom),
+      surveyHost: str(survey.host),
+      interface: str(b.interface),
+      ssid: str(b.ssid),
+      bssid: str(b.bssid),
+      band: str(b.band),
+      channel: toNum(b.channel),
+      freqMhz: toNum(b.freq_mhz),
+      rateMbps: toNum(b.rate_mbps),
+      signal: toNum(b.signal),
+      signalUnit: str(b.signal_unit),
+      security: str(b.security),
+      auth: str(b.auth),
+      cipher: str(b.cipher),
+      pmf: triBool(b.pmf),
+      mode: str(b.mode),
+      inUse: triBool(b.in_use),
+      isDistrictSsid: triBool(b.is_district_ssid),
+    }));
+  if (rows.length) await tx.insert(wifiSurveys).values(rows);
 }
 
 /**
@@ -1420,6 +1468,9 @@ export async function ingestBundle(
 
     // ---- INV/CORE-3: per-device working SNMP community (from the bundle root) ----
     await persistSnmpCredentials(tx, school.id, bundle.snmpCredentials);
+
+    // ---- WIFI-2: Wi-Fi RF/AP survey (from the bundle root; null unless enabled) ----
+    await persistWifiSurvey(tx, sensor.id, bundle.wifiSurvey);
 
     // ---- daily health rollup (per district+school+day) ----
     if (day) {

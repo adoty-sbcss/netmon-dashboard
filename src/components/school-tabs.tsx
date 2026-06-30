@@ -11,6 +11,7 @@ import {
   Map as MapIcon,
   Radio,
   Sparkles,
+  Wifi,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +31,7 @@ const TABS: { label: string; seg: string; icon: LucideIcon }[] = [
   { label: "Devices", seg: "inventory", icon: Boxes },
   { label: "DHCP", seg: "dhcp", icon: HardDrive },
   { label: "DNS", seg: "dns", icon: Globe },
+  { label: "Wireless", seg: "wireless", icon: Wifi },
   { label: "Speed & Bandwidth", seg: "iperf", icon: Gauge },
   { label: "Sensors", seg: "sensors", icon: Radio },
   { label: "AI analysis", seg: "ai", icon: Sparkles },
