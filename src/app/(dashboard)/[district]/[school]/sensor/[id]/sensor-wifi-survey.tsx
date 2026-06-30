@@ -79,31 +79,44 @@ export function SensorWifiSurvey({
             </Button>
           </form>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Badge variant="default" className="text-[10px] uppercase">
                 surveying
               </Badge>
-              {currentSsids ? (
-                <span>
-                  District SSIDs: <span className="font-mono">{currentSsids}</span>
-                </span>
-              ) : (
-                <span>No district SSIDs set (all APs shown as neighbors).</span>
-              )}
+              <form action={formAction}>
+                <input type="hidden" name="sensorId" value={sensorId} />
+                <input type="hidden" name="basePath" value={basePath} />
+                <input type="hidden" name="enabled" value="false" />
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  disabled={pending}
+                >
+                  <CircleSlash className="size-4" /> {pending ? "Disabling…" : "Disable survey"}
+                </Button>
+              </form>
             </div>
-            <form action={formAction}>
+            {/* Edit the district-SSID list in place (no off/on cycle needed). */}
+            <form action={formAction} className="flex flex-wrap items-end gap-2">
               <input type="hidden" name="sensorId" value={sensorId} />
               <input type="hidden" name="basePath" value={basePath} />
-              <input type="hidden" name="enabled" value="false" />
-              <Button
-                type="submit"
-                size="sm"
-                variant="ghost"
-                className="text-muted-foreground"
-                disabled={pending}
-              >
-                <CircleSlash className="size-4" /> {pending ? "Disabling…" : "Disable survey"}
+              <input type="hidden" name="enabled" value="true" />
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">
+                  District SSIDs (comma-separated; blank to clear)
+                </span>
+                <input
+                  name="districtSsids"
+                  defaultValue={currentSsids}
+                  placeholder="SBCSS,sbcss-mpsk,SBCSS-Guest"
+                  className="w-80 max-w-full rounded-md border bg-background px-2 py-1 text-sm"
+                />
+              </label>
+              <Button type="submit" size="sm" variant="outline" disabled={pending}>
+                {pending ? "Saving…" : "Update SSIDs"}
               </Button>
             </form>
           </div>
