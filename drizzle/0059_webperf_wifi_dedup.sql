@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_webperf_wifi_run" ON "webperf_results" USING btree ("sensor_id","transport","ssid","url","started_at");

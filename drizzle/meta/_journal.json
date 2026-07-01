@@ -407,6 +407,20 @@
       "when": 1782909837908,
       "tag": "0057_wifi_battery_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1782912603740,
+      "tag": "0058_webperf_transport",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1782912665276,
+      "tag": "0059_webperf_wifi_dedup",
+      "breakpoints": true
     }
   ]
 }

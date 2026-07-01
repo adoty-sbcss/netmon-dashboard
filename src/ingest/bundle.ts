@@ -349,6 +349,21 @@ export interface RawWifiExpResult {
   link?: { bssid?: string | null; band?: string | null; rx_rate_mbps?: string | number | null } | null;
   throughput?: { download_mbps?: string | number | null } | null;
   targets?: Array<{ host?: string | null; rtt_ms?: string | number | null }> | null;
+  // WIFI-6/PERF-5: district URL waterfall run source-bound over THIS Wi-Fi (same probe
+  // as the wired webperf) — one entry per URL, cumulative-ms fields like webperf.py.
+  webperf?: Array<{
+    url?: string | null;
+    ok?: boolean | null;
+    dns_ms?: string | number | null;
+    tcp_ms?: string | number | null;
+    tls_ms?: string | number | null;
+    ttfb_ms?: string | number | null;
+    total_ms?: string | number | null;
+    http_status?: string | number | null;
+    size_bytes?: string | number | null;
+    speed_mbps?: string | number | null;
+    error?: string | null;
+  }> | null;
 }
 export interface RawWifiExperience {
   available?: boolean | null;
