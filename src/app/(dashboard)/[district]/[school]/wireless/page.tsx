@@ -79,6 +79,21 @@ function authBadgeVariant(
   return "outline";
 }
 
+/** 2.4GHz clients are the "shoved onto the slow band" tell — flag it; 5/6GHz are healthy. */
+function bandBadge(band: string): "default" | "secondary" | "destructive" | "outline" {
+  if (band === "2.4GHz") return "secondary";
+  if (band === "5GHz" || band === "6GHz") return "default";
+  return "outline";
+}
+
+/** Shorten instructional-target hostnames for the compact latency column. */
+function targetLabel(host: string): string {
+  const h = host.replace(/^www\./, "");
+  if (h.includes("google")) return "Google";
+  if (h.includes("office") || h.includes("microsoft") || h.includes("office365")) return "M365";
+  return h.length > 16 ? h.slice(0, 15) + "…" : h;
+}
+
 /** Build the WIFI-3 client-experience section (null if no battery results). */
 function experienceSection(results: WifiExperienceRow[]) {
   if (results.length === 0) return null;
@@ -102,10 +117,13 @@ function experienceSection(results: WifiExperienceRow[]) {
                 <TableHead>Sensor</TableHead>
                 <TableHead>Security</TableHead>
                 <TableHead>Joined</TableHead>
+                <TableHead>Link</TableHead>
                 <TableHead className="text-right">Assoc</TableHead>
                 <TableHead className="text-right">DHCP</TableHead>
                 <TableHead>Captive portal</TableHead>
                 <TableHead>Internet</TableHead>
+                <TableHead className="text-right">Download</TableHead>
+                <TableHead>App latency</TableHead>
                 <TableHead>DNS</TableHead>
                 <TableHead>Guest isolation</TableHead>
                 <TableHead className="text-right">Measured</TableHead>
@@ -126,6 +144,22 @@ function experienceSection(results: WifiExperienceRow[]) {
                       <Badge variant="default" className="text-[10px]">joined</Badge>
                     ) : (
                       <Badge variant="destructive" className="text-[10px]">failed</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs" title={r.bssid ? `BSSID ${r.bssid}` : undefined}>
+                    {r.band || r.rxRateMbps != null ? (
+                      <span className="flex items-center gap-1">
+                        {r.band && (
+                          <Badge variant={bandBadge(r.band)} className="text-[10px]">{r.band}</Badge>
+                        )}
+                        {r.rxRateMbps != null && (
+                          <span className="tabular-nums text-muted-foreground">
+                            {Math.round(r.rxRateMbps)} Mbps
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      "—"
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
@@ -155,6 +189,33 @@ function experienceSection(results: WifiExperienceRow[]) {
                     {r.pingOk
                       ? `${r.rttMs != null ? `${r.rttMs.toFixed(0)} ms` : "ok"}${r.lossPct ? ` · ${r.lossPct}% loss` : ""}`
                       : <span className="text-muted-foreground">unreachable</span>}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-xs">
+                    {r.downloadMbps != null ? `${r.downloadMbps.toFixed(1)} Mbps` : "—"}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {r.targets && r.targets.length ? (
+                      <span className="flex flex-col gap-0.5">
+                        {r.targets.map((t) => (
+                          <span key={t.host} className="flex items-center gap-1 whitespace-nowrap">
+                            <span className="text-muted-foreground">{targetLabel(t.host)}</span>
+                            <span
+                              className={`tabular-nums ${
+                                t.rtt_ms == null
+                                  ? "text-destructive"
+                                  : t.rtt_ms > 100
+                                    ? "text-amber-600 dark:text-amber-400"
+                                    : "text-foreground"
+                              }`}
+                            >
+                              {t.rtt_ms == null ? "unreachable" : `${t.rtt_ms.toFixed(0)} ms`}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                   <TableCell>
                     {r.dnsOk === true ? (
@@ -251,6 +312,10 @@ function experienceTrendSection(trends: WifiExperienceTrend[]) {
           );
           const lastAssoc = assoc.length ? assoc[assoc.length - 1] : null;
           const lastRtt = rtt.length ? rtt[rtt.length - 1] : null;
+          const dl = t.points
+            .map((p) => p.downloadMbps)
+            .filter((v): v is number => v != null && Number.isFinite(v));
+          const lastDl = dl.length ? dl[dl.length - 1] : null;
           return (
             <div
               key={`${t.sensorId}-${t.ssid}`}
@@ -298,6 +363,15 @@ function experienceTrendSection(trends: WifiExperienceTrend[]) {
                     {rtt.length ? ` · avg ${avg(rtt)}` : ""}
                   </span>
                 </span>
+                {dl.length > 0 && (
+                  <span className="flex items-center gap-2">
+                    <span className="w-16 text-muted-foreground">Download</span>
+                    <Sparkline values={t.points.map((p) => p.downloadMbps)} color="text-emerald-500" />
+                    <span className="tabular-nums text-muted-foreground">
+                      {lastDl != null ? `${lastDl.toFixed(1)} Mbps` : "—"}
+                    </span>
+                  </span>
+                )}
               </div>
             </div>
           );

@@ -33,6 +33,7 @@ import {
   networkReachability,
   wifiSurveys,
   wifiExperience,
+  type WifiExpTarget,
 } from "./schema/netmon";
 import {
   entitiesHost,
@@ -2224,6 +2225,11 @@ export interface WifiExperienceRow {
   dnsOk: boolean | null;
   isolationTarget: string | null;
   isolationReachable: boolean | null;
+  bssid: string | null;
+  band: string | null;
+  rxRateMbps: number | null;
+  downloadMbps: number | null;
+  targets: WifiExpTarget[] | null;
 }
 
 export interface WifiExperienceView {
@@ -2265,6 +2271,11 @@ export async function listWifiExperienceForSchool(
       dnsOk: wifiExperience.dnsOk,
       isolationTarget: wifiExperience.isolationTarget,
       isolationReachable: wifiExperience.isolationReachable,
+      bssid: wifiExperience.bssid,
+      band: wifiExperience.band,
+      rxRateMbps: wifiExperience.rxRateMbps,
+      downloadMbps: wifiExperience.downloadMbps,
+      targets: wifiExperience.targets,
     })
     .from(wifiExperience)
     .innerJoin(sensors, eq(wifiExperience.sensorId, sensors.id))
@@ -2308,6 +2319,11 @@ export async function listWifiExperienceForSchool(
       dnsOk: r.dnsOk,
       isolationTarget: r.isolationTarget,
       isolationReachable: r.isolationReachable,
+      bssid: r.bssid,
+      band: r.band,
+      rxRateMbps: r.rxRateMbps,
+      downloadMbps: r.downloadMbps,
+      targets: r.targets,
     });
   }
   results.sort((a, b) => (a.ssid ?? "").localeCompare(b.ssid ?? ""));
@@ -2325,6 +2341,8 @@ export interface WifiTrendPoint {
   pingOk: boolean | null;
   captiveState: string | null;
   isolationReachable: boolean | null;
+  downloadMbps: number | null;
+  rxRateMbps: number | null;
 }
 
 export interface WifiExperienceTrend {
@@ -2359,6 +2377,8 @@ export async function listWifiExperienceHistory(
       pingOk: wifiExperience.pingOk,
       captiveState: wifiExperience.captiveState,
       isolationReachable: wifiExperience.isolationReachable,
+      downloadMbps: wifiExperience.downloadMbps,
+      rxRateMbps: wifiExperience.rxRateMbps,
     })
     .from(wifiExperience)
     .innerJoin(sensors, eq(wifiExperience.sensorId, sensors.id))
@@ -2392,6 +2412,8 @@ export async function listWifiExperienceHistory(
         pingOk: r.pingOk,
         captiveState: r.captiveState,
         isolationReachable: r.isolationReachable,
+        downloadMbps: r.downloadMbps,
+        rxRateMbps: r.rxRateMbps,
       });
   }
   const out: WifiExperienceTrend[] = [];

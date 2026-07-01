@@ -345,6 +345,10 @@ export interface RawWifiExpResult {
   internet?: { ping_ok?: boolean | null; rtt_ms?: string | number | null; loss_pct?: string | number | null } | null;
   dns_ok?: boolean | null;
   isolation?: { internal_target?: string | null; internal_reachable?: boolean | null } | null;
+  // WIFI-6 battery metrics
+  link?: { bssid?: string | null; band?: string | null; rx_rate_mbps?: string | number | null } | null;
+  throughput?: { download_mbps?: string | number | null } | null;
+  targets?: Array<{ host?: string | null; rtt_ms?: string | number | null }> | null;
 }
 export interface RawWifiExperience {
   available?: boolean | null;
