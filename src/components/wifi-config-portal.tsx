@@ -450,16 +450,22 @@ export function WifiConfigPortal({
   profiles,
   radios,
   surveySsids,
+  schoolLabel,
 }: {
   schoolId: number;
   basePath: string;
   profiles: WifiProfileRow[];
   radios: SchoolWifiRadio[];
   surveySsids: string[];
+  schoolLabel?: string;
 }) {
   return (
     <Card>
-      <SectionHeader icon={Wifi} title="Wi-Fi join configuration" meta="test networks like a client" />
+      <SectionHeader
+        icon={Wifi}
+        title={schoolLabel ? `Wi-Fi join · ${schoolLabel}` : "Wi-Fi join configuration"}
+        meta="test networks like a client"
+      />
       <CardContent className="flex flex-col gap-4">
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />

@@ -302,6 +302,17 @@ export const getSchoolBySlug = cache(async (districtId: number, slug: string) =>
   return row ?? null;
 });
 
+/** All schools in a district (for the district-scoped settings page). */
+export async function listSchoolsForDistrict(
+  districtId: number,
+): Promise<{ id: number; slug: string; name: string | null }[]> {
+  return db
+    .select({ id: schools.id, slug: schools.slug, name: schools.name })
+    .from(schools)
+    .where(eq(schools.districtId, districtId))
+    .orderBy(schools.name, schools.slug);
+}
+
 // ---- school detail --------------------------------------------------------
 
 export interface SensorRow {
