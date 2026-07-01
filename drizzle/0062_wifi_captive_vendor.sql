@@ -1,0 +1,1 @@
+ALTER TABLE "wifi_experience" ADD COLUMN "captive_vendor" text;

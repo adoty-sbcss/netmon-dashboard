@@ -636,6 +636,7 @@ async function persistWifiExperience(
       captiveHttpCode: str(r.captive_portal?.http_code),
       captiveRedirect: str(r.captive_portal?.redirect),
       captiveAutoAccepted: triBool(r.captive_portal?.auto_accepted),
+      captiveVendor: str(r.captive_portal?.vendor),
       pingOk: triBool(r.internet?.ping_ok),
       rttMs: toNum(r.internet?.rtt_ms),
       lossPct: toInt(r.internet?.loss_pct),

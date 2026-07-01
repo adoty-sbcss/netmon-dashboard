@@ -435,6 +435,13 @@
       "when": 1782923956587,
       "tag": "0061_backfill_wifi_primary",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1782940259744,
+      "tag": "0062_wifi_captive_vendor",
+      "breakpoints": true
     }
   ]
 }

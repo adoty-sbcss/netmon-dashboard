@@ -284,6 +284,8 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
               rx_rate_mbps: r.rxRateMbps,
               captive_state: r.captiveState,
               captive_auto_accepted: r.captiveAutoAccepted,
+              captive_vendor: r.captiveVendor, // portal platform: aruba_central|aruba|cisco_wlc|cisco_ise|meraki|generic
+
               internet_ok: r.pingOk,
               rtt_ms: r.rttMs,
               loss_pct: r.lossPct,
