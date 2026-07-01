@@ -150,6 +150,11 @@ export const webperfResults = pgTable(
       .notNull()
       .references(() => sensors.id, { onDelete: "cascade" }),
     trigger: text("trigger"),
+    // WIFI-6/PERF-5: which network path this run measured. "wired" = the sensor's
+    // uplink (live POST, ssid null); "wifi" = the analysis radio joined to `ssid`
+    // (rides the wifi_experience bundle) — same probe both paths for a fair compare.
+    transport: text("transport").notNull().default("wired"),
+    ssid: text("ssid"),
     url: text("url"),
     dnsMs: doublePrecision("dns_ms"),
     tcpMs: doublePrecision("tcp_ms"),
@@ -164,7 +169,19 @@ export const webperfResults = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("idx_webperf_results_sensor").on(t.sensorId, t.createdAt)],
+  (t) => [
+    index("idx_webperf_results_sensor").on(t.sensorId, t.createdAt),
+    // Wi-Fi runs ride the box-global bundle, re-shipped every hour until the battery
+    // re-runs — dedup one row per (sensor,ssid,url,run). Wired POSTs have ssid=NULL, so
+    // (NULLs distinct) they never collide here → wired keeps its append behavior.
+    uniqueIndex("uq_webperf_wifi_run").on(
+      t.sensorId,
+      t.transport,
+      t.ssid,
+      t.url,
+      t.startedAt,
+    ),
+  ],
 );
 
 /** PERF-5: master switch for website testing in a district (one row per district). */

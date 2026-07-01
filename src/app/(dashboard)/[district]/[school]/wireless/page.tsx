@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import {
   Activity,
   Antenna,
+  Gauge,
   Info,
   Lock,
   Radio,
@@ -22,6 +23,7 @@ import {
   type WifiExperienceRow,
   type WifiExperienceTrend,
 } from "@/db/queries";
+import { listSchoolWebperf, type WebperfResultRow } from "@/lib/webperf";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
@@ -122,8 +124,6 @@ function experienceSection(results: WifiExperienceRow[]) {
                 <TableHead className="text-right">DHCP</TableHead>
                 <TableHead>Captive portal</TableHead>
                 <TableHead>Internet</TableHead>
-                <TableHead className="text-right">Download</TableHead>
-                <TableHead>App latency</TableHead>
                 <TableHead>DNS</TableHead>
                 <TableHead>Guest isolation</TableHead>
                 <TableHead className="text-right">Measured</TableHead>
@@ -189,33 +189,6 @@ function experienceSection(results: WifiExperienceRow[]) {
                     {r.pingOk
                       ? `${r.rttMs != null ? `${r.rttMs.toFixed(0)} ms` : "ok"}${r.lossPct ? ` · ${r.lossPct}% loss` : ""}`
                       : <span className="text-muted-foreground">unreachable</span>}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-xs">
-                    {r.downloadMbps != null ? `${r.downloadMbps.toFixed(1)} Mbps` : "—"}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {r.targets && r.targets.length ? (
-                      <span className="flex flex-col gap-0.5">
-                        {r.targets.map((t) => (
-                          <span key={t.host} className="flex items-center gap-1 whitespace-nowrap">
-                            <span className="text-muted-foreground">{targetLabel(t.host)}</span>
-                            <span
-                              className={`tabular-nums ${
-                                t.rtt_ms == null
-                                  ? "text-destructive"
-                                  : t.rtt_ms > 100
-                                    ? "text-amber-600 dark:text-amber-400"
-                                    : "text-foreground"
-                              }`}
-                            >
-                              {t.rtt_ms == null ? "unreachable" : `${t.rtt_ms.toFixed(0)} ms`}
-                            </span>
-                          </span>
-                        ))}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
                   </TableCell>
                   <TableCell>
                     {r.dnsOk === true ? (
@@ -287,6 +260,134 @@ function Sparkline({
 }
 
 const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0);
+
+/** Wi-Fi SPEED & app performance — the dedicated "how fast / how good" callout per
+ *  joined network: source-bound download + instructional-target latency + the district
+ *  URL waterfall measured over THIS Wi-Fi (the same probe the wired Speed & Bandwidth
+ *  page runs, so the two are directly comparable). Null when nothing was measured. */
+function wifiPerfSection(results: WifiExperienceRow[], wifiWeb: WebperfResultRow[]) {
+  // Latest Wi-Fi webperf per (ssid, url); wifiWeb is newest-first.
+  const webBySsid = new Map<string, Map<string, WebperfResultRow>>();
+  for (const r of wifiWeb) {
+    if (r.transport !== "wifi" || !r.ssid || !r.url) continue;
+    const m = webBySsid.get(r.ssid) ?? new Map<string, WebperfResultRow>();
+    if (!m.has(r.url)) m.set(r.url, r);
+    webBySsid.set(r.ssid, m);
+  }
+  const blocks = results.filter(
+    (r) =>
+      r.downloadMbps != null ||
+      (r.targets && r.targets.length > 0) ||
+      (r.ssid != null && webBySsid.has(r.ssid)),
+  );
+  if (blocks.length === 0) return null;
+  const ms = (v: number | null) => (v == null ? "—" : `${Math.round(v)} ms`);
+  return (
+    <Card>
+      <SectionHeader
+        icon={Gauge}
+        title="Wi-Fi speed & app performance"
+        meta={`${blocks.length} network${blocks.length === 1 ? "" : "s"}`}
+      />
+      <CardContent className="flex flex-col gap-5">
+        {blocks.map((r) => {
+          const web = r.ssid
+            ? [...(webBySsid.get(r.ssid)?.values() ?? [])].sort((a, b) =>
+                (a.url ?? "").localeCompare(b.url ?? ""),
+              )
+            : [];
+          return (
+            <div
+              key={`${r.sensorId}-${r.ssid}`}
+              className="flex flex-col gap-2 border-b pb-4 last:border-0 last:pb-0"
+            >
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span className="font-medium">{r.ssid ?? "—"}</span>
+                <span className="text-xs text-muted-foreground">{r.sensorName}</span>
+                {r.downloadMbps != null && (
+                  <span className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">Download</span>
+                    <span className="font-medium tabular-nums">{r.downloadMbps.toFixed(1)} Mbps</span>
+                  </span>
+                )}
+                {r.targets?.map((t) => (
+                  <span key={t.host} className="flex items-center gap-1 text-xs">
+                    <span className="text-muted-foreground">{targetLabel(t.host)}</span>
+                    <span
+                      className={`tabular-nums ${
+                        t.rtt_ms == null
+                          ? "text-destructive"
+                          : t.rtt_ms > 100
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-foreground"
+                      }`}
+                    >
+                      {t.rtt_ms == null ? "unreachable" : `${t.rtt_ms.toFixed(0)} ms`}
+                    </span>
+                  </span>
+                ))}
+              </div>
+              {web.length > 0 && (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Site (over Wi-Fi)</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">DNS</TableHead>
+                        <TableHead className="text-right">TTFB</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead className="text-right">Speed</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {web.map((w) => {
+                        let host = w.url ?? "—";
+                        try {
+                          host = new URL(w.url ?? "").host;
+                        } catch {
+                          /* keep raw */
+                        }
+                        return (
+                          <TableRow key={w.id}>
+                            <TableCell className="font-medium" title={w.url ?? undefined}>
+                              {host}
+                            </TableCell>
+                            <TableCell>
+                              {w.ok ? (
+                                <Badge variant="default" className="text-[10px]">
+                                  {w.httpStatus ?? "ok"}
+                                </Badge>
+                              ) : (
+                                <Badge variant="destructive" className="text-[10px]" title={w.error ?? undefined}>
+                                  {w.httpStatus || "fail"}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{ms(w.dnsMs)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{ms(w.ttfbMs)}</TableCell>
+                            <TableCell className="text-right font-medium tabular-nums">{ms(w.totalMs)}</TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {w.speedMbps == null ? "—" : `${w.speedMbps.toFixed(1)} Mbps`}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <p className="text-xs text-muted-foreground">
+          Measured on the sensor&apos;s analysis radio joined to each network — the same probes
+          the wired Speed &amp; Bandwidth page runs, so compare them there side by side.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 /** Per-network experience TREND over time — a status timeline + associate/RTT
  *  sparklines + a quick summary. Surfaces a slow-degrading network the latest-only
@@ -474,13 +575,15 @@ export default async function WirelessPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [wifi, exp, trends] = await Promise.all([
+  const [wifi, exp, trends, webperf] = await Promise.all([
     listWifiForSchool(school.id),
     listWifiExperienceForSchool(school.id),
     listWifiExperienceHistory(school.id),
+    listSchoolWebperf(school.id),
   ]);
   const bss = wifi.bss;
   const expSection = experienceSection(exp.results);
+  const perfSection = wifiPerfSection(exp.results, webperf);
   const trendSection = experienceTrendSection(trends);
   const schoolName = school.name || titleizeSlug(school.slug);
 
@@ -493,8 +596,9 @@ export default async function WirelessPage({
         <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
         <PageHeader title="Wireless" description={`${schoolName} · Wi-Fi RF / AP survey`} />
         {expSection}
+        {perfSection}
         {trendSection}
-        {!expSection && !trendSection && (
+        {!expSection && !perfSection && !trendSection && (
           <Card>
             <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
               <WifiOff className="size-10 text-muted-foreground" />
@@ -671,6 +775,9 @@ export default async function WirelessPage({
 
       {/* WIFI-3 client-experience battery (join -> measure -> leave), if any */}
       {expSection}
+
+      {/* WIFI-6 Wi-Fi speed & app performance (throughput + app latency + URL waterfall) */}
+      {perfSection}
 
       {/* WIFI-6 experience trend over time */}
       {trendSection}

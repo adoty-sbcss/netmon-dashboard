@@ -41,6 +41,7 @@ import {
   snmpDeviceCredentials,
   wifiSurveys,
   wifiExperience,
+  webperfResults,
 } from "../db/schema";
 import {
   readBundleDir,
@@ -660,6 +661,48 @@ async function persistWifiExperience(
           wifiExperience.sensorId,
           wifiExperience.ssid,
           wifiExperience.generatedAt,
+        ],
+      });
+
+  // WIFI-6/PERF-5: the district URL waterfall run over each Wi-Fi (same probe as the
+  // wired live-POST path) lands in webperf_results tagged transport="wifi" + the ssid,
+  // so the Speed & Bandwidth page can compare wired vs Wi-Fi per URL. Dedup on the
+  // box-global re-ship via uq_webperf_wifi_run (startedAt = the battery run stamp).
+  const webRows = exp.results
+    .filter((r): r is NonNullable<typeof r> => !!r && !!r.ssid && Array.isArray(r.webperf))
+    .flatMap((r) =>
+      (r.webperf ?? [])
+        .filter((w): w is NonNullable<typeof w> => !!w && !!w.url)
+        .map((w) => ({
+          sensorId,
+          trigger: "wifi-battery",
+          transport: "wifi",
+          ssid: str(r.ssid),
+          url: str(w.url),
+          dnsMs: toNum(w.dns_ms),
+          tcpMs: toNum(w.tcp_ms),
+          tlsMs: toNum(w.tls_ms),
+          ttfbMs: toNum(w.ttfb_ms),
+          totalMs: toNum(w.total_ms),
+          httpStatus: toInt(w.http_status),
+          sizeBytes: toInt(w.size_bytes),
+          speedMbps: toNum(w.speed_mbps),
+          ok: w.ok !== false,
+          error: str(w.error),
+          startedAt: generatedAt,
+        })),
+    );
+  if (webRows.length)
+    await tx
+      .insert(webperfResults)
+      .values(webRows)
+      .onConflictDoNothing({
+        target: [
+          webperfResults.sensorId,
+          webperfResults.transport,
+          webperfResults.ssid,
+          webperfResults.url,
+          webperfResults.startedAt,
         ],
       });
 }

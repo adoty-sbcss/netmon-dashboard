@@ -171,12 +171,31 @@ export default async function IperfPage({
     safeQuery(listSchoolWebperf(school.id, 600), [] as WebperfResultRow[], "webperf", failures),
   ]);
 
-  // Latest result per URL (rows are newest-first) for the website-performance card.
+  // Latest result per (url, path) — rows are newest-first — for the website-performance
+  // card. "path" = transport + ssid, so the same site's wired vs Wi-Fi runs coexist and
+  // can be compared side by side.
   const webLatest = new Map<string, WebperfResultRow>();
   for (const r of webperf) {
-    if (r.url && !webLatest.has(r.url)) webLatest.set(r.url, r);
+    const key = `${r.url}|${r.transport}|${r.ssid ?? ""}`;
+    if (r.url && !webLatest.has(key)) webLatest.set(key, r);
   }
-  const webCards = [...webLatest.values()].sort((a, b) => (a.url ?? "").localeCompare(b.url ?? ""));
+  const webByUrl = new Map<string, WebperfResultRow[]>();
+  for (const r of webLatest.values()) {
+    const list = webByUrl.get(r.url!) ?? [];
+    list.push(r);
+    webByUrl.set(r.url!, list);
+  }
+  // Within each site: wired first, then each Wi-Fi SSID alphabetically.
+  for (const list of webByUrl.values())
+    list.sort((a, b) =>
+      a.transport === b.transport
+        ? (a.ssid ?? "").localeCompare(b.ssid ?? "")
+        : a.transport === "wired"
+          ? -1
+          : 1,
+    );
+  const webUrls = [...webByUrl.keys()].sort((a, b) => a.localeCompare(b));
+  const hasWifiWebperf = [...webLatest.values()].some((r) => r.transport === "wifi");
   const canEditRate = sessionUser?.role === "superadmin";
 
   // Latest latency probe per target (internet / gateway / dns), newest-first input.
@@ -546,12 +565,12 @@ export default async function IperfPage({
       )}
 
       {/* --- Website / end-user experience (PERF-5) --- */}
-      {webCards.length > 0 && (
+      {webUrls.length > 0 && (
         <Card>
           <SectionHeader
             icon={Globe}
             title="Website performance"
-            meta={`${webCards.length} site${webCards.length === 1 ? "" : "s"}`}
+            meta={`${webUrls.length} site${webUrls.length === 1 ? "" : "s"}${hasWifiWebperf ? " · wired vs Wi-Fi" : ""}`}
           />
           <CardContent className="px-0 sm:px-6">
             <div className="overflow-x-auto">
@@ -559,6 +578,7 @@ export default async function IperfPage({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Site</TableHead>
+                    <TableHead>Path</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">DNS</TableHead>
                     <TableHead className="text-right">Connect</TableHead>
@@ -570,18 +590,36 @@ export default async function IperfPage({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {webCards.map((r) => {
+                  {webUrls.map((url) => {
                     const ms = (v: number | null) => (v == null ? "—" : `${Math.round(v)} ms`);
-                    let host = r.url ?? "—";
+                    let host = url;
                     try {
-                      host = new URL(r.url ?? "").host;
+                      host = new URL(url).host;
                     } catch {
                       /* keep raw */
                     }
-                    return (
+                    const list = webByUrl.get(url)!;
+                    return list.map((r, i) => (
                       <TableRow key={r.id}>
-                        <TableCell className="font-medium" title={r.url ?? undefined}>
-                          {host}
+                        {i === 0 && (
+                          <TableCell
+                            rowSpan={list.length}
+                            className="align-top font-medium"
+                            title={url}
+                          >
+                            {host}
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          {r.transport === "wifi" ? (
+                            <Badge variant="secondary" className="text-[10px]" title={r.ssid ?? undefined}>
+                              Wi-Fi{r.ssid ? ` · ${r.ssid}` : ""}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px]">
+                              Wired
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           {r.ok ? (
@@ -606,7 +644,7 @@ export default async function IperfPage({
                           {relativeTime(r.createdAt)}
                         </TableCell>
                       </TableRow>
-                    );
+                    ));
                   })}
                 </TableBody>
               </Table>
@@ -614,6 +652,13 @@ export default async function IperfPage({
             <p className="px-4 pt-3 text-xs text-muted-foreground sm:px-0">
               The full load waterfall per site (cumulative times). A high <strong>DNS</strong> points at
               name resolution; a high <strong>TTFB</strong> at the network path or the origin server.
+              {hasWifiWebperf ? (
+                <>
+                  {" "}
+                  The <strong>Wi-Fi</strong> rows are the same probe run over the sensor&apos;s analysis
+                  radio — the gap vs <strong>Wired</strong> is the wireless tax.
+                </>
+              ) : null}{" "}
               Manage the site list in Settings → School &amp; district settings.
             </p>
           </CardContent>

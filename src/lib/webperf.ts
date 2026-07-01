@@ -25,6 +25,8 @@ export interface WebperfResultRow {
   id: number;
   sensorId: number;
   sensorName: string;
+  transport: string; // "wired" | "wifi"
+  ssid: string | null; // set when transport = "wifi"
   url: string | null;
   trigger: string | null;
   dnsMs: number | null;
@@ -120,6 +122,8 @@ export async function listSchoolWebperf(
       sensorId: webperfResults.sensorId,
       sensorName: sensors.name,
       sensorSlug: sensors.slug,
+      transport: webperfResults.transport,
+      ssid: webperfResults.ssid,
       url: webperfResults.url,
       trigger: webperfResults.trigger,
       dnsMs: webperfResults.dnsMs,
