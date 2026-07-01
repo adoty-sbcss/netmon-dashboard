@@ -184,6 +184,9 @@ export const wifiNetworkProfiles = pgTable(
     // is this one of the org's OWN SSIDs? (authorized-SSID registry / rogue baseline)
     isDistrictSsid: boolean("is_district_ssid").notNull().default(true),
     enabled: boolean("enabled").notNull().default(true),
+    // WIFI-6: the ONE network per school that runs the full internet speed test (saturating
+    // up/down is airtime-expensive → designate a primary). Enforced one-per-school in the action.
+    speedtestPrimary: boolean("speedtest_primary").notNull().default(false),
     // Phase 2 unattended scheduler (inert for now; the battery is trigger-driven).
     scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
     scheduleIntervalHours: integer("schedule_interval_hours"),

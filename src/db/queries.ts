@@ -2486,6 +2486,7 @@ export interface WifiProfileRow {
   enabled: boolean;
   scheduleEnabled: boolean;
   scheduleIntervalHours: number | null;
+  speedtestPrimary: boolean;
   sensors: WifiProfileSensorRow[];
 }
 
@@ -2507,6 +2508,7 @@ export async function listWifiProfilesForSchool(schoolId: number): Promise<WifiP
       enabled: wifiNetworkProfiles.enabled,
       scheduleEnabled: wifiNetworkProfiles.scheduleEnabled,
       scheduleIntervalHours: wifiNetworkProfiles.scheduleIntervalHours,
+      speedtestPrimary: wifiNetworkProfiles.speedtestPrimary,
     })
     .from(wifiNetworkProfiles)
     .where(eq(wifiNetworkProfiles.schoolId, schoolId))
@@ -2553,6 +2555,7 @@ export async function listWifiProfilesForSchool(schoolId: number): Promise<WifiP
     enabled: p.enabled,
     scheduleEnabled: p.scheduleEnabled,
     scheduleIntervalHours: p.scheduleIntervalHours,
+    speedtestPrimary: p.speedtestPrimary,
     sensors: byProfile.get(p.id) ?? [],
   }));
 }

@@ -19,6 +19,8 @@ import {
   listWifiForSchool,
   listWifiExperienceForSchool,
 } from "@/db/queries";
+import { listSchoolWifiSpeedtests } from "@/lib/iperf";
+import { listSchoolWebperf } from "@/lib/webperf";
 import { ipInCidr } from "@/lib/net";
 import type { AiToolDef, AiToolExecutor } from "./types";
 
@@ -148,7 +150,7 @@ export const ASSISTANT_TOOLS: AiToolDef[] = [
   {
     name: "wifi_experience",
     description:
-      "Wi-Fi CLIENT-EXPERIENCE results for a school: for each network a sensor joined (open/PSK/PEAP-MSCHAPv2), whether it associated, time-to-associate and time-to-DHCP, captive-portal state (+ whether auto-accept worked), internet reachability (ping/RTT/loss), DNS, and the guest->internal ISOLATION check (isolation_reachable=true means a guest network could reach an internal host — a security finding). Use for 'is the staff/guest Wi-Fi actually working', 'how long does it take to join', 'did the captive portal accept', 'is the guest network isolated'. This is the JOIN experience (WIFI-6), distinct from wireless_posture (the RF/AP survey). Empty if no join battery has run at the site.",
+      "Wi-Fi CLIENT-EXPERIENCE results for a school: for each network a sensor joined (open/PSK/PEAP-MSCHAPv2) — whether it associated, time-to-associate and time-to-DHCP, the AP it hit (bssid) + band (2.4/5/6GHz) + link rate, captive-portal state (+ whether auto-accept worked), internet reachability (ping/RTT/loss), DNS, throughput, per-app latency to Google/M365 (app_latency), the full internet_speed_test (download/upload/latency/jitter/loss — PRIMARY network only, else null), the per-URL website_perf measured OVER the Wi-Fi (DNS/TTFB/total, same probe as the wired Speed & Bandwidth page), and the guest->internal ISOLATION check (isolation_reachable=true means a guest network could reach an internal host — a security finding). Use for 'is the staff/guest Wi-Fi actually working / fast', 'how long to join', 'why is Wi-Fi slow / which band', 'how does Classroom perform on the Wi-Fi', 'did the captive portal accept', 'is the guest network isolated'. This is the JOIN experience (WIFI-6), distinct from wireless_posture (the RF/AP survey). Empty if no join battery has run at the site.",
     parameters: {
       type: "object",
       properties: { school_id: { type: "number" } },
@@ -248,27 +250,71 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
       case "wifi_experience": {
         const id = num(args.school_id);
         ensure(id);
-        const exp = await listWifiExperienceForSchool(id);
+        const [exp, wifiSpeed, webperf] = await Promise.all([
+          listWifiExperienceForSchool(id),
+          listSchoolWifiSpeedtests(id),
+          listSchoolWebperf(id),
+        ]);
+        // latest Wi-Fi internet speed test per (sensor, ssid)
+        const speedByKey = new Map<string, (typeof wifiSpeed)[number]>();
+        for (const s of wifiSpeed) speedByKey.set(`${s.sensorId}|${s.ssid ?? ""}`, s);
+        // latest Wi-Fi website-perf per (ssid, url); webperf is newest-first
+        const webBySsid = new Map<string, Map<string, (typeof webperf)[number]>>();
+        for (const w of webperf) {
+          if (w.transport !== "wifi" || !w.ssid || !w.url) continue;
+          const m = webBySsid.get(w.ssid) ?? new Map();
+          if (!m.has(w.url)) m.set(w.url, w);
+          webBySsid.set(w.ssid, m);
+        }
         return JSON.stringify({
           generated_at: exp.generatedAt,
           interface: exp.interface,
-          networks: exp.results.map((r) => ({
-            ssid: r.ssid,
-            sensor: r.sensorName,
-            auth: r.auth,
-            associated: r.associated,
-            assoc_ms: r.assocMs,
-            dhcp_ms: r.dhcpMs,
-            captive_state: r.captiveState,
-            captive_auto_accepted: r.captiveAutoAccepted,
-            internet_ok: r.pingOk,
-            rtt_ms: r.rttMs,
-            loss_pct: r.lossPct,
-            dns_ok: r.dnsOk,
-            isolation_target: r.isolationTarget,
-            isolation_reachable: r.isolationReachable,
-            measured_at: r.generatedAt,
-          })),
+          networks: exp.results.map((r) => {
+            const st = speedByKey.get(`${r.sensorId}|${r.ssid ?? ""}`);
+            const web = r.ssid ? [...(webBySsid.get(r.ssid)?.values() ?? [])] : [];
+            return {
+              ssid: r.ssid,
+              sensor: r.sensorName,
+              auth: r.auth,
+              associated: r.associated,
+              assoc_ms: r.assocMs,
+              dhcp_ms: r.dhcpMs,
+              band: r.band,
+              bssid: r.bssid,
+              rx_rate_mbps: r.rxRateMbps,
+              captive_state: r.captiveState,
+              captive_auto_accepted: r.captiveAutoAccepted,
+              internet_ok: r.pingOk,
+              rtt_ms: r.rttMs,
+              loss_pct: r.lossPct,
+              dns_ok: r.dnsOk,
+              throughput_download_mbps: r.downloadMbps,
+              // instructional-target latency [{host, rtt_ms}]
+              app_latency: r.targets ?? [],
+              // full internet speed test — primary network only (else null)
+              internet_speed_test: st
+                ? {
+                    download_mbps: st.downloadMbps,
+                    upload_mbps: st.uploadMbps,
+                    latency_ms: st.latencyMs,
+                    jitter_ms: st.jitterMs,
+                    loss_pct: st.lossPct,
+                  }
+                : null,
+              // per-URL website performance measured OVER this Wi-Fi (same probe as wired)
+              website_perf: web.map((w) => ({
+                url: w.url,
+                ok: w.ok,
+                dns_ms: w.dnsMs,
+                ttfb_ms: w.ttfbMs,
+                total_ms: w.totalMs,
+                http_status: w.httpStatus,
+              })),
+              isolation_target: r.isolationTarget,
+              isolation_reachable: r.isolationReachable,
+              measured_at: r.generatedAt,
+            };
+          }),
         });
       }
 

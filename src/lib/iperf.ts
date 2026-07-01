@@ -157,9 +157,65 @@ export async function listSchoolSpeedtests(
     })
     .from(speedtestResults)
     .innerJoin(sensors, eq(speedtestResults.sensorId, sensors.id))
-    .where(eq(sensors.schoolId, schoolId))
+    // wired-only: the Wi-Fi speed test shares this table (transport="wifi") but shows on
+    // the Wireless page via listSchoolWifiSpeedtests — keep the wired section wired.
+    .where(and(eq(sensors.schoolId, schoolId), eq(speedtestResults.transport, "wired")))
     .orderBy(desc(speedtestResults.createdAt))
     .limit(limit);
+}
+
+/** WIFI-6: latest Wi-Fi internet speed test per (sensor, SSID) for a school — the
+ *  primary network's full down/up/latency/jitter/loss, measured on the analysis radio. */
+export interface WifiSpeedtestRow {
+  sensorId: number;
+  sensorName: string;
+  ssid: string | null;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  latencyMs: number | null;
+  jitterMs: number | null;
+  lossPct: number | null;
+  createdAt: Date;
+}
+
+export async function listSchoolWifiSpeedtests(schoolId: number): Promise<WifiSpeedtestRow[]> {
+  const rows = await db
+    .select({
+      sensorId: speedtestResults.sensorId,
+      sensorName: sensors.name,
+      sensorSlug: sensors.slug,
+      ssid: speedtestResults.ssid,
+      downloadMbps: speedtestResults.downloadMbps,
+      uploadMbps: speedtestResults.uploadMbps,
+      latencyMs: speedtestResults.latencyMs,
+      jitterMs: speedtestResults.jitterMs,
+      lossPct: speedtestResults.lossPct,
+      createdAt: speedtestResults.createdAt,
+    })
+    .from(speedtestResults)
+    .innerJoin(sensors, eq(speedtestResults.sensorId, sensors.id))
+    .where(and(eq(sensors.schoolId, schoolId), eq(speedtestResults.transport, "wifi")))
+    .orderBy(desc(speedtestResults.createdAt));
+  // newest-first → keep the latest per (sensor, ssid)
+  const seen = new Set<string>();
+  const out: WifiSpeedtestRow[] = [];
+  for (const r of rows) {
+    const key = `${r.sensorId}|${r.ssid ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      sensorId: r.sensorId,
+      sensorName: r.sensorName ?? r.sensorSlug ?? `sensor ${r.sensorId}`,
+      ssid: r.ssid,
+      downloadMbps: r.downloadMbps,
+      uploadMbps: r.uploadMbps,
+      latencyMs: r.latencyMs,
+      jitterMs: r.jitterMs,
+      lossPct: r.lossPct,
+      createdAt: r.createdAt,
+    });
+  }
+  return out;
 }
 
 export interface SpeedtestResultRow {
