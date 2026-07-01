@@ -71,6 +71,7 @@ function ProfileFields({
   const [auth, setAuth] = useState(profile?.authMethod ?? "open");
   const [scope, setScope] = useState(profile?.credentialScope ?? "shared");
   const [captive, setCaptive] = useState(profile?.captivePortal ?? false);
+  const [scheduled, setScheduled] = useState(profile?.scheduleEnabled ?? false);
   const needsSecret = auth !== "open";
   const needsIdentity = auth === "peap";
   const sharedCreds = scope === "shared" && needsSecret;
@@ -208,6 +209,34 @@ function ProfileFields({
           Enabled
         </label>
       </div>
+
+      {/* unattended scheduler — run the battery on a cadence, no manual Test now */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="scheduleEnabled"
+            defaultChecked={profile?.scheduleEnabled ?? false}
+            onChange={(e) => setScheduled(e.target.checked)}
+            className="size-4"
+          />
+          Auto-test on a schedule
+        </label>
+        {scheduled && (
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
+            every
+            <Input
+              name="scheduleIntervalHours"
+              type="number"
+              min={1}
+              max={168}
+              defaultValue={profile?.scheduleIntervalHours ?? 6}
+              className="h-8 w-16"
+            />
+            hours
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -330,6 +359,9 @@ function ProfileCard({
         <Badge variant="outline">
           {profile.credentialScope === "per_sensor" ? "per-sensor key" : "shared key"}
         </Badge>
+        {profile.scheduleEnabled && (
+          <Badge variant="outline">auto every {profile.scheduleIntervalHours ?? 6}h</Badge>
+        )}
         {!profile.enabled && <Badge variant="destructive">disabled</Badge>}
         <span className="ml-auto text-xs text-muted-foreground">
           {enrolled} sensor{enrolled === 1 ? "" : "s"} enrolled
