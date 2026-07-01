@@ -17,6 +17,7 @@ import {
   listScanSnapshotsForSchool,
   listSwitchesForSchool,
   listWifiForSchool,
+  listWifiExperienceForSchool,
 } from "@/db/queries";
 import { ipInCidr } from "@/lib/net";
 import type { AiToolDef, AiToolExecutor } from "./types";
@@ -144,6 +145,17 @@ export const ASSISTANT_TOOLS: AiToolDef[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "wifi_experience",
+    description:
+      "Wi-Fi CLIENT-EXPERIENCE results for a school: for each network a sensor joined (open/PSK/PEAP-MSCHAPv2), whether it associated, time-to-associate and time-to-DHCP, captive-portal state (+ whether auto-accept worked), internet reachability (ping/RTT/loss), DNS, and the guest->internal ISOLATION check (isolation_reachable=true means a guest network could reach an internal host — a security finding). Use for 'is the staff/guest Wi-Fi actually working', 'how long does it take to join', 'did the captive portal accept', 'is the guest network isolated'. This is the JOIN experience (WIFI-6), distinct from wireless_posture (the RF/AP survey). Empty if no join battery has run at the site.",
+    parameters: {
+      type: "object",
+      properties: { school_id: { type: "number" } },
+      required: ["school_id"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** Build the executor bound to the user's allowed sites. */
@@ -229,6 +241,33 @@ export function buildToolExecutor(sites: AllowedSite[]): AiToolExecutor {
             channels: Array.from(s.channels).sort((a, b) => a - b),
             district: s.district,
             best_signal: s.best_signal,
+          })),
+        });
+      }
+
+      case "wifi_experience": {
+        const id = num(args.school_id);
+        ensure(id);
+        const exp = await listWifiExperienceForSchool(id);
+        return JSON.stringify({
+          generated_at: exp.generatedAt,
+          interface: exp.interface,
+          networks: exp.results.map((r) => ({
+            ssid: r.ssid,
+            sensor: r.sensorName,
+            auth: r.auth,
+            associated: r.associated,
+            assoc_ms: r.assocMs,
+            dhcp_ms: r.dhcpMs,
+            captive_state: r.captiveState,
+            captive_auto_accepted: r.captiveAutoAccepted,
+            internet_ok: r.pingOk,
+            rtt_ms: r.rttMs,
+            loss_pct: r.lossPct,
+            dns_ok: r.dnsOk,
+            isolation_target: r.isolationTarget,
+            isolation_reachable: r.isolationReachable,
+            measured_at: r.generatedAt,
           })),
         });
       }

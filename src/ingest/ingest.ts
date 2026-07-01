@@ -595,9 +595,11 @@ async function persistWifiSurvey(
 }
 
 /**
- * WIFI-3: mirror the box-global client-experience battery (wifi_experience.json at
- * the bundle root) into wifi_experience — one row per joined network. Replace-on-
- * ingest. Inert when the artifact is absent (most sensors) — `exp` null → return.
+ * WIFI-3/WIFI-6: mirror the box-global client-experience battery (wifi_experience.json
+ * at the bundle root) into wifi_experience — one row per joined network. APPEND with
+ * dedup: the box-global artifact re-ships in every bundle until the battery re-runs, so
+ * the unique (sensor,ssid,generatedAt) index makes a re-ingest a no-op while distinct
+ * runs accumulate a HISTORY (drives the trend view). Inert when the artifact is absent.
  */
 async function persistWifiExperience(
   tx: Tx,
@@ -605,7 +607,6 @@ async function persistWifiExperience(
   exp: RawWifiExperience | null,
 ): Promise<void> {
   if (!exp || exp.available !== true || !Array.isArray(exp.results)) return;
-  await tx.delete(wifiExperience).where(eq(wifiExperience.sensorId, sensorId));
   const triBool = (v: unknown): boolean | null =>
     v === null || v === undefined ? null : toBool(v);
   const rows = exp.results
@@ -626,6 +627,7 @@ async function persistWifiExperience(
       captiveState: str(r.captive_portal?.state),
       captiveHttpCode: str(r.captive_portal?.http_code),
       captiveRedirect: str(r.captive_portal?.redirect),
+      captiveAutoAccepted: triBool(r.captive_portal?.auto_accepted),
       pingOk: triBool(r.internet?.ping_ok),
       rttMs: toNum(r.internet?.rtt_ms),
       lossPct: toInt(r.internet?.loss_pct),
@@ -633,7 +635,17 @@ async function persistWifiExperience(
       isolationTarget: str(r.isolation?.internal_target),
       isolationReachable: triBool(r.isolation?.internal_reachable),
     }));
-  if (rows.length) await tx.insert(wifiExperience).values(rows);
+  if (rows.length)
+    await tx
+      .insert(wifiExperience)
+      .values(rows)
+      .onConflictDoNothing({
+        target: [
+          wifiExperience.sensorId,
+          wifiExperience.ssid,
+          wifiExperience.generatedAt,
+        ],
+      });
 }
 
 /**

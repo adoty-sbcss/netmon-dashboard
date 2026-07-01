@@ -17,6 +17,7 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sensors, ingestedBundles } from "./app";
 
@@ -327,10 +328,12 @@ export const wifiSurveys = pgTable(
 );
 
 /**
- * WIFI-3: client-experience battery results — one row per network the sensor
+ * WIFI-3/WIFI-6: client-experience battery results — one row per network the sensor
  * joined + measured (open/PSK/PEAP), from the box-global wifi_experience.json.
- * Keyed to the sensor; replace-on-ingest = the latest battery run. Survey-level
- * meta (generatedAt/interface) is denormalized onto each row.
+ * Keyed to the sensor; APPEND-with-dedup = a HISTORY of battery runs (the box-global
+ * artifact re-ships in every bundle until the battery re-runs, so the unique
+ * (sensor,ssid,generatedAt) index makes re-ingest a no-op while distinct runs
+ * accumulate). Survey-level meta (generatedAt/interface) is denormalized onto each row.
  */
 export const wifiExperience = pgTable(
   "wifi_experience",
@@ -354,6 +357,7 @@ export const wifiExperience = pgTable(
     captiveState: text("captive_state"), // open | portal | blocked | other | n/a
     captiveHttpCode: text("captive_http_code"),
     captiveRedirect: text("captive_redirect"),
+    captiveAutoAccepted: boolean("captive_auto_accepted"), // WIFI-6: click-through result (null = not attempted)
     pingOk: boolean("ping_ok"),
     rttMs: doublePrecision("rtt_ms"),
     lossPct: integer("loss_pct"),
@@ -367,6 +371,9 @@ export const wifiExperience = pgTable(
   (t) => [
     index("idx_wifi_experience_sensor").on(t.sensorId),
     index("idx_wifi_experience_ssid").on(t.ssid),
+    // Append-with-dedup: the same box-global artifact re-ships every bundle; one row
+    // per distinct battery run (identical (sensor,ssid,generatedAt) => onConflictDoNothing).
+    uniqueIndex("uq_wifi_exp_run").on(t.sensorId, t.ssid, t.generatedAt),
   ],
 );
 

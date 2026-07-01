@@ -22,7 +22,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { sensors, users, districts } from "./app";
+import { sensors, users, districts, schools } from "./app";
 
 export const commandStatus = pgEnum("command_status", [
   "pending", // queued, not yet approved (if approval required)
@@ -154,6 +154,79 @@ export const districtSftp = pgTable("district_sftp", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * WIFI-6: school-scoped Wi-Fi join profiles — the networks the client-experience
+ * battery associates to + measures. School-level so one config covers every sensor
+ * at the school; the credential is either SHARED (one key for the school) or
+ * PER_SENSOR (each sensor its own key — e.g. MPSK where 1 MAC = 1 PSK). Secrets are
+ * stored ENCRYPTED (secret-box, like districtSftp.passwordEnc), decrypted only when
+ * materializing the per-sensor desired-config push. Doubles as the school's
+ * "authorized SSID" registry (isDistrictSsid) — a baseline for rogue/evil-twin
+ * flagging in the survey.
+ */
+export const wifiNetworkProfiles = pgTable(
+  "wifi_network_profiles",
+  {
+    id: serial("id").primaryKey(),
+    schoolId: integer("school_id")
+      .notNull()
+      .references(() => schools.id, { onDelete: "cascade" }),
+    label: text("label"), // friendly name (defaults to the SSID in the UI)
+    ssid: text("ssid").notNull(),
+    authMethod: text("auth_method").notNull().default("open"), // open | psk | peap
+    captivePortal: boolean("captive_portal").notNull().default(false),
+    captiveAutoAccept: boolean("captive_auto_accept").notNull().default(false),
+    // shared | per_sensor — where the credential lives (see wifiProfileSensors)
+    credentialScope: text("credential_scope").notNull().default("shared"),
+    sharedIdentity: text("shared_identity"), // 802.1X username (shared scope)
+    sharedSecretEnc: text("shared_secret_enc"), // secret-box(psk/password), shared scope
+    // is this one of the org's OWN SSIDs? (authorized-SSID registry / rogue baseline)
+    isDistrictSsid: boolean("is_district_ssid").notNull().default(true),
+    enabled: boolean("enabled").notNull().default(true),
+    // Phase 2 unattended scheduler (inert for now; the battery is trigger-driven).
+    scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
+    scheduleIntervalHours: integer("schedule_interval_hours"),
+    createdBy: integer("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("idx_wifi_profiles_school").on(t.schoolId),
+    // one profile per SSID per school (MPSK = one profile, per-sensor creds below)
+    uniqueIndex("uq_wifi_profile_school_ssid").on(t.schoolId, t.ssid),
+  ],
+);
+
+/**
+ * WIFI-6: which sensors participate in a profile + their PER-SENSOR credential
+ * (used when the profile's credentialScope = per_sensor, e.g. MPSK). A participating
+ * sensor needs a spare (non-uplink) Wi-Fi radio; its radio MAC is surfaced in the UI
+ * so the admin can authorize it upstream before enabling. Secret stored ENCRYPTED.
+ */
+export const wifiProfileSensors = pgTable(
+  "wifi_profile_sensors",
+  {
+    id: serial("id").primaryKey(),
+    profileId: integer("profile_id")
+      .notNull()
+      .references(() => wifiNetworkProfiles.id, { onDelete: "cascade" }),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    identity: text("identity"), // per-sensor 802.1X username (per_sensor scope)
+    secretEnc: text("secret_enc"), // secret-box(psk/password), per_sensor scope
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_wifi_profile_sensor").on(t.profileId, t.sensorId),
+    index("idx_wifi_profile_sensors_sensor").on(t.sensorId),
+  ],
+);
 
 export const shellSessionStatus = pgEnum("shell_session_status", [
   "pending", // session row created + open-console command queued; waiting for sensor to dial the broker

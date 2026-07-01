@@ -49,6 +49,8 @@ import {
   commandQueue,
   commandResults,
   sensorEnrollments,
+  wifiNetworkProfiles,
+  wifiProfileSensors,
 } from "./schema/management";
 import { enrichHost, type DeviceType } from "../lib/oui";
 import {
@@ -2189,6 +2191,9 @@ export async function listWifiForSchool(
 
 export interface WifiExperienceRow {
   id: number;
+  sensorId: number;
+  sensorName: string;
+  generatedAt: Date | null;
   ssid: string | null;
   auth: string | null;
   associated: boolean | null;
@@ -2201,6 +2206,7 @@ export interface WifiExperienceRow {
   captiveState: string | null;
   captiveHttpCode: string | null;
   captiveRedirect: string | null;
+  captiveAutoAccepted: boolean | null;
   pingOk: boolean | null;
   rttMs: number | null;
   lossPct: number | null;
@@ -2215,14 +2221,18 @@ export interface WifiExperienceView {
   results: WifiExperienceRow[];
 }
 
-/** Latest Wi-Fi client-experience battery for a school (replace-on-ingest per
- *  sensor). One row per joined network. */
+/** Latest Wi-Fi client-experience result per (sensor, SSID) for a school. The
+ *  battery now APPENDS a history, so we keep only the most-recent run of each
+ *  network for the current-state table (trends read the full history separately). */
 export async function listWifiExperienceForSchool(
   schoolId: number,
 ): Promise<WifiExperienceView> {
   const rows = await db
     .select({
       id: wifiExperience.id,
+      sensorId: wifiExperience.sensorId,
+      sensorName: sensors.name,
+      sensorSlug: sensors.slug,
       generatedAt: wifiExperience.generatedAt,
       interface: wifiExperience.interface,
       ssid: wifiExperience.ssid,
@@ -2237,6 +2247,7 @@ export async function listWifiExperienceForSchool(
       captiveState: wifiExperience.captiveState,
       captiveHttpCode: wifiExperience.captiveHttpCode,
       captiveRedirect: wifiExperience.captiveRedirect,
+      captiveAutoAccepted: wifiExperience.captiveAutoAccepted,
       pingOk: wifiExperience.pingOk,
       rttMs: wifiExperience.rttMs,
       lossPct: wifiExperience.lossPct,
@@ -2247,14 +2258,26 @@ export async function listWifiExperienceForSchool(
     .from(wifiExperience)
     .innerJoin(sensors, eq(wifiExperience.sensorId, sensors.id))
     .where(eq(sensors.schoolId, schoolId))
-    .orderBy(wifiExperience.ssid);
+    .orderBy(desc(wifiExperience.generatedAt), desc(wifiExperience.id));
 
-  const meta = rows[0];
-  return {
-    generatedAt: meta?.generatedAt ?? null,
-    interface: meta?.interface ?? null,
-    results: rows.map((r) => ({
+  // Newest-first already; keep the first (latest) run per (sensor, ssid).
+  const seen = new Set<string>();
+  const results: WifiExperienceRow[] = [];
+  let newest: Date | null = null;
+  let iface: string | null = null;
+  for (const r of rows) {
+    const key = `${r.sensorId} ${r.ssid ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!newest && r.generatedAt) {
+      newest = r.generatedAt;
+      iface = r.interface;
+    }
+    results.push({
       id: r.id,
+      sensorId: r.sensorId,
+      sensorName: r.sensorName ?? r.sensorSlug ?? `sensor ${r.sensorId}`,
+      generatedAt: r.generatedAt,
       ssid: r.ssid,
       auth: r.auth,
       associated: r.associated,
@@ -2267,14 +2290,17 @@ export async function listWifiExperienceForSchool(
       captiveState: r.captiveState,
       captiveHttpCode: r.captiveHttpCode,
       captiveRedirect: r.captiveRedirect,
+      captiveAutoAccepted: r.captiveAutoAccepted,
       pingOk: r.pingOk,
       rttMs: r.rttMs,
       lossPct: r.lossPct,
       dnsOk: r.dnsOk,
       isolationTarget: r.isolationTarget,
       isolationReachable: r.isolationReachable,
-    })),
-  };
+    });
+  }
+  results.sort((a, b) => (a.ssid ?? "").localeCompare(b.ssid ?? ""));
+  return { generatedAt: newest, interface: iface, results };
 }
 
 export interface SchoolWifiRadio {
@@ -2309,6 +2335,96 @@ export async function listSchoolWifiRadios(
     }
   }
   return out;
+}
+
+// ---- WIFI-6: join configuration portal ------------------------------------
+
+export interface WifiProfileSensorRow {
+  id: number;
+  sensorId: number;
+  enabled: boolean;
+  identity: string | null;
+  /** Whether a per-sensor secret is stored (never the value itself). */
+  hasSecret: boolean;
+}
+
+export interface WifiProfileRow {
+  id: number;
+  label: string | null;
+  ssid: string;
+  authMethod: string; // open | psk | peap
+  captivePortal: boolean;
+  captiveAutoAccept: boolean;
+  credentialScope: string; // shared | per_sensor
+  sharedIdentity: string | null;
+  hasSharedSecret: boolean;
+  isDistrictSsid: boolean;
+  enabled: boolean;
+  sensors: WifiProfileSensorRow[];
+}
+
+/** School-scoped Wi-Fi join profiles + their sensor enrollments (WIFI-6 portal).
+ *  Secrets are NEVER returned — only booleans indicating a stored value. */
+export async function listWifiProfilesForSchool(schoolId: number): Promise<WifiProfileRow[]> {
+  const profs = await db
+    .select({
+      id: wifiNetworkProfiles.id,
+      label: wifiNetworkProfiles.label,
+      ssid: wifiNetworkProfiles.ssid,
+      authMethod: wifiNetworkProfiles.authMethod,
+      captivePortal: wifiNetworkProfiles.captivePortal,
+      captiveAutoAccept: wifiNetworkProfiles.captiveAutoAccept,
+      credentialScope: wifiNetworkProfiles.credentialScope,
+      sharedIdentity: wifiNetworkProfiles.sharedIdentity,
+      sharedSecretEnc: wifiNetworkProfiles.sharedSecretEnc,
+      isDistrictSsid: wifiNetworkProfiles.isDistrictSsid,
+      enabled: wifiNetworkProfiles.enabled,
+    })
+    .from(wifiNetworkProfiles)
+    .where(eq(wifiNetworkProfiles.schoolId, schoolId))
+    .orderBy(wifiNetworkProfiles.ssid);
+  if (profs.length === 0) return [];
+
+  const assigns = await db
+    .select({
+      id: wifiProfileSensors.id,
+      profileId: wifiProfileSensors.profileId,
+      sensorId: wifiProfileSensors.sensorId,
+      enabled: wifiProfileSensors.enabled,
+      identity: wifiProfileSensors.identity,
+      secretEnc: wifiProfileSensors.secretEnc,
+    })
+    .from(wifiProfileSensors)
+    .innerJoin(wifiNetworkProfiles, eq(wifiProfileSensors.profileId, wifiNetworkProfiles.id))
+    .where(eq(wifiNetworkProfiles.schoolId, schoolId));
+
+  const byProfile = new Map<number, WifiProfileSensorRow[]>();
+  for (const a of assigns) {
+    const arr = byProfile.get(a.profileId) ?? [];
+    arr.push({
+      id: a.id,
+      sensorId: a.sensorId,
+      enabled: a.enabled,
+      identity: a.identity,
+      hasSecret: !!a.secretEnc,
+    });
+    byProfile.set(a.profileId, arr);
+  }
+
+  return profs.map((p) => ({
+    id: p.id,
+    label: p.label,
+    ssid: p.ssid,
+    authMethod: p.authMethod,
+    captivePortal: p.captivePortal,
+    captiveAutoAccept: p.captiveAutoAccept,
+    credentialScope: p.credentialScope,
+    sharedIdentity: p.sharedIdentity,
+    hasSharedSecret: !!p.sharedSecretEnc,
+    isDistrictSsid: p.isDistrictSsid,
+    enabled: p.enabled,
+    sensors: byProfile.get(p.id) ?? [],
+  }));
 }
 
 // ---- STP / spanning-tree --------------------------------------------------

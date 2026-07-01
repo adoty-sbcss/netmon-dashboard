@@ -17,12 +17,15 @@ import {
   listWifiForSchool,
   listWifiExperienceForSchool,
   listSchoolWifiRadios,
+  listWifiProfilesForSchool,
   type WifiBssRow,
   type WifiExperienceRow,
   type SchoolWifiRadio,
 } from "@/db/queries";
+import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
+import { WifiConfigPortal } from "./wifi-config-portal";
 import { SchoolTabs } from "@/components/school-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,6 +101,7 @@ function experienceSection(results: WifiExperienceRow[]) {
             <TableHeader>
               <TableRow>
                 <TableHead>SSID</TableHead>
+                <TableHead>Sensor</TableHead>
                 <TableHead>Security</TableHead>
                 <TableHead>Joined</TableHead>
                 <TableHead className="text-right">Assoc</TableHead>
@@ -106,12 +110,14 @@ function experienceSection(results: WifiExperienceRow[]) {
                 <TableHead>Internet</TableHead>
                 <TableHead>DNS</TableHead>
                 <TableHead>Guest isolation</TableHead>
+                <TableHead className="text-right">Measured</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {results.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.ssid ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{r.sensorName}</TableCell>
                   <TableCell>
                     <Badge variant={authBadgeVariant(r.auth)} className="text-[10px]">
                       {AUTH_LABEL[r.auth ?? "unknown"] ?? r.auth}
@@ -132,9 +138,17 @@ function experienceSection(results: WifiExperienceRow[]) {
                   </TableCell>
                   <TableCell title={r.captiveRedirect ?? undefined}>
                     {r.captiveState ? (
-                      <Badge variant={portalBadge(r.captiveState)} className="text-[10px]">
-                        {r.captiveState}
-                      </Badge>
+                      <span className="flex items-center gap-1">
+                        <Badge variant={portalBadge(r.captiveState)} className="text-[10px]">
+                          {r.captiveState}
+                        </Badge>
+                        {r.captiveAutoAccepted === true && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400" title="Auto-accept succeeded">✓ accepted</span>
+                        )}
+                        {r.captiveAutoAccepted === false && (
+                          <span className="text-[10px] text-muted-foreground" title="Auto-accept attempted, portal still up">accept failed</span>
+                        )}
+                      </span>
                     ) : (
                       "—"
                     )}
@@ -163,6 +177,9 @@ function experienceSection(results: WifiExperienceRow[]) {
                     ) : (
                       "—"
                     )}
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">
+                    {r.generatedAt ? relativeTime(r.generatedAt) : "—"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -233,15 +250,31 @@ export default async function WirelessPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [wifi, exp, radios] = await Promise.all([
+  const user = await getSessionUser();
+  const isAdmin = user?.role === "superadmin";
+  const [wifi, exp, radios, profiles] = await Promise.all([
     listWifiForSchool(school.id),
     listWifiExperienceForSchool(school.id),
     listSchoolWifiRadios(school.id),
+    isAdmin ? listWifiProfilesForSchool(school.id) : Promise.resolve([]),
   ]);
   const bss = wifi.bss;
   const expSection = experienceSection(exp.results);
   const radiosEl = radiosCard(radios);
   const schoolName = school.name || titleizeSlug(school.slug);
+  const basePath = `/${district.slug}/${school.slug}`;
+  const surveySsids = Array.from(
+    new Set(bss.map((b) => b.ssid).filter((s): s is string => !!s)),
+  ).sort();
+  const portalEl = isAdmin ? (
+    <WifiConfigPortal
+      schoolId={school.id}
+      basePath={basePath}
+      profiles={profiles}
+      radios={radios}
+      surveySsids={surveySsids}
+    />
+  ) : null;
 
   // ---- empty state: no survey. If there's a join-experience battery, show that;
   // otherwise the "enable the survey" prompt. ----
@@ -250,6 +283,7 @@ export default async function WirelessPage({
       <div className="flex flex-col gap-6">
         <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
         <PageHeader title="Wireless" description={`${schoolName} · Wi-Fi RF / AP survey`} />
+        {portalEl}
         {radiosEl}
         {expSection}
         {!expSection && !radiosEl && (
@@ -426,6 +460,9 @@ export default async function WirelessPage({
           </div>
         }
       />
+
+      {/* WIFI-6 join configuration portal (admin only) */}
+      {portalEl}
 
       {/* Sensor Wi-Fi radios (MAC, for authorizing the card) */}
       {radiosEl}
