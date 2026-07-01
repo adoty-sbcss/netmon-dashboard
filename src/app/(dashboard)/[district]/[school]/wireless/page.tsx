@@ -237,6 +237,69 @@ interface Finding {
   detail: string;
 }
 
+/**
+ * Turn client-experience results into actionable findings — the "Wi-Fi is broken in
+ * Room X" alerts (join / DHCP / DNS / internet failures + a guest-isolation breach).
+ * These are what a K-12 network admin actually chases; surfaced above the RF findings.
+ */
+function experienceFindings(results: WifiExperienceRow[]): Finding[] {
+  const out: Finding[] = [];
+  for (const r of results) {
+    const where = `${r.ssid ?? "network"} · ${r.sensorName}`;
+    if (r.associated === false) {
+      out.push({
+        severity: "high",
+        title: `Can't join ${where}`,
+        detail: "Failed to associate — check the key/RADIUS, the authorized MAC, or signal at this location.",
+      });
+      continue; // downstream checks are meaningless if it never joined
+    }
+    if (r.associated === true && r.dhcpMs != null && r.dhcpMs < 0)
+      out.push({
+        severity: "high",
+        title: `No DHCP lease on ${where}`,
+        detail: "Associated but never got an IP — DHCP scope exhausted, or the VLAN has no DHCP.",
+      });
+    if (r.isolationReachable === true)
+      out.push({
+        severity: "high",
+        title: `Guest network NOT isolated on ${where}`,
+        detail: `Reached an internal host (${r.isolationTarget ?? "gateway"}) from this network — review guest segmentation.`,
+      });
+    if (r.assocMs != null && r.assocMs > 10000)
+      out.push({
+        severity: "warn",
+        title: `Slow to join ${where}`,
+        detail: `Took ${(r.assocMs / 1000).toFixed(1)}s to associate — often a struggling RADIUS or weak signal.`,
+      });
+    if (r.captiveState === "blocked")
+      out.push({
+        severity: "warn",
+        title: `Internet blocked on ${where}`,
+        detail: "No internet and no captive portal detected — a walled-off or broken network.",
+      });
+    else if (r.pingOk === false && r.captiveState !== "portal")
+      out.push({
+        severity: "warn",
+        title: `No internet on ${where}`,
+        detail: "Associated + leased but can't reach the internet.",
+      });
+    if (r.dnsOk === false && r.captiveState !== "portal")
+      out.push({
+        severity: "warn",
+        title: `DNS failing on ${where}`,
+        detail: "Can't resolve names — DNS server or content-filter issue.",
+      });
+    if (typeof r.lossPct === "number" && r.lossPct >= 20)
+      out.push({
+        severity: "warn",
+        title: `High packet loss on ${where}`,
+        detail: `${r.lossPct}% loss to the internet — RF or upstream congestion.`,
+      });
+  }
+  return out;
+}
+
 // ---- page -----------------------------------------------------------------
 
 export default async function WirelessPage({
@@ -378,8 +441,8 @@ export default async function WirelessPage({
     (a, b) => (b.maxSignal ?? -999) - (a.maxSignal ?? -999),
   );
 
-  // findings
-  const findings: Finding[] = [];
+  // findings — client-experience alerts first (what an admin chases), then RF posture
+  const findings: Finding[] = [...experienceFindings(exp.results)];
   if (openBss.length)
     findings.push({
       severity: "warn",
