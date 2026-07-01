@@ -2360,6 +2360,8 @@ export interface WifiProfileRow {
   hasSharedSecret: boolean;
   isDistrictSsid: boolean;
   enabled: boolean;
+  scheduleEnabled: boolean;
+  scheduleIntervalHours: number | null;
   sensors: WifiProfileSensorRow[];
 }
 
@@ -2379,6 +2381,8 @@ export async function listWifiProfilesForSchool(schoolId: number): Promise<WifiP
       sharedSecretEnc: wifiNetworkProfiles.sharedSecretEnc,
       isDistrictSsid: wifiNetworkProfiles.isDistrictSsid,
       enabled: wifiNetworkProfiles.enabled,
+      scheduleEnabled: wifiNetworkProfiles.scheduleEnabled,
+      scheduleIntervalHours: wifiNetworkProfiles.scheduleIntervalHours,
     })
     .from(wifiNetworkProfiles)
     .where(eq(wifiNetworkProfiles.schoolId, schoolId))
@@ -2423,6 +2427,8 @@ export async function listWifiProfilesForSchool(schoolId: number): Promise<WifiP
     hasSharedSecret: !!p.sharedSecretEnc,
     isDistrictSsid: p.isDistrictSsid,
     enabled: p.enabled,
+    scheduleEnabled: p.scheduleEnabled,
+    scheduleIntervalHours: p.scheduleIntervalHours,
     sensors: byProfile.get(p.id) ?? [],
   }));
 }

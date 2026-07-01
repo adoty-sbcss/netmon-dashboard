@@ -69,6 +69,8 @@ async function syncSensorWifiConfig(sensorId: number, actorId: number): Promise<
       scope: wifiNetworkProfiles.credentialScope,
       sharedIdentity: wifiNetworkProfiles.sharedIdentity,
       sharedSecretEnc: wifiNetworkProfiles.sharedSecretEnc,
+      scheduleEnabled: wifiNetworkProfiles.scheduleEnabled,
+      scheduleIntervalHours: wifiNetworkProfiles.scheduleIntervalHours,
       psIdentity: wifiProfileSensors.identity,
       psSecretEnc: wifiProfileSensors.secretEnc,
     })
@@ -105,9 +107,18 @@ async function syncSensorWifiConfig(sensorId: number, actorId: number): Promise<
   // SINGLE upsert (jsonb `||` is a shallow merge, and wifi_join_* are top-level keys),
   // so a concurrent writer to this sensor's config can't clobber the other's keys nor
   // reuse a version number — the read-then-write pattern used elsewhere can.
+  // Cadence for the unattended battery = the tightest enabled+scheduled profile's
+  // interval (one battery run tests ALL of the sensor's profiles, so the most
+  // frequent schedule wins). 0 = manual / Test-now only.
+  const intervals = rows
+    .filter((r) => r.scheduleEnabled && r.scheduleIntervalHours && r.scheduleIntervalHours > 0)
+    .map((r) => r.scheduleIntervalHours as number);
+  const scheduleSec = intervals.length ? Math.min(...intervals) * 3600 : 0;
+
   const delta = JSON.stringify({
     wifi_join_profiles: profiles,
     wifi_join_enabled: profiles.length > 0,
+    wifi_join_schedule_sec: scheduleSec,
   });
   await db
     .insert(desiredConfig)
@@ -155,6 +166,12 @@ export async function upsertWifiProfileAction(
   const sharedIdentity = String(formData.get("sharedIdentity") ?? "").trim() || null;
   const isDistrictSsid = formData.has("isDistrictSsid") ? checked(formData.get("isDistrictSsid")) : true;
   const enabled = formData.has("enabled") ? checked(formData.get("enabled")) : true;
+  // Unattended-scheduler cadence for this network (drives NETMON_WIFI_JOIN_SCHEDULE_SEC
+  // via syncSensorWifiConfig). Clamp 1h..1wk; default 6h.
+  const scheduleEnabled = checked(formData.get("scheduleEnabled"));
+  const rawInterval = Number(formData.get("scheduleIntervalHours"));
+  const scheduleIntervalHours =
+    Number.isInteger(rawInterval) && rawInterval >= 1 && rawInterval <= 168 ? rawInterval : 6;
 
   // Shared secret is only (re)written when a value is typed; per_sensor clears it.
   const rawSecret = String(formData.get("sharedSecret") ?? "");
@@ -183,6 +200,8 @@ export async function upsertWifiProfileAction(
         sharedIdentity,
         isDistrictSsid,
         enabled,
+        scheduleEnabled,
+        scheduleIntervalHours,
         updatedAt: new Date(),
       };
       if (sharedSecretEnc !== undefined) set.sharedSecretEnc = sharedSecretEnc;
@@ -205,6 +224,8 @@ export async function upsertWifiProfileAction(
           sharedSecretEnc: sharedSecretEnc ?? null,
           isDistrictSsid,
           enabled,
+          scheduleEnabled,
+          scheduleIntervalHours,
           createdBy: admin.id,
         })
         .returning({ id: wifiNetworkProfiles.id });
