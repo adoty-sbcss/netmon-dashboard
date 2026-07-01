@@ -3410,6 +3410,37 @@ export interface SensorManagement {
 }
 
 /** Control-plane state for a sensor: enrollment, desired config, recent commands. */
+/**
+ * Strip secret material from a desired_config blob before it leaves the server for
+ * a client component. The blob is pushed VERBATIM to the sensor by the check-in
+ * route (that's the intended secret channel), but the dashboard's read path
+ * (getSensorManagement → the sensor page → a "use client" panel) serializes every
+ * prop into the browser RSC payload — so a plaintext SFTP password or Wi-Fi PSK
+ * would otherwise ride to the browser. Drop secret-ish top-level keys and replace
+ * each wifi_join_profiles[].secret with a has_secret boolean.
+ */
+const _SECRET_CFG_KEY = /secret|passwd|password|psk|passphrase|private[_-]?key|token/i;
+function redactConfigSecrets(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (k === "wifi_join_profiles" && Array.isArray(v)) {
+      out[k] = v.map((p) => {
+        if (p && typeof p === "object") {
+          const { secret, ...rest } = p as Record<string, unknown>;
+          return { ...rest, has_secret: !!secret };
+        }
+        return p;
+      });
+      continue;
+    }
+    if (_SECRET_CFG_KEY.test(k)) continue; // e.g. sftp_password, wifi_join_secret
+    out[k] = v;
+  }
+  return out;
+}
+
 export async function getSensorManagement(sensorId: number): Promise<SensorManagement> {
   const [enroll, cfg, cmds] = await Promise.all([
     db
@@ -3443,7 +3474,9 @@ export async function getSensorManagement(sensorId: number): Promise<SensorManag
     enrolled: enroll.length > 0,
     enrollLastUsedAt: enroll[0]?.lastUsedAt ?? null,
     configVersion: cfg[0]?.v ?? null,
-    config: (cfg[0]?.config as Record<string, unknown> | undefined) ?? null,
+    config: cfg[0]?.config
+      ? redactConfigSecrets(cfg[0].config as Record<string, unknown>)
+      : null,
     commands: cmds.map((c) => ({
       ...c,
       result: (c.result as Record<string, unknown> | null) ?? null,

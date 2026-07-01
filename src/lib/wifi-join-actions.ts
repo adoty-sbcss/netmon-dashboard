@@ -16,10 +16,10 @@
  * and only decrypted here to materialize the push. Superadmin-only. Self-contained.
  */
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { auditLog } from "@/db/schema/app";
+import { auditLog, sensors } from "@/db/schema/app";
 import {
   commandQueue,
   desiredConfig,
@@ -36,7 +36,12 @@ export interface WifiActionState {
 }
 
 async function audit(actor: string, action: string, detail: Record<string, unknown> = {}) {
-  await db.insert(auditLog).values({ actorType: "user", actor, action, detail }).catch(() => {});
+  // These actions move credentials onto sensors — a lost audit write is a real gap,
+  // so surface the failure server-side instead of swallowing it silently.
+  await db
+    .insert(auditLog)
+    .values({ actorType: "user", actor, action, detail })
+    .catch((e) => console.error("wifi-join audit write failed", { action, error: String(e) }));
 }
 
 async function requireSuperadmin() {
@@ -96,23 +101,25 @@ async function syncSensorWifiConfig(sensorId: number, actorId: number): Promise<
     };
   });
 
-  const [cur] = await db
-    .select({ v: desiredConfig.configVersion, config: desiredConfig.config })
-    .from(desiredConfig)
-    .where(eq(desiredConfig.sensorId, sensorId))
-    .limit(1);
-  const nextVersion = (cur?.v ?? 0) + 1;
-  const config = {
-    ...((cur?.config as Record<string, unknown>) ?? {}),
+  // Atomic: merge the wifi keys into the existing config + bump the version in a
+  // SINGLE upsert (jsonb `||` is a shallow merge, and wifi_join_* are top-level keys),
+  // so a concurrent writer to this sensor's config can't clobber the other's keys nor
+  // reuse a version number — the read-then-write pattern used elsewhere can.
+  const delta = JSON.stringify({
     wifi_join_profiles: profiles,
     wifi_join_enabled: profiles.length > 0,
-  };
+  });
   await db
     .insert(desiredConfig)
-    .values({ sensorId, configVersion: nextVersion, config, updatedBy: actorId })
+    .values({ sensorId, configVersion: 1, config: sql`${delta}::jsonb`, updatedBy: actorId })
     .onConflictDoUpdate({
       target: desiredConfig.sensorId,
-      set: { configVersion: nextVersion, config, updatedBy: actorId, updatedAt: new Date() },
+      set: {
+        config: sql`${desiredConfig.config} || ${delta}::jsonb`,
+        configVersion: sql`${desiredConfig.configVersion} + 1`,
+        updatedBy: actorId,
+        updatedAt: new Date(),
+      },
     });
   return profiles.length;
 }
@@ -154,6 +161,14 @@ export async function upsertWifiProfileAction(
   let sharedSecretEnc: string | null | undefined;
   if (credentialScope === "per_sensor") sharedSecretEnc = null;
   else if (rawSecret) sharedSecretEnc = encryptSecret(rawSecret);
+
+  // On CREATE, a shared-scope non-open network needs a key (blank = "keep" only
+  // makes sense on edit). Without this the profile would push {auth:"psk",secret:""}
+  // and every join would fail as an empty-passphrase association with no hint why.
+  if (!profileId && authMethod !== "open" && credentialScope === "shared" && !rawSecret)
+    return {
+      error: authMethod === "peap" ? "A password is required for PEAP." : "A pre-shared key is required.",
+    };
 
   try {
     let pid = profileId;
@@ -251,6 +266,19 @@ export async function setProfileSensorAction(
   const identity = String(formData.get("identity") ?? "").trim() || null;
   const rawSecret = String(formData.get("secret") ?? "");
   const secretEnc = rawSecret ? encryptSecret(rawSecret) : undefined;
+
+  // Scope guard: the sensor MUST belong to the same school as the profile. A
+  // superadmin is global, so without this an admin (or a replayed form POST) could
+  // materialize one school's Wi-Fi secret onto a sensor at another school.
+  const [scope] = await db
+    .select({ profileSchool: wifiNetworkProfiles.schoolId, sensorSchool: sensors.schoolId })
+    .from(wifiNetworkProfiles)
+    .innerJoin(sensors, eq(sensors.id, sensorId))
+    .where(eq(wifiNetworkProfiles.id, profileId))
+    .limit(1);
+  if (!scope) return { error: "That profile or sensor no longer exists." };
+  if (scope.profileSchool !== scope.sensorSchool)
+    return { error: "That sensor belongs to a different school than this network." };
 
   const [existing] = await db
     .select({ id: wifiProfileSensors.id })

@@ -607,13 +607,19 @@ async function persistWifiExperience(
   exp: RawWifiExperience | null,
 ): Promise<void> {
   if (!exp || exp.available !== true || !Array.isArray(exp.results)) return;
+  // The append-dedup relies on a non-null generated_at as the per-run key: in
+  // Postgres NULL != NULL, so a null timestamp defeats the unique index and the
+  // box-global artifact (re-shipped every bundle) would duplicate on each ingest.
+  // The collector always stamps it; skip a malformed artifact rather than bloat.
+  const generatedAt = toDate(exp.generated_at);
+  if (!generatedAt) return;
   const triBool = (v: unknown): boolean | null =>
     v === null || v === undefined ? null : toBool(v);
   const rows = exp.results
     .filter((r): r is NonNullable<typeof r> => !!r && !!r.ssid)
     .map((r) => ({
       sensorId,
-      generatedAt: toDate(exp.generated_at),
+      generatedAt,
       interface: str(exp.interface),
       ssid: str(r.ssid),
       auth: str(r.auth),
