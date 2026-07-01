@@ -386,6 +386,13 @@
       "when": 1782828224343,
       "tag": "0054_wifi_experience",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1782866620451,
+      "tag": "0055_wifi_config_portal",
+      "breakpoints": true
     }
   ]
 }

@@ -1114,6 +1114,48 @@ const wirelessSurvey: HelpArticle = {
   ],
 };
 
+const wirelessJoinConfig: HelpArticle = {
+  slug: "wireless-join-config",
+  title: "Configure Wi-Fi join tests (client experience)",
+  summary:
+    "Set up the networks a sensor joins to measure the real client experience — SSID, auth (open/PSK/PEAP), captive portals, shared vs per-sensor (MPSK) keys — and run a test on demand.",
+  category: "Monitoring",
+  kind: "guide",
+  keywords: [
+    "wifi", "wireless", "join", "psk", "mpsk", "peap", "802.1x", "eap",
+    "captive portal", "guest", "experience", "associate", "dhcp",
+    "credentials", "secret", "test network", "isolation", "config", "radius",
+  ],
+  updated: "2026-06-30",
+  blocks: [
+    { kind: "callout", tone: "info", text: <>The <strong>Wi-Fi join configuration</strong> panel (on the <strong>Wireless</strong> tab, admins only) makes a sensor <strong>join</strong> a network on a spare radio and measure what a real client experiences — associate time, DHCP, captive portal, DNS, internet, and guest&rarr;internal isolation. The analysis radio is always <strong>routes-off</strong>: it can never become the box&apos;s uplink.</> },
+    { kind: "h", text: "Before you start" },
+    { kind: "steps", items: [
+      <>A sensor at the site needs a <strong>spare Wi-Fi radio</strong> (a second adapter, not its uplink). Its radio MAC shows at the top of the panel — <strong>authorize that MAC</strong> on MPSK / MAC-bound networks first.</>,
+      <>Have credentials ready: a WPA2-PSK key, or a PEAP username + password. Use limited-access <strong>service accounts</strong>, not staff logins.</>,
+    ]},
+    { kind: "h", text: "Add a network" },
+    { kind: "steps", items: [
+      <>Open <strong>Wireless &rarr; Add a network</strong>. Pick the <strong>SSID</strong> (the box suggests ones the survey already saw) and the <strong>authentication</strong> (Open, WPA2-PSK, or WPA2-Enterprise PEAP).</>,
+      <>Choose the <strong>credential scope</strong>: <strong>Shared</strong> (one key for the whole school) or <strong>Per-sensor</strong> — use per-sensor for <strong>MPSK</strong>, where each radio MAC has its own key.</>,
+      <>If the network has a <strong>captive portal</strong> (a click-through &quot;Accept&quot; page), tick the box; optionally have the sensor <strong>try to auto-accept</strong> it.</>,
+      <>Secrets are stored <strong>encrypted</strong> and never shown again — leave a key field blank to keep the current one.</>,
+    ]},
+    { kind: "h", text: "Enroll sensors + test" },
+    { kind: "steps", items: [
+      <>Under each network, <strong>Enroll</strong> the sensors that should test it. For per-sensor keys, enter that sensor&apos;s key next to its MAC.</>,
+      <>Click <strong>Test now</strong> to run the battery immediately; results appear in the <strong>Connection experience</strong> table after the sensor&apos;s next check-in (~3 min).</>,
+    ]},
+    { kind: "h", text: "Reading the results" },
+    { kind: "steps", items: [
+      <><strong>Joined / Assoc / DHCP</strong> — did it associate, and how long to associate + get a lease. Slow or failed usually means RADIUS, a wrong key, or DHCP exhaustion — the top &quot;Wi-Fi is broken in Room X&quot; causes.</>,
+      <><strong>Captive portal</strong> — open (no portal), portal (intercepted), or blocked; &quot;&#x2713; accepted&quot; means the auto-accept worked.</>,
+      <><strong>Guest isolation</strong> — <strong>not isolated</strong> (red) means the joined network could reach an internal host; investigate your guest segmentation.</>,
+    ]},
+    { kind: "callout", tone: "info", text: <>EAP-TLS (client certificates) isn&apos;t part of this release. For the passive RF/AP view instead, see {A("wireless-survey", "Reading the Wireless tab")}.</> },
+  ],
+};
+
 export const HELP_ARTICLES: HelpArticle[] = [
   // Sensors
   recoverStuckSensor,
@@ -1126,6 +1168,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   // Monitoring
   networkMap,
   wirelessSurvey,
+  wirelessJoinConfig,
   deviceInventory,
   deviceDetail,
   aiFindings,
