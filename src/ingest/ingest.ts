@@ -640,6 +640,16 @@ async function persistWifiExperience(
       dnsOk: triBool(r.dns_ok),
       isolationTarget: str(r.isolation?.internal_target),
       isolationReachable: triBool(r.isolation?.internal_reachable),
+      // WIFI-6 battery metrics
+      bssid: str(r.link?.bssid),
+      band: str(r.link?.band),
+      rxRateMbps: toNum(r.link?.rx_rate_mbps),
+      downloadMbps: toNum(r.throughput?.download_mbps),
+      targets: Array.isArray(r.targets)
+        ? r.targets
+            .map((t) => ({ host: str(t?.host), rtt_ms: toNum(t?.rtt_ms) }))
+            .filter((t): t is { host: string; rtt_ms: number | null } => !!t.host)
+        : null,
     }));
   if (rows.length)
     await tx

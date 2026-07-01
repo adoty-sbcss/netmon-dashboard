@@ -327,6 +327,12 @@ export const wifiSurveys = pgTable(
   ],
 );
 
+/** WIFI-6: per-target latency probe inside the experience battery (source-bound over Wi-Fi). */
+export type WifiExpTarget = {
+  host: string;
+  rtt_ms: number | null;
+};
+
 /**
  * WIFI-3/WIFI-6: client-experience battery results — one row per network the sensor
  * joined + measured (open/PSK/PEAP), from the box-global wifi_experience.json.
@@ -364,6 +370,13 @@ export const wifiExperience = pgTable(
     dnsOk: boolean("dns_ok"),
     isolationTarget: text("isolation_target"), // the internal host we tried to reach
     isolationReachable: boolean("isolation_reachable"), // true = NOT isolated (a finding)
+    // WIFI-6 battery metrics — "is the connection actually GOOD" (all source-bound over Wi-Fi)
+    bssid: text("bssid"), // the AP the client associated to
+    band: text("band"), // 2.4GHz | 5GHz | 6GHz (derived from freq)
+    rxRateMbps: doublePrecision("rx_rate_mbps"), // negotiated rx PHY rate
+    downloadMbps: doublePrecision("download_mbps"), // short source-bound download over the Wi-Fi
+    // [{ target, rtt_ms, loss_pct }] latency to instructional targets (google / M365)
+    targets: jsonb("targets").$type<WifiExpTarget[]>(),
     ingestedAt: timestamp("ingested_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
