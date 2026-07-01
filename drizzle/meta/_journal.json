@@ -393,6 +393,13 @@
       "when": 1782866620451,
       "tag": "0055_wifi_config_portal",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1782906980076,
+      "tag": "0056_webperf",
+      "breakpoints": true
     }
   ]
 }

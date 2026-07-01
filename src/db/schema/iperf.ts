@@ -15,6 +15,7 @@ import {
   jsonb,
   timestamp,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { districts, schools, sensors, users } from "./app";
 
@@ -133,6 +134,67 @@ export const latencyResults = pgTable(
       .notNull(),
   },
   (t) => [index("idx_latency_results_sensor").on(t.sensorId, t.createdAt)],
+);
+
+/**
+ * PERF-5: a single website-performance probe reported by a sensor. One row per URL
+ * per cycle; times are CUMULATIVE ms from the request start (dns <= tcp <= tls <=
+ * ttfb <= total), matching curl's timing model. trigger = 'manual' | 'scheduled'.
+ * Sensor POSTs to /api/sensor/webperf-result.
+ */
+export const webperfResults = pgTable(
+  "webperf_results",
+  {
+    id: serial("id").primaryKey(),
+    sensorId: integer("sensor_id")
+      .notNull()
+      .references(() => sensors.id, { onDelete: "cascade" }),
+    trigger: text("trigger"),
+    url: text("url"),
+    dnsMs: doublePrecision("dns_ms"),
+    tcpMs: doublePrecision("tcp_ms"),
+    tlsMs: doublePrecision("tls_ms"),
+    ttfbMs: doublePrecision("ttfb_ms"),
+    totalMs: doublePrecision("total_ms"),
+    httpStatus: integer("http_status"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    speedMbps: doublePrecision("speed_mbps"),
+    ok: boolean("ok").notNull().default(true),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("idx_webperf_results_sensor").on(t.sensorId, t.createdAt)],
+);
+
+/** PERF-5: master switch for website testing in a district (one row per district). */
+export const districtWebperf = pgTable("district_webperf", {
+  districtId: integer("district_id")
+    .primaryKey()
+    .references(() => districts.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  updatedBy: integer("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * PERF-5: the district-managed list of websites to test (end-user experience). The
+ * list is materialized into each sensor's desired_config (webperf_urls) on change;
+ * an empty list falls back to a couple of built-in defaults at push time.
+ */
+export const districtWebperfUrls = pgTable(
+  "district_webperf_urls",
+  {
+    id: serial("id").primaryKey(),
+    districtId: integer("district_id")
+      .notNull()
+      .references(() => districts.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    label: text("label"),
+    addedBy: integer("added_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("uq_webperf_url_district").on(t.districtId, t.url)],
 );
 
 /**

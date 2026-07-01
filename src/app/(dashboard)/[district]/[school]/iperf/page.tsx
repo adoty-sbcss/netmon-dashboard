@@ -14,6 +14,7 @@ import {
   type SchoolLatencyRow,
   type UplinkSampleRow,
 } from "@/lib/iperf";
+import { listSchoolWebperf, type WebperfResultRow } from "@/lib/webperf";
 import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, fixed1 as f1, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -156,6 +157,7 @@ export default async function IperfPage({
     uplinkDaily,
     sessionUser,
     sensorList,
+    webperf,
   ] = await Promise.all([
     safeQuery(getDistrictIperf(district.id), { serverHost: "", serverPort: 5201, enabled: false }, "districtIperf", failures),
     safeQuery(listSchoolIperfResults(school.id, 300), [], "iperfResults", failures),
@@ -166,7 +168,15 @@ export default async function IperfPage({
     safeQuery(listSchoolUplinkDailyAvg(school.id, 30), [], "uplinkDailyAvg", failures),
     safeQuery(getSessionUser(), null, "sessionUser"),
     safeQuery(listSensorsForSchool(school.id), [], "sensors"),
+    safeQuery(listSchoolWebperf(school.id, 600), [] as WebperfResultRow[], "webperf", failures),
   ]);
+
+  // Latest result per URL (rows are newest-first) for the website-performance card.
+  const webLatest = new Map<string, WebperfResultRow>();
+  for (const r of webperf) {
+    if (r.url && !webLatest.has(r.url)) webLatest.set(r.url, r);
+  }
+  const webCards = [...webLatest.values()].sort((a, b) => (a.url ?? "").localeCompare(b.url ?? ""));
   const canEditRate = sessionUser?.role === "superadmin";
 
   // Latest latency probe per target (internet / gateway / dns), newest-first input.
@@ -531,6 +541,81 @@ export default async function IperfPage({
                 </TableBody>
               </Table>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* --- Website / end-user experience (PERF-5) --- */}
+      {webCards.length > 0 && (
+        <Card>
+          <SectionHeader
+            icon={Globe}
+            title="Website performance"
+            meta={`${webCards.length} site${webCards.length === 1 ? "" : "s"}`}
+          />
+          <CardContent className="px-0 sm:px-6">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Site</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">DNS</TableHead>
+                    <TableHead className="text-right">Connect</TableHead>
+                    <TableHead className="text-right">TLS</TableHead>
+                    <TableHead className="text-right">TTFB</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Speed</TableHead>
+                    <TableHead className="text-right">Measured</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {webCards.map((r) => {
+                    const ms = (v: number | null) => (v == null ? "—" : `${Math.round(v)} ms`);
+                    let host = r.url ?? "—";
+                    try {
+                      host = new URL(r.url ?? "").host;
+                    } catch {
+                      /* keep raw */
+                    }
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-medium" title={r.url ?? undefined}>
+                          {host}
+                        </TableCell>
+                        <TableCell>
+                          {r.ok ? (
+                            <Badge variant="default" className="text-[10px]">
+                              {r.httpStatus ?? "ok"}
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-[10px]" title={r.error ?? undefined}>
+                              {r.httpStatus || "fail"}
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{ms(r.dnsMs)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{ms(r.tcpMs)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.tlsMs == null ? "—" : ms(r.tlsMs)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{ms(r.ttfbMs)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">{ms(r.totalMs)}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {r.speedMbps == null ? "—" : `${f1(r.speedMbps)} Mbps`}
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground">
+                          {relativeTime(r.createdAt)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="px-4 pt-3 text-xs text-muted-foreground sm:px-0">
+              The full load waterfall per site (cumulative times). A high <strong>DNS</strong> points at
+              name resolution; a high <strong>TTFB</strong> at the network path or the origin server.
+              Manage the site list in Settings → School &amp; district settings.
+            </p>
           </CardContent>
         </Card>
       )}

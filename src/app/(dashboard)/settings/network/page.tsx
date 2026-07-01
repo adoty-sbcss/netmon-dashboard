@@ -6,6 +6,11 @@ import { getSessionUser } from "@/lib/auth/current-user";
 import { listAuthorizedDhcpServers } from "@/lib/dhcp-policy";
 import { getDistrictIperf } from "@/lib/iperf";
 import {
+  getDistrictWebperfEnabled,
+  listDistrictWebperfUrls,
+  DEFAULT_WEBPERF_URLS,
+} from "@/lib/webperf";
+import {
   listDistrictsForSettings,
   listDistrictSensorCapabilities,
   listDistrictRollout,
@@ -18,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CapabilityMatrix } from "./capability-matrix";
 import { DistrictWifiJoinSection } from "./wifi-join-section";
+import { WebperfManager } from "./webperf-manager";
 import { SnmpCommunityForm } from "./snmp-community-form";
 import { CrawlScopeCard } from "./crawl-scope-card";
 import { SftpRotationCard } from "./sftp-rotation-card";
@@ -108,11 +114,13 @@ async function NetworkSettingsForDistrict({
   districtSlug: string;
   basePath: string;
 }) {
-  const [sensors, dhcpServers, iperf, rollout] = await Promise.all([
+  const [sensors, dhcpServers, iperf, rollout, webperfEnabled, webperfUrls] = await Promise.all([
     listDistrictSensorCapabilities(districtId),
     listAuthorizedDhcpServers(districtId),
     getDistrictIperf(districtId),
     listDistrictRollout(districtId),
+    getDistrictWebperfEnabled(districtId),
+    listDistrictWebperfUrls(districtId),
   ]);
   // Seed the district push field from what sensors are ACTUALLY reporting (ground
   // truth) when they agree, so the field matches what each sensor's own page
@@ -157,6 +165,14 @@ async function NetworkSettingsForDistrict({
 
       {/* 5. District policy that tunes alerts + AI. */}
       <DhcpServersManager districtSlug={districtSlug} servers={dhcpServers} />
+
+      {/* 5b. Website / end-user experience testing (PERF-5). */}
+      <WebperfManager
+        districtSlug={districtSlug}
+        enabled={webperfEnabled}
+        urls={webperfUrls}
+        defaults={DEFAULT_WEBPERF_URLS}
+      />
 
       {/* 6. Fleet-wide settings that live elsewhere. */}
       <Card>
