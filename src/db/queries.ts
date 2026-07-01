@@ -2219,6 +2219,7 @@ export interface WifiExperienceRow {
   captiveHttpCode: string | null;
   captiveRedirect: string | null;
   captiveAutoAccepted: boolean | null;
+  captiveVendor: string | null;
   pingOk: boolean | null;
   rttMs: number | null;
   lossPct: number | null;
@@ -2265,6 +2266,7 @@ export async function listWifiExperienceForSchool(
       captiveHttpCode: wifiExperience.captiveHttpCode,
       captiveRedirect: wifiExperience.captiveRedirect,
       captiveAutoAccepted: wifiExperience.captiveAutoAccepted,
+      captiveVendor: wifiExperience.captiveVendor,
       pingOk: wifiExperience.pingOk,
       rttMs: wifiExperience.rttMs,
       lossPct: wifiExperience.lossPct,
@@ -2313,6 +2315,7 @@ export async function listWifiExperienceForSchool(
       captiveHttpCode: r.captiveHttpCode,
       captiveRedirect: r.captiveRedirect,
       captiveAutoAccepted: r.captiveAutoAccepted,
+      captiveVendor: r.captiveVendor,
       pingOk: r.pingOk,
       rttMs: r.rttMs,
       lossPct: r.lossPct,

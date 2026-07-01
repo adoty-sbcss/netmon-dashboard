@@ -89,6 +89,19 @@ function bandBadge(band: string): "default" | "secondary" | "destructive" | "out
   return "outline";
 }
 
+/** Friendly name for a detected captive-portal platform (WIFI-6 vendor telemetry). */
+function vendorLabel(v: string): string {
+  return (
+    {
+      aruba_central: "Aruba Central",
+      aruba: "Aruba",
+      cisco_wlc: "Cisco WLC",
+      cisco_ise: "Cisco ISE",
+      meraki: "Meraki",
+    }[v] ?? v
+  );
+}
+
 /** Shorten instructional-target hostnames for the compact latency column. */
 function targetLabel(host: string): string {
   const h = host.replace(/^www\./, "");
@@ -180,6 +193,11 @@ function experienceSection(results: WifiExperienceRow[]) {
                         )}
                         {r.captiveAutoAccepted === false && (
                           <span className="text-[10px] text-muted-foreground" title="Auto-accept attempted, portal still up">accept failed</span>
+                        )}
+                        {r.captiveVendor && r.captiveVendor !== "generic" && (
+                          <Badge variant="outline" className="text-[10px]" title="Captive-portal platform">
+                            {vendorLabel(r.captiveVendor)}
+                          </Badge>
                         )}
                       </span>
                     ) : (

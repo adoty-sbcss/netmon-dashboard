@@ -341,7 +341,7 @@ export interface RawWifiExpResult {
   gateway?: string | null;
   signal?: number | null;
   signal_unit?: string | null;
-  captive_portal?: { state?: string | null; http_code?: string | null; redirect?: string | null; auto_accepted?: boolean | null } | null;
+  captive_portal?: { state?: string | null; http_code?: string | null; redirect?: string | null; auto_accepted?: boolean | null; vendor?: string | null } | null;
   internet?: { ping_ok?: boolean | null; rtt_ms?: string | number | null; loss_pct?: string | number | null } | null;
   dns_ok?: boolean | null;
   isolation?: { internal_target?: string | null; internal_reachable?: boolean | null } | null;

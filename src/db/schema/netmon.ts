@@ -364,6 +364,7 @@ export const wifiExperience = pgTable(
     captiveHttpCode: text("captive_http_code"),
     captiveRedirect: text("captive_redirect"),
     captiveAutoAccepted: boolean("captive_auto_accepted"), // WIFI-6: click-through result (null = not attempted)
+    captiveVendor: text("captive_vendor"), // WIFI-6: portal platform — aruba_central | aruba | cisco_wlc | cisco_ise | meraki | generic
     pingOk: boolean("ping_ok"),
     rttMs: doublePrecision("rtt_ms"),
     lossPct: integer("loss_pct"),
