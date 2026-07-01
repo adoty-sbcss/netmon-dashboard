@@ -83,7 +83,10 @@ async function syncSensorWifiConfig(sensorId: number, actorId: number): Promise<
         eq(wifiProfileSensors.enabled, true),
         eq(wifiNetworkProfiles.enabled, true),
       ),
-    );
+    )
+    // Creation order, so the collector's "first network = default speed-test primary"
+    // (when none is flagged) lines up with the school's first-added profile.
+    .orderBy(wifiNetworkProfiles.createdAt, wifiNetworkProfiles.id);
 
   const dec = (enc: string | null): string => {
     if (!enc) return "";
@@ -212,6 +215,14 @@ export async function upsertWifiProfileAction(
         .set(set)
         .where(and(eq(wifiNetworkProfiles.id, profileId), eq(wifiNetworkProfiles.schoolId, schoolId)));
     } else {
+      // Default the FIRST network a school adds to the speed-test primary, so the
+      // internet speed test runs without anyone picking one (the admin can move it
+      // later). Matches the collector's default-first behavior.
+      const [existingPrimary] = await db
+        .select({ id: wifiNetworkProfiles.id })
+        .from(wifiNetworkProfiles)
+        .where(and(eq(wifiNetworkProfiles.schoolId, schoolId), eq(wifiNetworkProfiles.speedtestPrimary, true)))
+        .limit(1);
       const [ins] = await db
         .insert(wifiNetworkProfiles)
         .values({
@@ -228,6 +239,7 @@ export async function upsertWifiProfileAction(
           enabled,
           scheduleEnabled,
           scheduleIntervalHours,
+          speedtestPrimary: !existingPrimary,
           createdBy: admin.id,
         })
         .returning({ id: wifiNetworkProfiles.id });
