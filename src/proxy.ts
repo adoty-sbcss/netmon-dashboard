@@ -41,7 +41,8 @@ export async function proxy(req: NextRequest) {
     pathname === "/api/sensor/enroll" ||
     pathname === "/api/sensor/iperf-result" ||
     pathname === "/api/sensor/speedtest-result" ||
-    pathname === "/api/sensor/latency-result"
+    pathname === "/api/sensor/latency-result" ||
+    pathname === "/api/sensor/webperf-result"
   ) {
     return NextResponse.next();
   }
