@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import {
+  Activity,
   Antenna,
   Info,
   Lock,
@@ -16,8 +17,10 @@ import {
   getSchoolBySlug,
   listWifiForSchool,
   listWifiExperienceForSchool,
+  listWifiExperienceHistory,
   type WifiBssRow,
   type WifiExperienceRow,
+  type WifiExperienceTrend,
 } from "@/db/queries";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
@@ -191,6 +194,123 @@ function experienceSection(results: WifiExperienceRow[]) {
   );
 }
 
+/** Tiny inline-SVG sparkline of a numeric series (nulls dropped). Server-rendered. */
+function Sparkline({
+  values,
+  color = "text-sky-500",
+  width = 140,
+  height = 22,
+}: {
+  values: (number | null)[];
+  color?: string;
+  width?: number;
+  height?: number;
+}) {
+  const nums = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (nums.length < 2) return <span className="text-xs text-muted-foreground">—</span>;
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  const range = max - min || 1;
+  const pts = nums
+    .map((v, i) => {
+      const x = (i / (nums.length - 1)) * width;
+      const y = height - 2 - ((v - min) / range) * (height - 4);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg width={width} height={height} className={color} aria-hidden>
+      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0);
+
+/** Per-network experience TREND over time — a status timeline + associate/RTT
+ *  sparklines + a quick summary. Surfaces a slow-degrading network the latest-only
+ *  table can't. */
+function experienceTrendSection(trends: WifiExperienceTrend[]) {
+  if (trends.length === 0) return null;
+  return (
+    <Card>
+      <SectionHeader
+        icon={Activity}
+        title="Experience trend"
+        meta={`${trends.length} network${trends.length === 1 ? "" : "s"}`}
+      />
+      <CardContent className="flex flex-col gap-5">
+        {trends.map((t) => {
+          const assoc = t.points.map((p) => p.assocMs).filter((v): v is number => v != null);
+          const rtt = t.points
+            .map((p) => p.rttMs)
+            .filter((v): v is number => v != null && Number.isFinite(v));
+          const joined = t.points.filter((p) => p.associated).length;
+          const okRate = Math.round(
+            (t.points.filter((p) => p.pingOk).length / t.points.length) * 100,
+          );
+          const lastAssoc = assoc.length ? assoc[assoc.length - 1] : null;
+          const lastRtt = rtt.length ? rtt[rtt.length - 1] : null;
+          return (
+            <div
+              key={`${t.sensorId}-${t.ssid}`}
+              className="flex flex-col gap-2 border-b pb-4 last:border-0 last:pb-0"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium">{t.ssid ?? "—"}</span>
+                <span className="text-xs text-muted-foreground">{t.sensorName}</span>
+                <span className="text-xs text-muted-foreground">· {t.points.length} runs</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {joined}/{t.points.length} joined · {okRate}% had internet
+                </span>
+              </div>
+              <div
+                className="flex flex-wrap items-center gap-0.5"
+                title="Each run oldest→newest: green = internet, amber = joined but no internet, red = failed to join"
+              >
+                {t.points.map((p, i) => (
+                  <span
+                    key={i}
+                    className={`inline-block size-2 rounded-[2px] ${
+                      p.associated === false
+                        ? "bg-destructive"
+                        : p.pingOk
+                          ? "bg-emerald-500"
+                          : "bg-amber-500"
+                    }`}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                <span className="flex items-center gap-2">
+                  <span className="w-20 text-muted-foreground">Time to join</span>
+                  <Sparkline values={t.points.map((p) => p.assocMs)} color="text-sky-500" />
+                  <span className="tabular-nums text-muted-foreground">
+                    {lastAssoc != null ? `${lastAssoc} ms` : "—"}
+                    {assoc.length ? ` · avg ${avg(assoc)}` : ""}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="w-16 text-muted-foreground">Internet RTT</span>
+                  <Sparkline values={t.points.map((p) => p.rttMs)} color="text-violet-500" />
+                  <span className="tabular-nums text-muted-foreground">
+                    {lastRtt != null ? `${lastRtt.toFixed(0)} ms` : "—"}
+                    {rtt.length ? ` · avg ${avg(rtt)}` : ""}
+                  </span>
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        <p className="text-xs text-muted-foreground">
+          Newest run on the right. A rising &quot;time to join&quot; or a growing run of amber/red dots is an
+          early sign of RADIUS / DHCP / RF trouble — before users flood the help desk.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function bandColor(band: string | null): string {
   if (band === "2.4GHz") return "bg-amber-500";
   if (band === "5GHz") return "bg-sky-500";
@@ -280,12 +400,14 @@ export default async function WirelessPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [wifi, exp] = await Promise.all([
+  const [wifi, exp, trends] = await Promise.all([
     listWifiForSchool(school.id),
     listWifiExperienceForSchool(school.id),
+    listWifiExperienceHistory(school.id),
   ]);
   const bss = wifi.bss;
   const expSection = experienceSection(exp.results);
+  const trendSection = experienceTrendSection(trends);
   const schoolName = school.name || titleizeSlug(school.slug);
 
   // ---- empty state: no survey. If there's a join-experience battery, show that;
@@ -297,7 +419,8 @@ export default async function WirelessPage({
         <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
         <PageHeader title="Wireless" description={`${schoolName} · Wi-Fi RF / AP survey`} />
         {expSection}
-        {!expSection && (
+        {trendSection}
+        {!expSection && !trendSection && (
           <Card>
             <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
               <WifiOff className="size-10 text-muted-foreground" />
@@ -474,6 +597,9 @@ export default async function WirelessPage({
 
       {/* WIFI-3 client-experience battery (join -> measure -> leave), if any */}
       {expSection}
+
+      {/* WIFI-6 experience trend over time */}
+      {trendSection}
 
       {/* stat tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

@@ -2314,6 +2314,97 @@ export async function listWifiExperienceForSchool(
   return { generatedAt: newest, interface: iface, results };
 }
 
+export interface WifiTrendPoint {
+  generatedAt: Date | null;
+  associated: boolean | null;
+  assocMs: number | null;
+  dhcpMs: number | null;
+  rttMs: number | null;
+  lossPct: number | null;
+  signal: number | null;
+  pingOk: boolean | null;
+  captiveState: string | null;
+  isolationReachable: boolean | null;
+}
+
+export interface WifiExperienceTrend {
+  sensorId: number;
+  sensorName: string;
+  ssid: string | null;
+  auth: string | null;
+  points: WifiTrendPoint[]; // chronological, oldest -> newest
+}
+
+/** Per-(sensor, SSID) history of the client-experience battery for the trend view.
+ *  Keeps the most recent `perNetwork` runs of each network, oldest-first. Drops
+ *  networks with a single data point (nothing to trend). */
+export async function listWifiExperienceHistory(
+  schoolId: number,
+  perNetwork = 48,
+): Promise<WifiExperienceTrend[]> {
+  const rows = await db
+    .select({
+      sensorId: wifiExperience.sensorId,
+      sensorName: sensors.name,
+      sensorSlug: sensors.slug,
+      ssid: wifiExperience.ssid,
+      auth: wifiExperience.auth,
+      generatedAt: wifiExperience.generatedAt,
+      associated: wifiExperience.associated,
+      assocMs: wifiExperience.assocMs,
+      dhcpMs: wifiExperience.dhcpMs,
+      rttMs: wifiExperience.rttMs,
+      lossPct: wifiExperience.lossPct,
+      signal: wifiExperience.signal,
+      pingOk: wifiExperience.pingOk,
+      captiveState: wifiExperience.captiveState,
+      isolationReachable: wifiExperience.isolationReachable,
+    })
+    .from(wifiExperience)
+    .innerJoin(sensors, eq(wifiExperience.sensorId, sensors.id))
+    .where(eq(sensors.schoolId, schoolId))
+    .orderBy(desc(wifiExperience.generatedAt), desc(wifiExperience.id))
+    .limit(2000);
+
+  const groups = new Map<string, WifiExperienceTrend>();
+  for (const r of rows) {
+    const key = `${r.sensorId} ${r.ssid ?? ""}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        sensorId: r.sensorId,
+        sensorName: r.sensorName ?? r.sensorSlug ?? `sensor ${r.sensorId}`,
+        ssid: r.ssid,
+        auth: r.auth,
+        points: [],
+      };
+      groups.set(key, g);
+    }
+    if (g.points.length < perNetwork)
+      g.points.push({
+        generatedAt: r.generatedAt,
+        associated: r.associated,
+        assocMs: r.assocMs,
+        dhcpMs: r.dhcpMs,
+        rttMs: r.rttMs,
+        lossPct: r.lossPct,
+        signal: r.signal,
+        pingOk: r.pingOk,
+        captiveState: r.captiveState,
+        isolationReachable: r.isolationReachable,
+      });
+  }
+  const out: WifiExperienceTrend[] = [];
+  for (const g of groups.values()) {
+    if (g.points.length >= 2) {
+      g.points.reverse(); // newest-first -> chronological
+      out.push(g);
+    }
+  }
+  out.sort((a, b) => (a.ssid ?? "").localeCompare(b.ssid ?? ""));
+  return out;
+}
+
 export interface SchoolWifiRadio {
   sensorId: number;
   sensorName: string;
