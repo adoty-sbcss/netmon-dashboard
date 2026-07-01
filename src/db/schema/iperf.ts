@@ -85,6 +85,10 @@ export const speedtestResults = pgTable(
     trigger: text("trigger"),
     /** 'ookla' | 'cloudflare'. */
     provider: text("provider"),
+    // WIFI-6: which network path. "wired" = uplink (live POST, ssid null); "wifi" = the
+    // analysis radio joined to `ssid` (rides the wifi_experience bundle, primary SSID only).
+    transport: text("transport").notNull().default("wired"),
+    ssid: text("ssid"),
     downloadMbps: doublePrecision("download_mbps"),
     uploadMbps: doublePrecision("upload_mbps"),
     latencyMs: doublePrecision("latency_ms"),
@@ -104,7 +108,12 @@ export const speedtestResults = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (t) => [index("idx_speedtest_results_sensor").on(t.sensorId, t.createdAt)],
+  (t) => [
+    index("idx_speedtest_results_sensor").on(t.sensorId, t.createdAt),
+    // Wi-Fi runs ride the box-global bundle (re-shipped hourly until the battery re-runs)
+    // — dedup one row per (sensor,ssid,run). Wired POSTs (ssid NULL) never collide → keep append.
+    uniqueIndex("uq_speedtest_wifi_run").on(t.sensorId, t.transport, t.ssid, t.startedAt),
+  ],
 );
 
 /**

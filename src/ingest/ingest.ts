@@ -42,6 +42,7 @@ import {
   wifiSurveys,
   wifiExperience,
   webperfResults,
+  speedtestResults,
 } from "../db/schema";
 import {
   readBundleDir,
@@ -703,6 +704,38 @@ async function persistWifiExperience(
           webperfResults.ssid,
           webperfResults.url,
           webperfResults.startedAt,
+        ],
+      });
+
+  // WIFI-6: the primary network's full internet speed test lands in speedtest_results
+  // tagged transport="wifi"+ssid (provider "cloudflare", same method as the wired
+  // Cloudflare test) so it sits alongside the wired history. Dedup on the box-global
+  // re-ship via uq_speedtest_wifi_run (startedAt = the battery run stamp).
+  const stRows = exp.results
+    .filter((r): r is NonNullable<typeof r> => !!r && !!r.ssid && !!r.speedtest)
+    .map((r) => ({
+      sensorId,
+      trigger: "wifi-battery",
+      provider: "cloudflare",
+      transport: "wifi",
+      ssid: str(r.ssid),
+      downloadMbps: toNum(r.speedtest?.download_mbps),
+      uploadMbps: toNum(r.speedtest?.upload_mbps),
+      latencyMs: toNum(r.speedtest?.latency_ms),
+      jitterMs: toNum(r.speedtest?.jitter_ms),
+      lossPct: toNum(r.speedtest?.loss_pct),
+      startedAt: generatedAt,
+    }));
+  if (stRows.length)
+    await tx
+      .insert(speedtestResults)
+      .values(stRows)
+      .onConflictDoNothing({
+        target: [
+          speedtestResults.sensorId,
+          speedtestResults.transport,
+          speedtestResults.ssid,
+          speedtestResults.startedAt,
         ],
       });
 }

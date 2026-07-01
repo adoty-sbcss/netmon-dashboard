@@ -421,6 +421,13 @@
       "when": 1782912665276,
       "tag": "0059_webperf_wifi_dedup",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1782920777995,
+      "tag": "0060_wifi_speedtest_primary",
+      "breakpoints": true
     }
   ]
 }

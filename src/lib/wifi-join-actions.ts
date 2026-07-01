@@ -71,6 +71,7 @@ async function syncSensorWifiConfig(sensorId: number, actorId: number): Promise<
       sharedSecretEnc: wifiNetworkProfiles.sharedSecretEnc,
       scheduleEnabled: wifiNetworkProfiles.scheduleEnabled,
       scheduleIntervalHours: wifiNetworkProfiles.scheduleIntervalHours,
+      speedtestPrimary: wifiNetworkProfiles.speedtestPrimary,
       psIdentity: wifiProfileSensors.identity,
       psSecretEnc: wifiProfileSensors.secretEnc,
     })
@@ -100,6 +101,7 @@ async function syncSensorWifiConfig(sensorId: number, actorId: number): Promise<
       identity: (perSensor ? r.psIdentity : r.sharedIdentity) ?? "",
       secret: dec(perSensor ? r.psSecretEnc : r.sharedSecretEnc),
       captive_auto_accept: r.captiveAutoAccept,
+      speedtest: r.speedtestPrimary, // primary network runs the full internet speed test
     };
   });
 
@@ -266,6 +268,45 @@ export async function deleteWifiProfileAction(
   await audit(admin.email, "wifi_profile_deleted", { profileId });
   revalidatePath(String(formData.get("basePath") ?? "/"));
   return { ok: true, message: "Profile deleted. Sensors drop it on their next check-in." };
+}
+
+/**
+ * Set (or clear) the ONE speed-test primary network for a school. Radio-style: marking
+ * one clears the rest in a single atomic UPDATE (`speedtest_primary = (id = chosen)`),
+ * so there's never two primaries. profileId 0 clears all. Re-syncs every sensor on the
+ * school's profiles since the pushed `speedtest` flag moved.
+ */
+export async function setPrimaryProfileAction(
+  _prev: WifiActionState,
+  formData: FormData,
+): Promise<WifiActionState> {
+  const admin = await requireSuperadmin();
+  if (!admin) return { error: "Not authorized." };
+  const schoolId = Number(formData.get("schoolId"));
+  if (!Number.isInteger(schoolId)) return { error: "Invalid school." };
+  const profileId = formData.get("profileId") ? Number(formData.get("profileId")) : 0;
+
+  // Sensors on ANY of this school's profiles may need a re-push (the flag moved on/off).
+  const affected = await db
+    .select({ sid: wifiProfileSensors.sensorId })
+    .from(wifiProfileSensors)
+    .innerJoin(wifiNetworkProfiles, eq(wifiProfileSensors.profileId, wifiNetworkProfiles.id))
+    .where(eq(wifiNetworkProfiles.schoolId, schoolId));
+  const sids = [...new Set(affected.map((r) => r.sid))];
+
+  await db
+    .update(wifiNetworkProfiles)
+    .set({ speedtestPrimary: sql`${wifiNetworkProfiles.id} = ${profileId}`, updatedAt: new Date() })
+    .where(eq(wifiNetworkProfiles.schoolId, schoolId));
+  for (const sid of sids) await syncSensorWifiConfig(sid, admin.id);
+  await audit(admin.email, "wifi_primary_set", { schoolId, profileId });
+  revalidatePath(String(formData.get("basePath") ?? "/"));
+  return {
+    ok: true,
+    message: profileId
+      ? "Primary speed-test network set. Sensors update on next check-in."
+      : "Primary speed-test network cleared.",
+  };
 }
 
 /**

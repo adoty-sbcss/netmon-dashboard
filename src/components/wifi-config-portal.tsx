@@ -24,6 +24,7 @@ import {
   upsertWifiProfileAction,
   deleteWifiProfileAction,
   setProfileSensorAction,
+  setPrimaryProfileAction,
   testWifiExperienceAction,
   type WifiActionState,
 } from "@/lib/wifi-join-actions";
@@ -346,6 +347,10 @@ function ProfileCard({
     deleteWifiProfileAction,
     {},
   );
+  const [primState, primAction, priming] = useActionState<WifiActionState, FormData>(
+    setPrimaryProfileAction,
+    {},
+  );
   const enrolled = profile.sensors.filter((s) => s.enabled).length;
 
   return (
@@ -362,6 +367,9 @@ function ProfileCard({
         {profile.scheduleEnabled && (
           <Badge variant="outline">auto every {profile.scheduleIntervalHours ?? 6}h</Badge>
         )}
+        {profile.speedtestPrimary && (
+          <Badge variant="default" title="Runs the full internet speed test">primary speed test</Badge>
+        )}
         {!profile.enabled && <Badge variant="destructive">disabled</Badge>}
         <span className="ml-auto text-xs text-muted-foreground">
           {enrolled} sensor{enrolled === 1 ? "" : "s"} enrolled
@@ -369,6 +377,25 @@ function ProfileCard({
       </div>
 
       <div className="flex flex-col gap-4 p-3">
+        {/* Speed-test primary: one network per school runs the full down/up/jitter test. */}
+        <form action={primAction} className="flex flex-wrap items-center gap-2 text-xs">
+          <input type="hidden" name="schoolId" value={schoolId} />
+          <input type="hidden" name="basePath" value={basePath} />
+          <input type="hidden" name="profileId" value={profile.speedtestPrimary ? 0 : profile.id} />
+          <span className="text-muted-foreground">
+            {profile.speedtestPrimary
+              ? "Runs the internet speed test (download / upload / jitter) over this network."
+              : "Not the speed-test network."}
+          </span>
+          <button
+            type="submit"
+            disabled={priming}
+            className="rounded border px-2 py-0.5 font-medium hover:bg-muted disabled:opacity-50"
+          >
+            {profile.speedtestPrimary ? "Unset primary" : "Make speed-test primary"}
+          </button>
+          <Notice state={primState} />
+        </form>
         <details>
           <summary className="cursor-pointer text-sm font-medium">Edit network</summary>
           <form action={saveAction} className="mt-3 flex flex-col gap-3">

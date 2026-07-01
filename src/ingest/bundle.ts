@@ -348,6 +348,14 @@ export interface RawWifiExpResult {
   // WIFI-6 battery metrics
   link?: { bssid?: string | null; band?: string | null; rx_rate_mbps?: string | number | null } | null;
   throughput?: { download_mbps?: string | number | null } | null;
+  // Full internet speed test — primary SSID only (down/up/latency/jitter/loss).
+  speedtest?: {
+    download_mbps?: string | number | null;
+    upload_mbps?: string | number | null;
+    latency_ms?: string | number | null;
+    jitter_ms?: string | number | null;
+    loss_pct?: string | number | null;
+  } | null;
   targets?: Array<{ host?: string | null; rtt_ms?: string | number | null }> | null;
   // WIFI-6/PERF-5: district URL waterfall run source-bound over THIS Wi-Fi (same probe
   // as the wired webperf) — one entry per URL, cumulative-ms fields like webperf.py.

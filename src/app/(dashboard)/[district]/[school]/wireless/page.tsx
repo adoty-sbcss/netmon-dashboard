@@ -24,6 +24,7 @@ import {
   type WifiExperienceTrend,
 } from "@/db/queries";
 import { listSchoolWebperf, type WebperfResultRow } from "@/lib/webperf";
+import { listSchoolWifiSpeedtests, type WifiSpeedtestRow } from "@/lib/iperf";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
 import { SchoolTabs } from "@/components/school-tabs";
@@ -265,7 +266,11 @@ const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b,
  *  joined network: source-bound download + instructional-target latency + the district
  *  URL waterfall measured over THIS Wi-Fi (the same probe the wired Speed & Bandwidth
  *  page runs, so the two are directly comparable). Null when nothing was measured. */
-function wifiPerfSection(results: WifiExperienceRow[], wifiWeb: WebperfResultRow[]) {
+function wifiPerfSection(
+  results: WifiExperienceRow[],
+  wifiWeb: WebperfResultRow[],
+  wifiSpeed: WifiSpeedtestRow[],
+) {
   // Latest Wi-Fi webperf per (ssid, url); wifiWeb is newest-first.
   const webBySsid = new Map<string, Map<string, WebperfResultRow>>();
   for (const r of wifiWeb) {
@@ -274,11 +279,15 @@ function wifiPerfSection(results: WifiExperienceRow[], wifiWeb: WebperfResultRow
     if (!m.has(r.url)) m.set(r.url, r);
     webBySsid.set(r.ssid, m);
   }
+  // Latest Wi-Fi internet speed test per (sensor, ssid).
+  const speedByKey = new Map<string, WifiSpeedtestRow>();
+  for (const s of wifiSpeed) speedByKey.set(`${s.sensorId}|${s.ssid ?? ""}`, s);
   const blocks = results.filter(
     (r) =>
       r.downloadMbps != null ||
       (r.targets && r.targets.length > 0) ||
-      (r.ssid != null && webBySsid.has(r.ssid)),
+      (r.ssid != null && webBySsid.has(r.ssid)) ||
+      speedByKey.has(`${r.sensorId}|${r.ssid ?? ""}`),
   );
   if (blocks.length === 0) return null;
   const ms = (v: number | null) => (v == null ? "—" : `${Math.round(v)} ms`);
@@ -296,6 +305,8 @@ function wifiPerfSection(results: WifiExperienceRow[], wifiWeb: WebperfResultRow
                 (a.url ?? "").localeCompare(b.url ?? ""),
               )
             : [];
+          const st = speedByKey.get(`${r.sensorId}|${r.ssid ?? ""}`);
+          const spd = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)} Mbps`);
           return (
             <div
               key={`${r.sensorId}-${r.ssid}`}
@@ -304,7 +315,12 @@ function wifiPerfSection(results: WifiExperienceRow[], wifiWeb: WebperfResultRow
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                 <span className="font-medium">{r.ssid ?? "—"}</span>
                 <span className="text-xs text-muted-foreground">{r.sensorName}</span>
-                {r.downloadMbps != null && (
+                {st && (
+                  <Badge variant="outline" className="text-[10px]" title="Runs the full internet speed test">
+                    primary
+                  </Badge>
+                )}
+                {!st && r.downloadMbps != null && (
                   <span className="flex items-center gap-1">
                     <span className="text-xs text-muted-foreground">Download</span>
                     <span className="font-medium tabular-nums">{r.downloadMbps.toFixed(1)} Mbps</span>
@@ -327,6 +343,33 @@ function wifiPerfSection(results: WifiExperienceRow[], wifiWeb: WebperfResultRow
                   </span>
                 ))}
               </div>
+              {st && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-md bg-muted/40 px-3 py-2 text-sm">
+                  <span className="text-xs font-medium text-muted-foreground">Internet speed</span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">↓</span>
+                    <span className="font-medium tabular-nums">{spd(st.downloadMbps)}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">↑</span>
+                    <span className="font-medium tabular-nums">{spd(st.uploadMbps)}</span>
+                  </span>
+                  <span className="flex items-center gap-1 text-xs">
+                    <span className="text-muted-foreground">latency</span>
+                    <span className="tabular-nums">{ms(st.latencyMs)}</span>
+                  </span>
+                  <span className="flex items-center gap-1 text-xs">
+                    <span className="text-muted-foreground">jitter</span>
+                    <span className="tabular-nums">{ms(st.jitterMs)}</span>
+                  </span>
+                  {st.lossPct != null && st.lossPct > 0 && (
+                    <span className="flex items-center gap-1 text-xs">
+                      <span className="text-muted-foreground">loss</span>
+                      <span className="tabular-nums text-amber-600 dark:text-amber-400">{st.lossPct}%</span>
+                    </span>
+                  )}
+                </div>
+              )}
               {web.length > 0 && (
                 <div className="overflow-x-auto">
                   <Table>
@@ -575,15 +618,16 @@ export default async function WirelessPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const [wifi, exp, trends, webperf] = await Promise.all([
+  const [wifi, exp, trends, webperf, wifiSpeed] = await Promise.all([
     listWifiForSchool(school.id),
     listWifiExperienceForSchool(school.id),
     listWifiExperienceHistory(school.id),
     listSchoolWebperf(school.id),
+    listSchoolWifiSpeedtests(school.id),
   ]);
   const bss = wifi.bss;
   const expSection = experienceSection(exp.results);
-  const perfSection = wifiPerfSection(exp.results, webperf);
+  const perfSection = wifiPerfSection(exp.results, webperf, wifiSpeed);
   const trendSection = experienceTrendSection(trends);
   const schoolName = school.name || titleizeSlug(school.slug);
 
