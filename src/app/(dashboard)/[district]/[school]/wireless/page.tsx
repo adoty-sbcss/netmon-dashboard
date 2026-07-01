@@ -16,16 +16,11 @@ import {
   getSchoolBySlug,
   listWifiForSchool,
   listWifiExperienceForSchool,
-  listSchoolWifiRadios,
-  listWifiProfilesForSchool,
   type WifiBssRow,
   type WifiExperienceRow,
-  type SchoolWifiRadio,
 } from "@/db/queries";
-import { getSessionUser } from "@/lib/auth/current-user";
 import { dateTime, relativeTime, titleizeSlug } from "@/lib/format";
 import { PageHeader } from "@/components/page-header";
-import { WifiConfigPortal } from "./wifi-config-portal";
 import { SchoolTabs } from "@/components/school-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -196,34 +191,6 @@ function experienceSection(results: WifiExperienceRow[]) {
   );
 }
 
-/** Compact card: each sensor's Wi-Fi NIC + MAC (for authorizing the card). */
-function radiosCard(radios: SchoolWifiRadio[]) {
-  if (radios.length === 0) return null;
-  return (
-    <Card>
-      <SectionHeader icon={Antenna} title="Sensor Wi-Fi radios" meta={`${radios.length}`} />
-      <CardContent className="flex flex-col gap-1.5 text-sm">
-        <p className="text-xs text-muted-foreground">
-          Each sensor&apos;s Wi-Fi NIC and MAC — authorize the MAC on MPSK / MAC-bound
-          networks.
-        </p>
-        {radios.map((r) => (
-          <div
-            key={`${r.sensorId}-${r.interface}`}
-            className="flex flex-wrap items-center gap-x-3 gap-y-0.5"
-          >
-            <span className="font-medium">{r.sensorName}</span>
-            <span className="font-mono text-xs text-muted-foreground">{r.interface}</span>
-            <code className="select-all rounded bg-muted px-1 py-0.5 font-mono text-xs">
-              {r.mac}
-            </code>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
 function bandColor(band: string | null): string {
   if (band === "2.4GHz") return "bg-amber-500";
   if (band === "5GHz") return "bg-sky-500";
@@ -313,43 +280,24 @@ export default async function WirelessPage({
   const school = await getSchoolBySlug(district.id, schoolSlug);
   if (!school) notFound();
 
-  const user = await getSessionUser();
-  const isAdmin = user?.role === "superadmin";
-  const [wifi, exp, radios, profiles] = await Promise.all([
+  const [wifi, exp] = await Promise.all([
     listWifiForSchool(school.id),
     listWifiExperienceForSchool(school.id),
-    listSchoolWifiRadios(school.id),
-    isAdmin ? listWifiProfilesForSchool(school.id) : Promise.resolve([]),
   ]);
   const bss = wifi.bss;
   const expSection = experienceSection(exp.results);
-  const radiosEl = radiosCard(radios);
   const schoolName = school.name || titleizeSlug(school.slug);
-  const basePath = `/${district.slug}/${school.slug}`;
-  const surveySsids = Array.from(
-    new Set(bss.map((b) => b.ssid).filter((s): s is string => !!s)),
-  ).sort();
-  const portalEl = isAdmin ? (
-    <WifiConfigPortal
-      schoolId={school.id}
-      basePath={basePath}
-      profiles={profiles}
-      radios={radios}
-      surveySsids={surveySsids}
-    />
-  ) : null;
 
   // ---- empty state: no survey. If there's a join-experience battery, show that;
-  // otherwise the "enable the survey" prompt. ----
+  // otherwise the "enable the survey" prompt. (Wi-Fi JOIN config lives in
+  // Settings → School & district settings now — this tab is monitoring-only.) ----
   if (bss.length === 0) {
     return (
       <div className="flex flex-col gap-6">
         <SchoolTabs districtSlug={district.slug} schoolSlug={school.slug} />
         <PageHeader title="Wireless" description={`${schoolName} · Wi-Fi RF / AP survey`} />
-        {portalEl}
-        {radiosEl}
         {expSection}
-        {!expSection && !radiosEl && (
+        {!expSection && (
           <Card>
             <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
               <WifiOff className="size-10 text-muted-foreground" />
@@ -523,12 +471,6 @@ export default async function WirelessPage({
           </div>
         }
       />
-
-      {/* WIFI-6 join configuration portal (admin only) */}
-      {portalEl}
-
-      {/* Sensor Wi-Fi radios (MAC, for authorizing the card) */}
-      {radiosEl}
 
       {/* WIFI-3 client-experience battery (join -> measure -> leave), if any */}
       {expSection}

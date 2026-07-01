@@ -1128,7 +1128,7 @@ const wirelessJoinConfig: HelpArticle = {
   ],
   updated: "2026-06-30",
   blocks: [
-    { kind: "callout", tone: "info", text: <>The <strong>Wi-Fi join configuration</strong> panel (on the <strong>Wireless</strong> tab, admins only) makes a sensor <strong>join</strong> a network on a spare radio and measure what a real client experiences — associate time, DHCP, captive portal, DNS, internet, and guest&rarr;internal isolation. The analysis radio is always <strong>routes-off</strong>: it can never become the box&apos;s uplink.</> },
+    { kind: "callout", tone: "info", text: <>The <strong>Wi-Fi join configuration</strong> panel (in <strong>Settings &rarr; School &amp; district settings</strong>, superadmin only) makes a sensor <strong>join</strong> a network on a spare radio and measure what a real client experiences — associate time, DHCP, captive portal, DNS, internet, and guest&rarr;internal isolation. The analysis radio is always <strong>routes-off</strong>: it can never become the box&apos;s uplink. The per-school <strong>Wireless</strong> tab is where you then read the results.</> },
     { kind: "h", text: "Before you start" },
     { kind: "steps", items: [
       <>A sensor at the site needs a <strong>spare Wi-Fi radio</strong> (a second adapter, not its uplink). Its radio MAC shows at the top of the panel — <strong>authorize that MAC</strong> on MPSK / MAC-bound networks first.</>,
@@ -1136,7 +1136,7 @@ const wirelessJoinConfig: HelpArticle = {
     ]},
     { kind: "h", text: "Add a network" },
     { kind: "steps", items: [
-      <>Open <strong>Wireless &rarr; Add a network</strong>. Pick the <strong>SSID</strong> (the box suggests ones the survey already saw) and the <strong>authentication</strong> (Open, WPA2-PSK, or WPA2-Enterprise PEAP).</>,
+      <>Open <strong>Settings &rarr; School &amp; district settings</strong>, pick the district, and find the school&apos;s <strong>Wi-Fi join</strong> panel &rarr; <strong>Add a network</strong>. Pick the <strong>SSID</strong> (the box suggests ones the survey already saw) and the <strong>authentication</strong> (Open, WPA2-PSK, or WPA2-Enterprise PEAP).</>,
       <>Choose the <strong>credential scope</strong>: <strong>Shared</strong> (one key for the whole school) or <strong>Per-sensor</strong> — use per-sensor for <strong>MPSK</strong>, where each radio MAC has its own key.</>,
       <>If the network has a <strong>captive portal</strong> (a click-through &quot;Accept&quot; page), tick the box; optionally have the sensor <strong>try to auto-accept</strong> it.</>,
       <>Secrets are stored <strong>encrypted</strong> and never shown again — leave a key field blank to keep the current one.</>,

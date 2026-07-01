@@ -17,6 +17,7 @@ import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CapabilityMatrix } from "./capability-matrix";
+import { DistrictWifiJoinSection } from "./wifi-join-section";
 import { SnmpCommunityForm } from "./snmp-community-form";
 import { CrawlScopeCard } from "./crawl-scope-card";
 import { SftpRotationCard } from "./sftp-rotation-card";
@@ -130,6 +131,10 @@ async function NetworkSettingsForDistrict({
           <CapabilityMatrix basePath={basePath} sensors={sensors} />
         </CardContent>
       </Card>
+
+      {/* 1b. Wi-Fi join configuration (WIFI-6) — one portal per Wi-Fi-capable school
+            in this district. Renders nothing if no school here has a Wi-Fi radio. */}
+      <DistrictWifiJoinSection districtId={districtId} />
 
       {/* 2. Shared settings the capabilities use. */}
       <Card>
